@@ -247,6 +247,41 @@ impl GenreOverrideRepository {
     }
 }
 
+/// Repository for app-wide settings
+pub struct AppSettingsRepository {
+    pool: SqlitePool,
+}
+
+impl AppSettingsRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn get_last_connected_host(&self) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT last_connected_host FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)))
+    }
+
+    pub async fn set_last_connected_host(&self, host: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE app_settings SET last_connected_host = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(host)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
 /// Repository for tracking last applied state
 pub struct LastAppliedRepository {
     pool: SqlitePool,

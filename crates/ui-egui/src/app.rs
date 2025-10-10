@@ -1,6 +1,6 @@
 use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
 use aaeq_device_wiim::WiimController;
-use aaeq_persistence::{GenreOverrideRepository, LastAppliedRepository, MappingRepository};
+use aaeq_persistence::{AppSettingsRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
 use crate::views::*;
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -109,9 +109,14 @@ impl AaeqApp {
         // Load mappings from database
         self.reload_mappings().await?;
 
-        // Try to connect to device if we have one saved
-        // Send connection command to worker
-        let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
+        // Load last connected host from settings
+        let settings_repo = AppSettingsRepository::new(self.pool.clone());
+        if let Ok(Some(last_host)) = settings_repo.get_last_connected_host().await {
+            tracing::info!("Loading last connected host: {}", last_host);
+            self.device_host = last_host.clone();
+            // Try to connect to the last device
+            let _ = self.command_tx.send(AppCommand::ConnectDevice(last_host));
+        }
 
         Ok(())
     }
@@ -276,6 +281,13 @@ impl AaeqApp {
                     if controller.is_online().await {
                         tracing::info!("Connected to device at {}", host);
                         device = Some(Arc::new(controller));
+
+                        // Save the successful connection to settings
+                        let settings_repo = AppSettingsRepository::new(pool.clone());
+                        if let Err(e) = settings_repo.set_last_connected_host(&host).await {
+                            tracing::error!("Failed to save last connected host: {}", e);
+                        }
+
                         let _ = response_tx.send(AppResponse::Connected(host));
                     } else {
                         tracing::warn!("Device at {} is offline", host);

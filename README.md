@@ -1,7 +1,7 @@
 # AAEQ - Adaptive Audio Equalizer
 
-[![Build Status](https://github.com/YOUR_USERNAME/AAEQ/workflows/Build/badge.svg)](https://github.com/YOUR_USERNAME/AAEQ/actions)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![Build Status](https://github.com/jaschadub/AAEQ/workflows/Build/badge.svg)](https://github.com/jaschadub/AAEQ/actions)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Automatically apply per-song, album, or genre EQ presets to your network audio devices.**
 
@@ -28,13 +28,13 @@ Download the latest release for your platform:
 - **macOS**: `aaeq-macos-universal.dmg`
 - **Windows**: `aaeq-windows-x64.zip`
 
-[→ Latest Releases](https://github.com/YOUR_USERNAME/AAEQ/releases)
+[→ Latest Releases](https://github.com/jaschadub/AAEQ/releases)
 
 ### Docker
 
 ```bash
-docker pull ghcr.io/YOUR_USERNAME/aaeq:latest
-docker run -d --network host ghcr.io/YOUR_USERNAME/aaeq:latest
+docker pull ghcr.io/jaschadub/aaeq:latest
+docker run -d --network host ghcr.io/jaschadub/aaeq:latest
 ```
 
 ### Build from Source
@@ -44,7 +44,7 @@ docker run -d --network host ghcr.io/YOUR_USERNAME/aaeq:latest
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone and build
-git clone https://github.com/YOUR_USERNAME/AAEQ.git
+git clone https://github.com/jaschadub/AAEQ.git
 cd AAEQ
 cargo build --release
 
@@ -169,12 +169,7 @@ Contributions are welcome! Please:
 
 ## 📝 License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
@@ -184,9 +179,5 @@ at your option.
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/AAEQ/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/AAEQ/discussions)
-
----
-
-**Note**: Replace `YOUR_USERNAME` with your actual GitHub username throughout this README and in the workflows.
+- **Issues**: [GitHub Issues](https://github.com/jaschadub/AAEQ/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jaschadub/AAEQ/discussions)

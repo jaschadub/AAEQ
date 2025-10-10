@@ -11,8 +11,10 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
-authors = ["AAEQ Contributors"]
+license = "MIT"
+authors = ["Jascha <jascha@duck.com>"]
+repository = "https://github.com/jaschadub/AAEQ"
+homepage = "https://github.com/jaschadub/AAEQ"
 
 [workspace.dependencies]
 # Async runtime
