@@ -270,11 +270,14 @@ impl AppSettingsRepository {
     pub async fn set_last_connected_host(&self, host: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
+        // Use INSERT OR REPLACE to handle both initial insert and updates
         sqlx::query(
-            "UPDATE app_settings SET last_connected_host = ?, updated_at = ? WHERE id = 1"
+            "INSERT OR REPLACE INTO app_settings (id, last_connected_host, created_at, updated_at)
+             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
         )
         .bind(host)
-        .bind(now)
+        .bind(now)  // created_at if new row
+        .bind(now)  // updated_at always
         .execute(&self.pool)
         .await?;
 

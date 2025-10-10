@@ -683,8 +683,9 @@ impl eframe::App for AaeqApp {
 
                                 // Update the current track's genre locally
                                 if let Some(track) = &mut self.current_track {
-                                    track.genre = genre;
+                                    track.genre = genre.clone();
                                     self.now_playing_view.track = Some(track.clone());
+                                    self.now_playing_view.genre_edit = genre; // Keep the edited value
                                 }
                             }
                         }

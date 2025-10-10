@@ -72,32 +72,42 @@ impl WiimController {
         ))
     }
 
-    /// Decode metadata field that might be hex-encoded
+    /// Decode metadata field that might be hex-encoded or contain HTML entities
     ///
     /// Some playback sources (like Spotify, mode 31) return hex-encoded strings
-    /// for Title, Artist, and Album fields. This function attempts to decode them.
-    /// If decoding fails, it returns the original string.
+    /// for Title, Artist, and Album fields. Others may contain HTML entities like &quot;
+    /// This function attempts to decode them. If decoding fails, it returns the original string.
     fn decode_metadata_field(field: &str) -> String {
         // Empty field, return as-is
         if field.is_empty() {
             return String::new();
         }
 
-        // Try to decode as hex
+        let mut result = field.to_string();
+
+        // Try to decode as hex first
         // Hex strings will only contain characters 0-9, A-F (case insensitive)
         if field.chars().all(|c| c.is_ascii_hexdigit()) {
             // Attempt hex decode
             if let Ok(bytes) = hex::decode(field) {
                 // Try to convert to UTF-8 string
                 if let Ok(decoded) = String::from_utf8(bytes) {
-                    tracing::debug!("Decoded metadata field '{}' -> '{}'", field, decoded);
-                    return decoded;
+                    tracing::debug!("Hex decoded metadata field '{}' -> '{}'", field, decoded);
+                    result = decoded;
                 }
             }
         }
 
-        // Not hex or decoding failed, return original
-        field.to_string()
+        // Decode HTML entities (e.g., &quot; -> ", &amp; -> &, &lt; -> <, etc.)
+        if result.contains('&') {
+            let decoded = html_escape::decode_html_entities(&result);
+            if decoded != result {
+                tracing::debug!("HTML decoded metadata field '{}' -> '{}'", result, decoded);
+                result = decoded.to_string();
+            }
+        }
+
+        result
     }
 
     /// Get additional metadata that might not be in getPlayerStatus
@@ -403,6 +413,16 @@ mod tests {
         let empty = "";
         let decoded = WiimController::decode_metadata_field(empty);
         assert_eq!(decoded, "");
+
+        // Test HTML entity decoding
+        let html_text = "My Name is Doug Hream Blunt: Featuring the Hit &quot;Gentle Persuasi";
+        let decoded = WiimController::decode_metadata_field(html_text);
+        assert_eq!(decoded, "My Name is Doug Hream Blunt: Featuring the Hit \"Gentle Persuasi");
+
+        // Test multiple HTML entities
+        let html_multi = "Rock &amp; Roll &lt;Greatest Hits&gt;";
+        let decoded = WiimController::decode_metadata_field(html_multi);
+        assert_eq!(decoded, "Rock & Roll <Greatest Hits>");
     }
 
     #[test]

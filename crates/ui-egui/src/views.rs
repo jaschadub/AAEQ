@@ -139,7 +139,9 @@ impl NowPlayingView {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Genre:");
-                    if ui.text_edit_singleline(&mut self.genre_edit).changed() {
+                    let response = ui.text_edit_singleline(&mut self.genre_edit);
+                    // Only update on Enter key, not on every keystroke
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         action = Some(NowPlayingAction::UpdateGenre(self.genre_edit.clone()));
                     }
                     if ui.small_button("↻").on_hover_text("Reset to device genre").clicked() {
@@ -153,6 +155,120 @@ impl NowPlayingView {
                         ui.label("Current Preset:");
                         ui.strong(preset);
                     });
+
+                    // Visual EQ display
+                    if let Some(eq_preset) = crate::preset_library::get_preset_curve(preset) {
+                        ui.add_space(5.0);
+                        ui.separator();
+
+                        // Show label with indicator for estimated curves
+                        let is_known = crate::preset_library::is_known_preset(preset);
+                        if is_known {
+                            ui.label("EQ Curve:");
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.label("EQ Curve:");
+                                ui.label(
+                                    egui::RichText::new("(estimated)")
+                                        .size(10.0)
+                                        .color(egui::Color32::GRAY)
+                                        .italics()
+                                )
+                                .on_hover_text("This is an estimated curve based on the preset name. Actual values may differ.");
+                            });
+                        }
+                        ui.add_space(5.0);
+
+                        // Draw EQ bars
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+
+                            for band in &eq_preset.bands {
+                                ui.vertical(|ui| {
+                                    ui.set_width(35.0);
+
+                                    // Draw the bar
+                                    let bar_height = 80.0;
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(30.0, bar_height),
+                                        egui::Sense::hover()
+                                    );
+
+                                    if ui.is_rect_visible(rect) {
+                                        let painter = ui.painter();
+
+                                        // Zero line at center
+                                        let zero_y = rect.center().y;
+
+                                        // Draw zero line
+                                        painter.line_segment(
+                                            [
+                                                egui::pos2(rect.left(), zero_y),
+                                                egui::pos2(rect.right(), zero_y)
+                                            ],
+                                            egui::Stroke::new(1.0, egui::Color32::DARK_GRAY)
+                                        );
+
+                                        // Calculate bar position and height
+                                        // Scale: -12dB to +12dB maps to full bar height
+                                        let gain_normalized = band.gain / 12.0; // -1.0 to 1.0
+                                        let bar_pixel_height = (gain_normalized * bar_height / 2.0).abs();
+
+                                        let bar_rect = if band.gain >= 0.0 {
+                                            // Positive gain - bar goes up from zero line
+                                            egui::Rect::from_min_max(
+                                                egui::pos2(rect.left() + 5.0, zero_y - bar_pixel_height),
+                                                egui::pos2(rect.right() - 5.0, zero_y)
+                                            )
+                                        } else {
+                                            // Negative gain - bar goes down from zero line
+                                            egui::Rect::from_min_max(
+                                                egui::pos2(rect.left() + 5.0, zero_y),
+                                                egui::pos2(rect.right() - 5.0, zero_y + bar_pixel_height)
+                                            )
+                                        };
+
+                                        // Color based on gain
+                                        let color = if band.gain > 3.0 {
+                                            egui::Color32::from_rgb(100, 200, 100) // Green for boost
+                                        } else if band.gain < -3.0 {
+                                            egui::Color32::from_rgb(200, 100, 100) // Red for cut
+                                        } else if band.gain > 0.0 {
+                                            egui::Color32::from_rgb(150, 200, 150) // Light green
+                                        } else if band.gain < 0.0 {
+                                            egui::Color32::from_rgb(200, 150, 150) // Light red
+                                        } else {
+                                            egui::Color32::GRAY // Gray for flat
+                                        };
+
+                                        painter.rect_filled(bar_rect, 2.0, color);
+                                        painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+                                    }
+
+                                    // Frequency label below
+                                    ui.add_space(2.0);
+                                    let freq_label = format_frequency(band.frequency);
+                                    ui.label(
+                                        egui::RichText::new(freq_label)
+                                            .size(9.0)
+                                            .color(egui::Color32::GRAY)
+                                    );
+
+                                    // Gain value below frequency
+                                    let gain_text = if band.gain >= 0.0 {
+                                        format!("+{:.1}", band.gain)
+                                    } else {
+                                        format!("{:.1}", band.gain)
+                                    };
+                                    ui.label(
+                                        egui::RichText::new(gain_text)
+                                            .size(8.0)
+                                            .color(egui::Color32::LIGHT_GRAY)
+                                    );
+                                });
+                            }
+                        });
+                    }
                 }
 
                 ui.add_space(10.0);
