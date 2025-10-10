@@ -26,7 +26,7 @@ COPY crates ./crates
 COPY apps ./apps
 
 # Build the application in release mode
-RUN cargo build --release --bin aaeq-desktop
+RUN cargo build --release
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
@@ -55,7 +55,7 @@ RUN useradd -m -u 1000 aaeq
 WORKDIR /app
 
 # Copy the built binary from builder stage
-COPY --from=builder /app/target/release/aaeq-desktop /usr/local/bin/aaeq-desktop
+COPY --from=builder /app/target/release/aaeq /usr/local/bin/aaeq
 
 # Create directories for data persistence
 RUN mkdir -p /app/data /app/config && chown -R aaeq:aaeq /app
@@ -72,7 +72,7 @@ ENV AAEQ_DB_PATH=/app/data/aaeq.db
 
 # Health check (optional - checks if the process is running)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD pgrep -f aaeq-desktop || exit 1
+    CMD pgrep -f aaeq || exit 1
 
 # Default command
-CMD ["aaeq-desktop"]
+CMD ["aaeq"]

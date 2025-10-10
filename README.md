@@ -1,409 +1,192 @@
-# AAEQ (Adaptive Audio Equalization) — Rust App (Local-First with Optional Cloud Sync)
+# AAEQ - Adaptive Audio Equalizer
 
-## 0) One-liner
+[![Build Status](https://github.com/YOUR_USERNAME/AAEQ/workflows/Build/badge.svg)](https://github.com/YOUR_USERNAME/AAEQ/actions)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
-A cross-platform Rust application that automatically applies **per-song → album → genre → default** EQ on your local network playback devices (starting with WiiM / LinkPlay), with an optional cloud sync for sharing presets and mappings across computers.
+**Automatically apply per-song, album, or genre EQ presets to your network audio devices.**
 
----
+AAEQ is a cross-platform desktop application that intelligently manages EQ settings on your WiiM (LinkPlay) devices based on what's currently playing. Set your favorite EQ preset once per song, album, or genre, and AAEQ will remember and apply it automatically.
 
-## 1) Goals & Non-Goals
+![AAEQ Screenshot](docs/screenshot.png)
 
-**Goals**
+## ✨ Features
 
-* Zero-cloud dependency for core operation (offline-first).
-* Deterministic, smooth EQ switching at track start/change.
-* Simple, reliable WiiM integration via local HTTP API.
-* Clean UX to choose a preset and “Save for Song/Album/Genre/Default”.
-* Extensible to other ecosystems (Sonos/Bluesound/HEOS/etc.) via plugins.
-* Optional account-based sync (presets + mappings) across desktops.
+- 🎵 **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → default priority
+- 🎛️ **Manual Genre Editing** - Add genres to tracks that don't have metadata
+- 🔌 **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, and other LinkPlay-based devices
+- 💾 **Local-First** - All data stored locally in SQLite, no cloud required
+- 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
+- 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
 
-**Non-Goals (v1)**
+## 📥 Installation
 
-* No on-device room correction, mic calibration, or FIR convolution.
-* No direct modification of streaming services; we read metadata only.
-* No always-on remote cloud control of LAN devices (can come later).
+### Download Pre-built Binaries
 
----
+Download the latest release for your platform:
 
-## 2) Personas
+- **Linux**: `aaeq-linux-x64.tar.gz`
+- **macOS**: `aaeq-macos-universal.dmg`
+- **Windows**: `aaeq-windows-x64.zip`
 
-* **Audiophile Power User:** Wants consistent tonal balance per album/master.
-* **Streamer/DJ:** Curates playlists where EQ becomes part of the flow.
-* **Prosumer Studio:** Shares per-album curves with collaborators.
+[→ Latest Releases](https://github.com/YOUR_USERNAME/AAEQ/releases)
 
----
+### Docker
 
-## 3) High-Level Architecture
-
-```
-+------------------------------+         +---------------------------+
-|          UI Layer            |         |  (Optional) Cloud Sync    |
-|  (Iced / egui OR Tauri UI)   |  HTTPS  |  REST: login, presets,    |
-+--------------+---------------+<------->|  mappings, device profiles|
-               |                          +------------+--------------+
-               v                                       ^
-+--------------+---------------+                       |
-|        Core Orchestrator     |                       |
-|  (Rust, async, tokio)        |                       |
-|  - State & rules engine      |                       |
-|  - Mapping resolver          |                       |
-|  - Debounce & conflict logic |                       |
-+--------------+---------------+                       |
-               |                                       |
-               v                                       |
-+--------------+---------------+         sync          |
-|   Device Abstraction Layer   +-----------------------+
-|  (Trait-based plugins)       |
-|   - WiiM (LinkPlay HTTP)     |
-|   - Future: Sonos/HEOS/...   |
-+--------------+---------------+
-               |
-               v
-+--------------+---------------+
-|   Local Data & Config        |
-|  - SQLite (rusqlite/SQLx)    |
-|  - Config (TOML/YAML)        |
-|  - Cache of device presets   |
-+------------------------------+
+```bash
+docker pull ghcr.io/YOUR_USERNAME/aaeq:latest
+docker run -d --network host ghcr.io/YOUR_USERNAME/aaeq:latest
 ```
 
----
+### Build from Source
 
-## 4) Platform & Tech Choices
+```bash
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-* **Language:** Rust stable
-* **Runtime:** tokio (async), reqwest (HTTP), serde (serialization)
-* **DB:** SQLite (SQLx or rusqlite), with embedded migrations
-* **UI (choose one):**
+# Clone and build
+git clone https://github.com/YOUR_USERNAME/AAEQ.git
+cd AAEQ
+cargo build --release
 
-  * **Iced** or **egui** for a pure-Rust native UI (smaller footprint)
-  * **Tauri** for HTML/CSS/JS front-end with Rust backend (best theming, easiest web skills reuse)
-* **Packaging:** Windows (MSI/EXE), macOS (.dmg + notarization), Linux (.deb/.rpm/AppImage)
-* **Background:** Tray app + optional background daemon/service (systemd/launchd/Windows Service)
-* **Cloud (optional add-on):** Axum + Postgres for REST sync (later milestone)
-
----
-
-## 5) Device Integrations (v1: WiiM / LinkPlay)
-
-**Core operations**
-
-* `getPlayerStatus` → extract `artist`, `title`, `album`, `genre`
-* `EQGetList` → list available EQ presets
-* `EQLoad:<PresetName>` → apply preset
-* (Optional) `EQOn`/`EQOff`, and band endpoints if firmware supports
-
-**Discovery**
-
-* mDNS/SSDP broadcast scan with fallback to last-known IP.
-* Device fingerprint: name, IP, serial/MAC (if available).
-
-**Debounce & timing**
-
-* Detect “new track” (artist/title/album changes).
-* Resolve mapping, compare with last applied EQ; only switch if different.
-* Apply within ~50–300 ms of track change; no mid-track flapping.
-
----
-
-## 6) Mapping Logic (Deterministic Hierarchy)
-
-Order of precedence on track start:
-
-1. **Song** (`artist - title`, normalized)
-2. **Album** (`artist - album`, normalized)
-3. **Genre** (verbatim or normalized per setting)
-4. **Default** (e.g., `Flat`)
-
-Normalization options: lowercase, trim, stripping “(Remastered YYYY)” suffix heuristics.
-
-Collision policy:
-
-* Song beats album; album beats genre; genre beats default.
-* User can see and edit all mappings from a single “Rules” view.
-
----
-
-## 7) Data Model
-
-### 7.1 Config (TOML)
-
-```toml
-[app]
-log_level = "info"         # debug|info|warn|error
-poll_interval_ms = 1000
-auto_start = true
-default_preset = "Flat"
-
-[device.wiim]
-# Expectations for LinkPlay; override per device if needed
-debounce_ms = 300
+# Run
+./target/release/aaeq
 ```
 
-### 7.2 SQLite schema (initial)
+## 🚀 Quick Start
 
-```sql
--- devices
-CREATE TABLE device (
-  id INTEGER PRIMARY KEY,
-  kind TEXT NOT NULL,              -- "wiim" | future kinds
-  label TEXT NOT NULL,
-  host TEXT NOT NULL,              -- IP or hostname
-  discovered_at INTEGER NOT NULL
-);
+1. **Connect to your WiiM device**
+   - Enter your device's IP address (e.g., `192.168.1.100`)
+   - Click "Connect"
 
--- presets known on device (cache; resynced periodically)
-CREATE TABLE device_preset (
-  id INTEGER PRIMARY KEY,
-  device_id INTEGER NOT NULL REFERENCES device(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  UNIQUE(device_id, name)
-);
+2. **Load presets from device**
+   - Click "Refresh from Device" to see available EQ presets
 
--- mapping rules (scope: song | album | genre | default)
-CREATE TABLE mapping (
-  id INTEGER PRIMARY KEY,
-  scope TEXT NOT NULL,             -- "song" | "album" | "genre" | "default"
-  key_normalized TEXT,             -- null for "default"
-  preset_name TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE(scope, key_normalized)
-);
+3. **Create mappings**
+   - Play a song on your WiiM device
+   - Select an EQ preset from the list
+   - Click "Apply Selected Preset"
+   - Click "This Song", "This Album", or "This Genre" to save the mapping
 
--- last applied state (for debounce/UX)
-CREATE TABLE last_applied (
-  id INTEGER PRIMARY KEY,
-  device_id INTEGER NOT NULL REFERENCES device(id) ON DELETE CASCADE,
-  last_track_key TEXT,             -- artist|title|album|genre
-  last_preset TEXT,
-  updated_at INTEGER NOT NULL
-);
-```
+4. **Enjoy automatic EQ switching!**
+   - AAEQ will now automatically apply your saved presets when tracks change
 
-### 7.3 In-memory structs (Rust)
+## 📖 How It Works
 
-```rust
-#[derive(Clone, Debug)]
-pub struct TrackMeta {
-    pub artist: String,
-    pub title:  String,
-    pub album:  String,
-    pub genre:  String,
-}
+AAEQ polls your WiiM device every second to check what's currently playing. When a track changes, it:
 
-#[derive(Clone, Debug)]
-pub enum Scope { Song, Album, Genre, Default }
+1. Checks for a **song-specific** mapping (`Artist - Title`)
+2. Falls back to **album mapping** (`Artist - Album`)
+3. Falls back to **genre mapping** (if genre is set)
+4. Falls back to **default preset** (usually "Flat")
 
-#[derive(Clone, Debug)]
-pub struct Mapping {
-    pub scope: Scope,
-    pub key_normalized: Option<String>,
-    pub preset_name: String,
-}
-```
+The resolved preset is only applied if it's different from the currently active one, preventing unnecessary device commands.
 
----
+## 🎛️ Manual Genre Support
 
-## 8) Core Orchestrator (Rust)
+Since many streaming services don't provide genre metadata via the WiiM API, AAEQ includes a manual genre editor:
 
-### Trait: `DeviceController`
+1. Click on the genre field in "Now Playing"
+2. Type the genre (e.g., "Rock", "Jazz", "Classical")
+3. The genre is automatically saved and will be used for preset resolution
+4. Use the ↻ button to reset to device-provided genre (if available)
 
-```rust
-#[async_trait::async_trait]
-pub trait DeviceController: Send + Sync {
-    fn id(&self) -> String;                   // stable id (label or serial)
-    async fn discover() -> Vec<Self> where Self: Sized;
-    async fn get_now_playing(&self) -> anyhow::Result<TrackMeta>;
-    async fn list_presets(&self) -> anyhow::Result<Vec<String>>;
-    async fn apply_preset(&self, preset: &str) -> anyhow::Result<()>;
-}
-```
-
-### WiiM Implementation
-
-* Uses `reqwest` to call `http://{host}/httpapi.asp?command=...`
-* JSON or text parsing fallback
-* Graceful error handling & retry with backoff
-
-### Mapping Resolver
-
-```rust
-pub fn resolve_preset(meta: &TrackMeta, rules: &RulesIndex, default: &str) -> String {
-    // song -> album -> genre -> default
-}
-```
-
-### Debounce Loop
-
-* Poll `get_now_playing` at interval
-* If `track_key` changed → resolve → compare with last-applied → `apply_preset`
-
----
-
-## 9) UI Spec
-
-### Views
-
-* **Now Playing**: Artist — Title (Album) [Device selector]
-
-  * Preset dropdown (live apply)
-  * Buttons: Save for **Song/Album/Genre/Default**
-* **Rules**: table of mappings with search, edit, delete
-* **Devices**: discovered devices, test command, preset refresh
-* **Settings**: default preset, normalization, interval, start-on-login
-* **(Optional) Cloud**: sign-in/out, last sync, conflict resolution
-
-### UX details
-
-* Live audition: changing dropdown fires `apply_preset` immediately (logs in history).
-* Mapping creation: shows the computed keys it will save (e.g., `pink floyd - time`).
-* Conflict banner if two rules would match (shows which one wins).
-
----
-
-## 10) Optional Cloud Sync (Phase 2)
-
-* **What syncs:** presets names, mapping rules, normalization options.
-* **What doesn’t:** device IPs or local discovery state.
-* **API (minimal):**
-
-  * `GET /v1/mappings` → list
-  * `POST /v1/mappings` → upsert
-  * `GET /v1/presets`
-  * `POST /v1/presets`
-* **Auth:** OAuth (Google/Apple) or email-magic link. All data encrypted in transit.
-* **Offline behavior:** local queue, 2-way merge at next online session.
-
----
-
-## 11) Packaging & Services
-
-### Autostart
-
-* **Windows:** Task Scheduler or service (sc.exe) for background agent.
-* **macOS:** LaunchAgent/LaunchDaemon plist.
-* **Linux:** systemd user service:
-
-```ini
-[Unit]
-Description=Adaptive EQ Mapper
-
-[Service]
-ExecStart=/usr/local/bin/adapt-eq --background
-Restart=on-failure
-
-[Install]
-WantedBy=default.target
-```
-
-### Installers
-
-* Use cargo-bundle + platform-specific packagers, or Tauri bundler if using Tauri.
-
----
-
-## 12) Security & Privacy
-
-* No inbound ports; LAN calls originate from the app to the device.
-* Minimal data collected by default; telemetry strictly opt-in (count of applied presets, anonymized).
-* Local secrets (cloud token) stored in OS keychain (Keychain/DPAPI/libsecret).
-* Crash logs scrub PII; user can export/delete data easily.
-
----
-
-## 13) Testing Plan
-
-* **Unit:** mapping resolver, normalization, text/JSON parsers.
-* **Integration:** WiiM mock server (wiremock) + real device smoke tests.
-* **Soak tests:** long-running playlist with frequent track changes.
-* **UI tests:** basic regression of flows (save mapping, apply preset, edit/delete).
-
----
-
-## 14) Roadmap
-
-**v0.1 (MVP)**
-
-* WiiM support, Now Playing, preset list/apply, rules CRUD, tray mode
-
-**v0.2**
-
-* Album/genre normalization helpers, import/export JSON/YAML, log viewer
-
-**v0.3**
-
-* Optional cloud sync (login, push/pull), multi-desktop sharing
-
-**v1.0**
-
-* Additional device plugin (e.g., Sonos or HEOS), fuzzy matching, backups
-
-**v1.1+**
-
-* Community preset sharing, ML suggestions, hotkeys, mini-overlay UI
-
----
-
-## 15) Example Crate Layout
+## 📁 Project Structure
 
 ```
-adapt-eq/
-├─ crates/
-│  ├─ core/                 # mapping engine, state, models
-│  ├─ device-wiim/          # WiiM plugin (LinkPlay)
-│  ├─ ui-iced/              # (or ui-tauri/) UI front-end
-│  ├─ persistence/          # sqlite, migrations
-│  └─ sync-api/             # optional cloud client (feature-gated)
-├─ apps/
-│  ├─ desktop/              # binary combining core + ui + device plugins
-│  └─ service/              # headless background service (optional)
-└─ Cargo.toml
+AAEQ/
+├── apps/
+│   └── desktop/          # Main desktop application
+├── crates/
+│   ├── core/             # Core logic and models
+│   ├── device-wiim/      # WiiM device integration
+│   ├── persistence/      # SQLite database layer
+│   └── ui-egui/          # egui-based UI
+└── migrations/           # Database migrations
 ```
 
-**Feature flags**
+## 🛠️ Development
 
-* `--features tauri` vs `--features iced`
-* `--features cloud-sync`
-* `--features device-wiim,device-sonos`
+### Prerequisites
+
+- Rust 1.75+ (stable)
+- SQLite development libraries
+
+### Running in Development
+
+```bash
+cargo run
+```
+
+### Running Tests
+
+```bash
+cargo test
+```
+
+### Code Style
+
+```bash
+cargo fmt
+cargo clippy
+```
+
+## 🔧 Configuration
+
+AAEQ stores its configuration and database in:
+
+- **Linux**: `~/.local/share/aaeq/`
+- **macOS**: `~/Library/Application Support/aaeq/`
+- **Windows**: `%APPDATA%\aaeq\`
+
+### Database Schema
+
+- `device` - Connected devices
+- `device_preset` - Cached presets from devices
+- `mapping` - Song/album/genre → preset mappings
+- `genre_override` - Manual genre assignments
+- `last_applied` - Tracking state for debouncing
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 🐛 Known Limitations
+
+- **WiiM API Constraints**:
+  - Cannot create or save custom EQ presets (only load built-in presets)
+  - Genre metadata often missing from streaming services
+  - Metadata encoding issues with some sources (handled via hex decoding)
+
+- **Device Support**:
+  - Currently only supports WiiM/LinkPlay devices
+  - Future: Sonos, HEOS, Bluesound support planned
+
+## 📝 License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+
+at your option.
+
+## 🙏 Acknowledgments
+
+- Built with [egui](https://github.com/emilk/egui) for the UI
+- WiiM/LinkPlay API documentation
+- Rust community for excellent crates and tools
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/AAEQ/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/AAEQ/discussions)
 
 ---
 
-## 16) Sample Rust Snippets
-
-**WiiM call**
-
-```rust
-pub async fn wiim_cmd(host: &str, command: &str) -> anyhow::Result<String> {
-    let url = format!("http://{host}/httpapi.asp?command={command}");
-    let text = reqwest::get(&url).await?.text().await?;
-    Ok(text)
-}
-```
-
-**Apply with debounce**
-
-```rust
-if track_changed(&prev_meta, &meta) {
-    let desired = resolve_preset(&meta, &rules, default);
-    if last_applied.as_deref() != Some(&desired) {
-        device.apply_preset(&desired).await?;
-        last_applied = Some(desired);
-    }
-}
-```
-
----
-
-## 17) License & Community
-
-* **License:** AGPL-3.0 for app (if you want to keep server forks honest) or Apache-2.0/MIT for wider adoption.
-* **Contrib:** Device plugins via traits; publish a simple “Device Plugin API” guide.
-* **Branding:** Keep “Adaptive EQ Mapper” as working title; we can pick a marketable name later.
-
----
-
-### Done? Next Steps
-
-* Pick **UI path** (Iced/egui native vs Tauri web UI).
-* I can scaffold the **Cargo workspace** with the crates above, a minimal WiiM plugin, SQLite migrations, and a tiny Iced window showing “Now Playing” + preset dropdown + “Save mapping” buttons.
+**Note**: Replace `YOUR_USERNAME` with your actual GitHub username throughout this README and in the workflows.
