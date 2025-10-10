@@ -197,6 +197,56 @@ impl MappingRepository {
     }
 }
 
+/// Repository for genre overrides
+pub struct GenreOverrideRepository {
+    pool: SqlitePool,
+}
+
+impl GenreOverrideRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn upsert(&self, track_key: &str, genre: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO genre_override (track_key, genre, created_at, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(track_key)
+             DO UPDATE SET genre = excluded.genre, updated_at = excluded.updated_at"
+        )
+        .bind(track_key)
+        .bind(genre)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get(&self, track_key: &str) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT genre FROM genre_override WHERE track_key = ?"
+        )
+        .bind(track_key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| r.get(0)))
+    }
+
+    pub async fn delete(&self, track_key: &str) -> Result<()> {
+        sqlx::query("DELETE FROM genre_override WHERE track_key = ?")
+            .bind(track_key)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+}
+
 /// Repository for tracking last applied state
 pub struct LastAppliedRepository {
     pool: SqlitePool,

@@ -1,0 +1,55 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+target/
+**/target/
+*.rs.bk
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (not needed in container)
+*.md
+!README.md
+docs/
+.claude/
+
+# Docker files themselves
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Data and config directories (will be mounted as volumes)
+docker-data/
+data/
+config/
+
+# Test files
+tests/
+**/tests/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Local environment
+.env
+.env.local
+
+# Logs
+*.log
+
+# PDFs and other docs
+*.pdf
+
+# Backup files
+*.bak
+*.backup

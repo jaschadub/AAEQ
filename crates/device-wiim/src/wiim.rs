@@ -72,8 +72,37 @@ impl WiimController {
         ))
     }
 
+    /// Decode metadata field that might be hex-encoded
+    ///
+    /// Some playback sources (like Spotify, mode 31) return hex-encoded strings
+    /// for Title, Artist, and Album fields. This function attempts to decode them.
+    /// If decoding fails, it returns the original string.
+    fn decode_metadata_field(field: &str) -> String {
+        // Empty field, return as-is
+        if field.is_empty() {
+            return String::new();
+        }
+
+        // Try to decode as hex
+        // Hex strings will only contain characters 0-9, A-F (case insensitive)
+        if field.chars().all(|c| c.is_ascii_hexdigit()) {
+            // Attempt hex decode
+            if let Ok(bytes) = hex::decode(field) {
+                // Try to convert to UTF-8 string
+                if let Ok(decoded) = String::from_utf8(bytes) {
+                    tracing::debug!("Decoded metadata field '{}' -> '{}'", field, decoded);
+                    return decoded;
+                }
+            }
+        }
+
+        // Not hex or decoding failed, return original
+        field.to_string()
+    }
+
     /// Get additional metadata that might not be in getPlayerStatus
     /// This is a helper to extract metadata from various sources
+    #[allow(dead_code)]
     async fn get_metadata_supplemental(&self) -> Result<(String, String, String)> {
         // Try to get more detailed info from other endpoints if needed
         // For now, return empty strings - metadata should come from getPlayerStatus
@@ -100,11 +129,14 @@ impl DeviceController for WiimController {
         // Note: WiiM getPlayerStatus may not always include metadata fields
         // like title, artist, album, genre. These might be empty strings.
         // The metadata availability depends on the playback source (mode).
+        //
+        // Additionally, some sources (like Spotify, mode 31) return hex-encoded
+        // strings for Title, Artist, and Album fields. We need to decode them.
 
         let mut meta = TrackMeta {
-            artist: status.artist.clone(),
-            title: status.title.clone(),
-            album: status.album.clone(),
+            artist: Self::decode_metadata_field(&status.artist),
+            title: Self::decode_metadata_field(&status.title),
+            album: Self::decode_metadata_field(&status.album),
             genre: String::new(),  // WiiM API doesn't provide genre directly
         };
 
@@ -190,7 +222,7 @@ impl DeviceController for WiimController {
     ///
     /// Custom EQ setting may require undocumented commands or may not be supported
     /// via the HTTP API at all.
-    async fn set_custom_eq(&self, preset: &EqPreset) -> Result<()> {
+    async fn set_custom_eq(&self, _preset: &EqPreset) -> Result<()> {
         // This functionality may not be supported by the WiiM HTTP API
         // The API only allows loading predefined presets, not setting custom band values
 
@@ -345,5 +377,65 @@ mod tests {
         let json = r#"{"EQStat":"On"}"#;
         let stat: EqStatResponse = serde_json::from_str(json).unwrap();
         assert_eq!(stat.eq_stat, "On");
+    }
+
+    #[test]
+    fn test_decode_metadata_field() {
+        // Test hex-encoded string (Spotify format)
+        let hex_title = "4974277320416C6C204265636175736520536865277320476F6E65";
+        let decoded = WiimController::decode_metadata_field(hex_title);
+        assert_eq!(decoded, "It's All Because She's Gone");
+
+        let hex_artist = "5374657665204461766973";
+        let decoded = WiimController::decode_metadata_field(hex_artist);
+        assert_eq!(decoded, "Steve Davis");
+
+        let hex_album = "5243412053747564696F20422053657373696F6E73202F2031393731";
+        let decoded = WiimController::decode_metadata_field(hex_album);
+        assert_eq!(decoded, "RCA Studio B Sessions / 1971");
+
+        // Test regular string (non-hex)
+        let plain_text = "Time";
+        let decoded = WiimController::decode_metadata_field(plain_text);
+        assert_eq!(decoded, "Time");
+
+        // Test empty string
+        let empty = "";
+        let decoded = WiimController::decode_metadata_field(empty);
+        assert_eq!(decoded, "");
+    }
+
+    #[test]
+    fn test_parse_spotify_status() {
+        // Real Spotify response with hex-encoded metadata
+        let json = r#"{
+            "type":"0",
+            "ch":"0",
+            "mode":"31",
+            "loop":"4",
+            "eq":"0",
+            "vendor":"spotify:playlist:20qGM6PMRc484KCb4kEvlv",
+            "status":"play",
+            "curpos":"155701",
+            "offset_pts":"0",
+            "totlen":"505000",
+            "Title":"4974277320416C6C204265636175736520536865277320476F6E65",
+            "Artist":"5374657665204461766973",
+            "Album":"5243412053747564696F20422053657373696F6E73202F2031393731",
+            "alarmflag":"0",
+            "plicount":"0",
+            "plicurr":"0",
+            "vol":"51",
+            "mute":"0"
+        }"#;
+
+        let status: PlayerStatus = serde_json::from_str(json).unwrap();
+        assert_eq!(status.status, "play");
+        assert_eq!(status.mode, "31"); // Spotify mode
+
+        // Verify hex strings are captured (decoding happens in get_now_playing)
+        assert_eq!(status.title, "4974277320416C6C204265636175736520536865277320476F6E65");
+        assert_eq!(status.artist, "5374657665204461766973");
+        assert_eq!(status.album, "5243412053747564696F20422053657373696F6E73202F2031393731");
     }
 }

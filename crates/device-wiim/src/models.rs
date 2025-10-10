@@ -47,13 +47,16 @@ pub struct PlayerStatus {
     pub mute: String,  // Current mute state ("0" = unmuted, "1" = muted)
 
     // Additional fields that may be present (from metadata)
-    #[serde(default)]
+    // Note: Some sources use lowercase (title, artist, album),
+    // while others like Spotify (mode 31) use uppercase (Title, Artist, Album)
+    // with hex-encoded values
+    #[serde(default, alias = "Title")]
     pub title: String,
 
-    #[serde(default)]
+    #[serde(default, alias = "Artist")]
     pub artist: String,
 
-    #[serde(default)]
+    #[serde(default, alias = "Album")]
     pub album: String,
 
     #[serde(default)]

@@ -8,6 +8,7 @@ license.workspace = true
 aaeq-core = { path = "../core" }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
+hex = "0.4"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

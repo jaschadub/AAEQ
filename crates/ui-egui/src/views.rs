@@ -104,6 +104,7 @@ fn format_frequency(hz: u32) -> String {
 pub struct NowPlayingView {
     pub track: Option<TrackMeta>,
     pub current_preset: Option<String>,
+    pub genre_edit: String,
 }
 
 impl Default for NowPlayingView {
@@ -111,6 +112,7 @@ impl Default for NowPlayingView {
         Self {
             track: None,
             current_preset: None,
+            genre_edit: String::new(),
         }
     }
 }
@@ -137,7 +139,13 @@ impl NowPlayingView {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Genre:");
-                    ui.label(&track.genre);
+                    if ui.text_edit_singleline(&mut self.genre_edit).changed() {
+                        action = Some(NowPlayingAction::UpdateGenre(self.genre_edit.clone()));
+                    }
+                    if ui.small_button("↻").on_hover_text("Reset to device genre").clicked() {
+                        self.genre_edit = track.genre.clone();
+                        action = Some(NowPlayingAction::UpdateGenre(track.genre.clone()));
+                    }
                 });
 
                 if let Some(preset) = &self.current_preset {
@@ -176,6 +184,7 @@ impl NowPlayingView {
 
 pub enum NowPlayingAction {
     SaveMapping(Scope),
+    UpdateGenre(String),
 }
 
 /// View for listing and managing presets

@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # Main AAEQ application
+  aaeq:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aaeq-desktop
+    restart: unless-stopped
+
+    # Network mode: host allows discovery of devices on local network
+    # This is essential for mDNS/SSDP discovery of WiiM devices
+    network_mode: host
+
+    # Environment variables
+    environment:
+      - RUST_LOG=info,aaeq=debug
+      - AAEQ_DB_PATH=/app/data/aaeq.db
+      - DISPLAY=${DISPLAY:-:0}
+      - XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
+
+    # Volumes for data persistence and X11 display
+    volumes:
+      # Persist database and configuration
+      - aaeq-data:/app/data
+      - aaeq-config:/app/config
+
+      # X11 socket for GUI display (Linux)
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+
+      # Optional: Mount config file if you want to provide one
+      # - ./config.toml:/app/config/config.toml:ro
+
+    # User mapping to match host user (for X11 permissions)
+    user: "${UID:-1000}:${GID:-1000}"
+
+    # Additional capabilities for network operations
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    # Keep container running and log output
+    stdin_open: true
+    tty: true
+
+  # Optional: WiiM device simulator for testing (when no real device available)
+  # Uncomment this service if you want to test without real hardware
+  # wiim-simulator:
+  #   image: python:3.11-slim
+  #   container_name: aaeq-wiim-simulator
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   working_dir: /app
+  #   volumes:
+  #     - ./tools/wiim-simulator:/app
+  #   command: python3 simulator.py
+  #   environment:
+  #     - SIMULATOR_PORT=80
+  #     - SIMULATOR_HOST=0.0.0.0
+
+volumes:
+  # Named volumes for data persistence
+  aaeq-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/docker-data/data
+
+  aaeq-config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/docker-data/config
+
+# Alternative compose file for development with hot reload
+# To use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
