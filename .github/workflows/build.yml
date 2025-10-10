@@ -171,15 +171,59 @@ jobs:
             target/aarch64-apple-darwin/release/aaeq \
             -output target/universal/release/aaeq
 
-      - name: Create archive
+      - name: Create DMG
         run: |
+          # Create app bundle structure
+          mkdir -p "AAEQ.app/Contents/MacOS"
+          mkdir -p "AAEQ.app/Contents/Resources"
+
+          # Copy binary
+          cp target/universal/release/aaeq "AAEQ.app/Contents/MacOS/"
+          chmod +x "AAEQ.app/Contents/MacOS/aaeq"
+
+          # Create Info.plist
+          cat > "AAEQ.app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>aaeq</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.jaschadub.aaeq</string>
+              <key>CFBundleName</key>
+              <string>AAEQ</string>
+              <key>CFBundleVersion</key>
+              <string>0.1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>0.1.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+          </dict>
+          </plist>
+          EOF
+
+          # Create DMG using hdiutil
+          mkdir dmg_temp
+          cp -R AAEQ.app dmg_temp/
+          hdiutil create -volname "AAEQ" -srcfolder dmg_temp -ov -format UDZO aaeq-macos-universal.dmg
+
+          # Also create tar.gz for those who prefer it
           cd target/universal/release
           tar -czf aaeq-macos-universal.tar.gz aaeq
 
-      - name: Upload artifact
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aaeq-macos-universal
+          name: aaeq-macos-dmg
+          path: aaeq-macos-universal.dmg
+
+      - name: Upload tar.gz artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaeq-macos-tarball
           path: target/universal/release/aaeq-macos-universal.tar.gz
 
   build-windows:
@@ -235,7 +279,8 @@ jobs:
           files: |
             artifacts/aaeq-linux-x64/aaeq-linux-x64.tar.gz
             artifacts/aaeq-linux-arm64/aaeq-linux-arm64.tar.gz
-            artifacts/aaeq-macos-universal/aaeq-macos-universal.tar.gz
+            artifacts/aaeq-macos-dmg/aaeq-macos-universal.dmg
+            artifacts/aaeq-macos-tarball/aaeq-macos-universal.tar.gz
             artifacts/aaeq-windows-x64/aaeq-windows-x64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

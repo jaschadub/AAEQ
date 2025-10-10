@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     let pool = aaeq_persistence::init_db(&db_path).await?;
 
     // Create app
-    let mut app = AaeqApp::new(pool);
+    let mut app = AaeqApp::new(pool, db_path.clone());
 
     // Initialize app (load mappings, etc.)
     app.initialize().await?;

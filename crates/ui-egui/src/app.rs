@@ -15,6 +15,7 @@ enum AppCommand {
     ApplyPreset(String),
     SaveMapping(Scope, TrackMeta, String),
     UpdateGenre(String, String), // (track_key, genre)
+    BackupDatabase(String), // (db_path)
     Poll,
 }
 
@@ -26,6 +27,7 @@ enum AppResponse {
     PresetApplied(String),
     MappingSaved(String),
     TrackUpdated(TrackMeta, Option<String>),
+    BackupCreated(String), // (backup_path)
     Error(String),
 }
 
@@ -33,6 +35,7 @@ enum AppResponse {
 pub struct AaeqApp {
     /// Database connection pool
     pool: SqlitePool,
+    db_path: std::path::PathBuf,
 
     /// Current device controller
     device: Option<Arc<dyn DeviceController>>,
@@ -69,7 +72,7 @@ pub struct AaeqApp {
 }
 
 impl AaeqApp {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: SqlitePool, db_path: std::path::PathBuf) -> Self {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (response_tx, response_rx) = mpsc::unbounded_channel();
 
@@ -84,6 +87,7 @@ impl AaeqApp {
 
         Self {
             pool,
+            db_path,
             device: None,
             device_id: None,
             device_host: "192.168.1.100".to_string(), // Default, user can change
@@ -388,6 +392,71 @@ impl AaeqApp {
                     }
                 }
 
+                AppCommand::BackupDatabase(db_path) => {
+                    use std::fs;
+                    use std::io::Write;
+
+                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                    let backup_name = format!("aaeq-bkup_{}.zip", timestamp);
+                    let backup_path = std::path::Path::new(&db_path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join(&backup_name);
+
+                    match fs::copy(&db_path, backup_path.with_extension("db.tmp")) {
+                        Ok(_) => {
+                            // Create zip archive
+                            let zip_file = match fs::File::create(&backup_path) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to create backup file: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            let mut zip = zip::ZipWriter::new(zip_file);
+                            let options = zip::write::FileOptions::<()>::default()
+                                .compression_method(zip::CompressionMethod::Deflated)
+                                .compression_level(Some(6));
+
+                            match zip.start_file("aaeq.db", options) {
+                                Ok(_) => {
+                                    let db_content = match fs::read(backup_path.with_extension("db.tmp")) {
+                                        Ok(content) => content,
+                                        Err(e) => {
+                                            let _ = response_tx.send(AppResponse::Error(format!("Failed to read database: {}", e)));
+                                            continue;
+                                        }
+                                    };
+
+                                    if let Err(e) = zip.write_all(&db_content) {
+                                        let _ = response_tx.send(AppResponse::Error(format!("Failed to write to zip: {}", e)));
+                                        continue;
+                                    }
+
+                                    if let Err(e) = zip.finish() {
+                                        let _ = response_tx.send(AppResponse::Error(format!("Failed to finalize zip: {}", e)));
+                                        continue;
+                                    }
+
+                                    // Clean up temp file
+                                    let _ = fs::remove_file(backup_path.with_extension("db.tmp"));
+
+                                    tracing::info!("Database backup created: {}", backup_path.display());
+                                    let _ = response_tx.send(AppResponse::BackupCreated(backup_path.display().to_string()));
+                                }
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to create zip file: {}", e)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to copy database: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to backup database: {}", e)));
+                        }
+                    }
+                }
+
                 AppCommand::Poll => {
                     if let Some(dev) = &device {
                         match dev.get_now_playing().await {
@@ -483,6 +552,9 @@ impl eframe::App for AaeqApp {
                         self.now_playing_view.genre_edit = track.genre.clone();
                     }
                 }
+                AppResponse::BackupCreated(path) => {
+                    self.status_message = Some(format!("Backup created: {}", path));
+                }
                 AppResponse::Error(msg) => {
                     self.status_message = Some(format!("Error: {}", msg));
                 }
@@ -527,6 +599,13 @@ impl eframe::App for AaeqApp {
                 } else {
                     ui.label("⚠ Disconnected");
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("📦 Backup Database").clicked() {
+                        let db_path = self.db_path.display().to_string();
+                        let _ = self.command_tx.send(AppCommand::BackupDatabase(db_path));
+                    }
+                });
             });
         });
 

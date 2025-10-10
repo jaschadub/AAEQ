@@ -34,7 +34,7 @@ pub async fn init_db(db_path: &Path) -> Result<SqlitePool> {
 async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     tracing::info!("Running database migrations");
 
-    // Create initial schema
+    // Migration 001: Initial schema
     sqlx::query(r#"
         -- Device table
         CREATE TABLE IF NOT EXISTS device (
@@ -83,5 +83,33 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // Migration 002: Genre overrides
+    sqlx::query(r#"
+        CREATE TABLE IF NOT EXISTS genre_override (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_key TEXT NOT NULL UNIQUE,
+            genre TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_genre_override_track ON genre_override(track_key);
+    "#)
+    .execute(pool)
+    .await?;
+
+    // Migration 003: App settings
+    sqlx::query(r#"
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_connected_host TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+    "#)
+    .execute(pool)
+    .await?;
+
+    tracing::info!("Database migrations completed");
     Ok(())
 }
