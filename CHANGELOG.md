@@ -7,37 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2025-10-10
+
 ### Added
 - Initial release of AAEQ (Adaptive Audio Equalizer)
-- Support for WiiM/LinkPlay devices
-- Automatic EQ preset switching based on song, album, and genre
+- WiiM/LinkPlay device support via HTTP API
+- Automatic EQ preset switching based on song, album, or genre
 - Manual genre editing for tracks without metadata
-- SQLite-based local storage
-- Cross-platform GUI using egui
-- Multi-platform builds (Linux, macOS, Windows)
-- Docker support
+- Last connected IP persistence and auto-connect on startup
+- SQLite-based local storage with migrations
+- Cross-platform desktop GUI using egui/eframe
+- GitHub Actions CI/CD for Linux, macOS, and Windows builds
+- Multi-architecture Docker support (amd64/arm64)
 
 ### Features
-- **Smart EQ Resolution**: Song → Album → Genre → Default priority
-- **Genre Override System**: Manually assign genres to tracks
-- **Real-time Polling**: Polls WiiM device every second for track changes
-- **Preset Management**: List, apply, and save mappings for device presets
-- **Debouncing**: Only applies preset changes when necessary
+- **Smart EQ Resolution**: Hierarchical preset matching (Song → Album → Genre → Default)
+- **Genre Override System**: Manually assign and persist genres for tracks lacking metadata
+- **Real-time Polling**: Monitors WiiM device every second for track changes
+- **Preset Management**: List, apply, and save EQ preset mappings
+- **Connection Management**: Remembers last connected device IP
+- **Debouncing**: Only applies preset changes when necessary to reduce device calls
 
 ### Technical
-- Built with Rust for performance and safety
-- Async architecture using tokio
-- GUI framework: egui
-- Database: SQLite with SQLx
+- Built with Rust 1.89+ for performance and safety
+- Async architecture using tokio runtime
+- GUI framework: egui 0.29 with eframe
+- Database: SQLite with SQLx 0.8 (offline mode for Docker builds)
 - Device API: WiiM LinkPlay HTTP API
-
-## [0.1.0] - YYYY-MM-DD
-
-### Added
-- Initial public release
-- Basic WiiM device support
-- Core EQ mapping functionality
-- Desktop GUI application
+- Edition 2024 Rust features
 
 ---
 
