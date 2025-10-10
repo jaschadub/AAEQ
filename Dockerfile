@@ -1,6 +1,6 @@
 # Multi-stage build for AAEQ
 # Stage 1: Build the application
-FROM rust:1.83-slim-bookworm AS builder
+FROM rust:1.89-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -26,7 +26,9 @@ COPY crates ./crates
 COPY apps ./apps
 
 # Build the application in release mode
-RUN cargo build --release
+# Disable SQLx compile-time verification since we don't have a database available during build
+ENV SQLX_OFFLINE=true
+RUN cargo build --release --bin aaeq
 
 # Stage 2: Runtime image
 FROM debian:bookworm-slim
