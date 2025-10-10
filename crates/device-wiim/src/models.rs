@@ -1,29 +1,90 @@
 use serde::{Deserialize, Serialize};
 
 /// Response from WiiM getPlayerStatus
+/// See: HTTP API for WiiM Mini, section 2.3.1
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlayerStatus {
     #[serde(default)]
-    pub status: String,
+    pub r#type: String,  // "0" = master/standalone, "1" = slave
+
+    #[serde(default)]
+    pub ch: String,  // "0" = stereo, "1" = left, "2" = right
+
+    #[serde(default)]
+    pub mode: String,  // See mode table in docs (10-19 = Wiimu playlist, 31 = Spotify, etc.)
+
+    #[serde(default)]
+    pub r#loop: String,  // "0" = loop all, "1" = single loop, etc.
+
+    #[serde(default)]
+    pub eq: String,  // The preset number of the Equalizer
+
+    #[serde(default)]
+    pub status: String,  // "stop", "play", "loading", "pause"
+
+    #[serde(default)]
+    pub curpos: String,  // Position in ms
+
+    #[serde(default)]
+    pub offset_pts: String,
+
+    #[serde(default)]
+    pub totlen: String,  // Duration in ms
+
+    #[serde(default)]
+    pub alarmflag: String,
+
+    #[serde(default)]
+    pub plicount: String,  // Total number of tracks in playlist
+
+    #[serde(default)]
+    pub plicurr: String,  // Current track index
+
+    #[serde(default)]
+    pub vol: String,  // Current volume (0-100)
+
+    #[serde(default)]
+    pub mute: String,  // Current mute state ("0" = unmuted, "1" = muted)
+
+    // Additional fields that may be present (from metadata)
     #[serde(default)]
     pub title: String,
+
     #[serde(default)]
     pub artist: String,
+
     #[serde(default)]
     pub album: String,
+
     #[serde(default)]
-    pub genre: String,
+    pub vendor: String,
 }
 
-/// Response from WiiM EQGetList
+/// Response from WiiM getStatusEx
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct EqListResponse {
+pub struct StatusEx {
     #[serde(default)]
-    pub list: Vec<String>,
+    pub ssid: String,  // Device name
+
+    #[serde(default)]
+    pub uuid: String,  // Unique device ID
+
+    #[serde(rename = "DeviceName", default)]
+    pub device_name: String,
+
+    #[serde(default)]
+    pub firmware: String,
 }
 
-/// EQ band configuration from WiiM
+/// Generic JSON status response
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WiimEqBand {
-    pub gain: f32,  // dB value
+pub struct StatusResponse {
+    pub status: String,  // "OK" or "Failed"
+}
+
+/// EQ status response
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EqStatResponse {
+    #[serde(rename = "EQStat")]
+    pub eq_stat: String,  // "On" or "Off"
 }

@@ -133,9 +133,10 @@ AAEQ/
 - ⚠️ No mDNS discovery yet (manual IP entry required)
 - ⚠️ No rules management UI (database-only for now)
 - ⚠️ Polling is blocking in UI thread (should be async)
-- ⚠️ No preset validation before upload
-- ⚠️ WiiM API format not verified (need docs)
+- ⚠️ **Custom EQ upload NOT supported by WiiM API** (can only load predefined presets)
+- ⚠️ **Genre metadata not provided by WiiM API** (genre-based mapping requires manual entry)
 - ⚠️ No system tray support yet
+- ⚠️ Metadata availability depends on playback source (AUX/BT may not provide track info)
 
 ### How to Run
 
@@ -180,4 +181,40 @@ This v0.1 MVP successfully delivers:
 
 **Ready for testing with actual WiiM hardware!** 🎉
 
-Once you share the WiiM API docs, I can refine the API calls to match the exact format.
+## WiiM API Integration - COMPLETED ✓
+
+The WiiM HTTP API has been **fully implemented** based on the official documentation:
+
+### Verified API Commands
+
+✅ **getPlayerStatus** - Track metadata and playback state
+✅ **EQGetList** - List available EQ presets
+✅ **EQLoad:{name}** - Load EQ preset by name
+✅ **EQOn/EQOff** - Enable/disable EQ
+✅ **EQGetStat** - Check EQ on/off status
+✅ **setPlayerCmd:vol** - Volume control
+✅ **setPlayerCmd:mute** - Mute/unmute
+
+### API Documentation
+
+See `WIIM_API_REFERENCE.md` for complete command reference with examples.
+
+### Important Discovery
+
+The WiiM HTTP API **does not support**:
+- Setting custom EQ band values (only loading predefined presets)
+- Reading actual dB values of EQ bands
+- Creating or saving custom presets via API
+
+Therefore, the EQ editor with vertical sliders in AAEQ can be used to **design** EQ curves, but these cannot be uploaded to WiiM devices. Users must use the device's built-in presets only.
+
+### Testing
+
+To test with your WiiM device:
+
+```bash
+# Replace with your device IP
+curl "http://192.168.1.100/httpapi.asp?command=getPlayerStatus"
+curl "http://192.168.1.100/httpapi.asp?command=EQGetList"
+curl "http://192.168.1.100/httpapi.asp?command=EQLoad:Rock"
+```
