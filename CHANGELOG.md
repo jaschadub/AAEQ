@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2025-10-11
+
+### Fixed
+- HTML entity decoding in song names for proper EQ matching
+- Visual feedback for EQ application status
+
+### Added
+- Database backup and restore functionality
+- ARM64 (aarch64) Linux build support in release workflow
+
 ## [0.1.0] - 2025-10-10
 
 ### Added
@@ -44,5 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/jaschadub/AAEQ/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/jaschadub/AAEQ/releases/tag/v0.1.0
