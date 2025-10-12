@@ -194,6 +194,12 @@ Contributions are welcome! Please:
   - Currently only supports WiiM/LinkPlay devices
   - Future: Sonos, HEOS, Bluesound support planned
 
+- **System Tray on XFCE**:
+  - The system tray icon may not appear on XFCE desktop due to limited StatusNotifier protocol support
+  - The application window and all features work normally; only the tray icon visibility is affected
+  - Works correctly on GNOME, KDE, and other desktop environments
+  - Workaround: Keep the application window visible or use keyboard shortcuts to show/hide
+
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -1,5 +1,5 @@
 use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
-use aaeq_device_wiim::WiimController;
+use aaeq_device_wiim::{WiimController, discover_devices_quick};
 use aaeq_persistence::{AppSettingsRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
 use crate::views::*;
 use anyhow::Result;
@@ -11,6 +11,7 @@ use tokio::sync::{RwLock, mpsc};
 /// Commands that can be sent from UI to async worker
 enum AppCommand {
     ConnectDevice(String),
+    DiscoverDevices,
     RefreshPresets,
     ApplyPreset(String),
     SaveMapping(Scope, TrackMeta, String),
@@ -24,6 +25,7 @@ enum AppResponse {
     Connected(String),
     ConnectionFailed(String),
     Disconnected(String), // Device went offline during operation
+    DevicesDiscovered(Vec<(String, String)>), // Vec<(name, host)>
     PresetsLoaded(Vec<String>),
     PresetApplied(String),
     MappingSaved(String),
@@ -69,6 +71,8 @@ pub struct AaeqApp {
     auto_reconnect: bool,
     connection_lost_time: Option<Instant>,
     reconnect_interval: Duration,
+    discovered_devices: Vec<(String, String)>, // Vec<(name, host)>
+    show_discovery: bool,
 
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
@@ -110,6 +114,8 @@ impl AaeqApp {
             auto_reconnect: true, // Enable by default
             connection_lost_time: None,
             reconnect_interval: Duration::from_secs(5),
+            discovered_devices: vec![],
+            show_discovery: false,
             command_tx,
             response_rx,
         }
@@ -303,6 +309,24 @@ impl AaeqApp {
                     } else {
                         tracing::warn!("Device at {} is offline", host);
                         let _ = response_tx.send(AppResponse::ConnectionFailed(host));
+                    }
+                }
+
+                AppCommand::DiscoverDevices => {
+                    tracing::info!("Starting device discovery...");
+                    match discover_devices_quick().await {
+                        Ok(devices) => {
+                            let device_list: Vec<(String, String)> = devices
+                                .into_iter()
+                                .map(|d| (d.name, d.host))
+                                .collect();
+                            tracing::info!("Discovered {} devices", device_list.len());
+                            let _ = response_tx.send(AppResponse::DevicesDiscovered(device_list));
+                        }
+                        Err(e) => {
+                            tracing::error!("Device discovery failed: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Discovery failed: {}", e)));
+                        }
                     }
                 }
 
@@ -544,12 +568,21 @@ impl eframe::App for AaeqApp {
                 AppResponse::Connected(host) => {
                     self.status_message = Some(format!("Connected to {}", host));
                     self.connection_lost_time = None; // Clear reconnect timer
+                    self.show_discovery = false; // Close discovery dialog
                     // Request preset refresh after connection
                     let _ = self.command_tx.send(AppCommand::RefreshPresets);
                 }
                 AppResponse::ConnectionFailed(host) => {
                     self.status_message = Some(format!("Device {} offline", host));
                     self.device = None;
+                }
+                AppResponse::DevicesDiscovered(devices) => {
+                    self.discovered_devices = devices;
+                    if self.discovered_devices.is_empty() {
+                        self.status_message = Some("No devices found".to_string());
+                    } else {
+                        self.status_message = Some(format!("Found {} device(s)", self.discovered_devices.len()));
+                    }
                 }
                 AppResponse::Disconnected(msg) => {
                     tracing::warn!("Device disconnected: {}", msg);
@@ -647,6 +680,12 @@ impl eframe::App for AaeqApp {
                     self.device = Some(Arc::new(WiimController::new("WiiM Device", self.device_host.clone())));
                 }
 
+                if ui.button("🔍 Discover").on_hover_text("Discover WiiM devices on local network").clicked() {
+                    let _ = self.command_tx.send(AppCommand::DiscoverDevices);
+                    self.show_discovery = true;
+                    self.status_message = Some("Scanning for devices...".to_string());
+                }
+
                 if self.device.is_some() {
                     ui.label("✓ Connected");
                 } else {
@@ -675,6 +714,53 @@ impl eframe::App for AaeqApp {
                 });
             });
         });
+
+        // Device discovery dialog
+        if self.show_discovery {
+            egui::Window::new("Discovered Devices")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    if self.discovered_devices.is_empty() {
+                        ui.label("Scanning for devices...");
+                        ui.label("This may take a few seconds.");
+                    } else {
+                        ui.label(format!("Found {} device(s):", self.discovered_devices.len()));
+                        ui.separator();
+
+                        // List discovered devices
+                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            for (name, host) in &self.discovered_devices.clone() {
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("{}", name));
+                                    ui.label(format!("({})", host));
+                                    if ui.button("Connect").clicked() {
+                                        self.device_host = host.clone();
+                                        let _ = self.command_tx.send(AppCommand::ConnectDevice(host.clone()));
+                                        self.device = Some(Arc::new(WiimController::new("WiiM Device", host.clone())));
+                                        self.show_discovery = false;
+                                    }
+                                });
+                            }
+                        });
+                    }
+
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("Scan Again").clicked() {
+                            self.discovered_devices.clear();
+                            let _ = self.command_tx.send(AppCommand::DiscoverDevices);
+                            self.status_message = Some("Scanning for devices...".to_string());
+                        }
+
+                        if ui.button("Close").clicked() {
+                            self.show_discovery = false;
+                        }
+                    });
+                });
+        }
 
         // Main content
         if self.show_eq_editor {

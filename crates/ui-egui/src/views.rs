@@ -118,6 +118,14 @@ impl Default for NowPlayingView {
 }
 
 impl NowPlayingView {
+    /// Check if track metadata is valid (not all "Unknown")
+    fn is_valid_track(track: &TrackMeta) -> bool {
+        let is_unknown = track.artist == "Unknown"
+            && track.title == "Unknown"
+            && track.album == "Unknown";
+        !is_unknown
+    }
+
     pub fn show(&mut self, ui: &mut Ui) -> Option<NowPlayingAction> {
         let mut action = None;
 
@@ -273,21 +281,33 @@ impl NowPlayingView {
 
                 ui.add_space(10.0);
                 ui.separator();
-                ui.label("Save current preset for:");
 
-                ui.horizontal(|ui| {
-                    if ui.button("This Song").clicked() {
-                        action = Some(NowPlayingAction::SaveMapping(Scope::Song));
-                    }
-                    if ui.button("This Album").clicked() {
-                        action = Some(NowPlayingAction::SaveMapping(Scope::Album));
-                    }
-                    if ui.button("This Genre").clicked() {
-                        action = Some(NowPlayingAction::SaveMapping(Scope::Genre));
-                    }
-                    if ui.button("Default").clicked() {
-                        action = Some(NowPlayingAction::SaveMapping(Scope::Default));
-                    }
+                let is_valid = Self::is_valid_track(track);
+
+                if !is_valid {
+                    ui.label(
+                        egui::RichText::new("⚠ No track playing - cannot save mappings")
+                            .color(egui::Color32::YELLOW)
+                    );
+                } else {
+                    ui.label("Save current preset for:");
+                }
+
+                ui.add_enabled_ui(is_valid, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("This Song").clicked() {
+                            action = Some(NowPlayingAction::SaveMapping(Scope::Song));
+                        }
+                        if ui.button("This Album").clicked() {
+                            action = Some(NowPlayingAction::SaveMapping(Scope::Album));
+                        }
+                        if ui.button("This Genre").clicked() {
+                            action = Some(NowPlayingAction::SaveMapping(Scope::Genre));
+                        }
+                        if ui.button("Default").clicked() {
+                            action = Some(NowPlayingAction::SaveMapping(Scope::Default));
+                        }
+                    });
                 });
             } else {
                 ui.label("No track playing");

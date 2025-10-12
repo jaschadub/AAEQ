@@ -48,3 +48,6 @@ egui = "0.29"
 
 # Time
 chrono = "0.4"
+
+# mDNS/Zeroconf for device discovery
+mdns-sd = "0.11"
