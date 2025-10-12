@@ -1,5 +1,6 @@
 use aaeq_ui_egui::AaeqApp;
 use anyhow::Result;
+use single_instance::SingleInstance;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tray_icon::{
@@ -21,6 +22,19 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting AAEQ - Adaptive Audio Equalizer");
 
+    // Ensure only one instance is running
+    let _instance = SingleInstance::new("aaeq-app-instance")?;
+    if !_instance.is_single() {
+        eprintln!("Another instance of AAEQ is already running.");
+        tracing::error!("Another instance of AAEQ is already running");
+        std::process::exit(1);
+    }
+    tracing::info!("Single instance check passed");
+
+    // Keep the instance lock in a static location so it persists for the app lifetime
+    // We leak it intentionally to keep the lock held until process exit
+    let _instance_guard = Box::leak(Box::new(_instance));
+
     // Get database path
     let db_path = get_db_path()?;
     tracing::info!("Database path: {}", db_path.display());
@@ -41,7 +55,16 @@ async fn main() -> Result<()> {
 
     tracing::info!("Launching UI...");
 
+    // Initialize GTK on Linux (required for tray-icon)
+    #[cfg(target_os = "linux")]
+    {
+        tracing::info!("Initializing GTK...");
+        gtk::init().expect("Failed to initialize GTK");
+        tracing::info!("GTK initialized successfully");
+    }
+
     // Create tray icon
+    tracing::info!("Creating tray icon menu...");
     let tray_menu = Menu::new();
     let show_item = MenuItem::new("Show Window", true, None);
     let hide_item = MenuItem::new("Hide Window", true, None);
@@ -57,12 +80,15 @@ async fn main() -> Result<()> {
     let hide_id = hide_item.id().clone();
     let quit_id = quit_item.id().clone();
 
+    tracing::info!("Loading tray icon image...");
     let icon = load_icon();
+    tracing::info!("Building tray icon...");
     let _tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
         .with_tooltip("AAEQ - Adaptive Audio Equalizer")
         .with_icon(icon)
         .build()?;
+    tracing::info!("Tray icon created successfully");
 
     // Track window visibility
     let window_visible = Arc::new(Mutex::new(true));
@@ -71,12 +97,16 @@ async fn main() -> Result<()> {
     // Handle tray icon events
     let tray_channel = MenuEvent::receiver();
 
+    // Load window icon
+    let window_icon = load_window_icon();
+
     // Run UI
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 700.0])
             .with_min_inner_size([800.0, 500.0])
-            .with_title("AAEQ - Adaptive Audio Equalizer"),
+            .with_title("AAEQ - Adaptive Audio Equalizer")
+            .with_icon(window_icon),
         ..Default::default()
     };
 
@@ -123,44 +153,46 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Load embedded icon for system tray
+/// Load icon from embedded PNG file
 fn load_icon() -> tray_icon::Icon {
-    // Create a simple 32x32 RGBA icon with EQ bars pattern
-    let size = 32;
-    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    // Embed the icon at compile time
+    let icon_bytes = include_bytes!("../../../aaeq-icon.png");
 
-    // Draw a simple EQ bars icon
-    for y in 0..size {
-        for x in 0..size {
-            let idx = ((y * size + x) * 4) as usize;
+    // Load and decode the PNG
+    let img = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon image");
 
-            // Create 5 bars with different heights
-            let bar_width = size / 6;
-            let bar_idx = x / bar_width;
-            let heights = [20, 28, 24, 30, 22]; // Different bar heights
+    // Resize to appropriate size for tray icon (32x32 for most systems)
+    let img = img.resize_exact(32, 32, image::imageops::FilterType::Lanczos3);
 
-            if bar_idx < 5 {
-                let bar_height = heights[bar_idx as usize];
-                let bar_start = size - bar_height;
+    // Convert to RGBA
+    let rgba_img = img.to_rgba8();
+    let (width, height) = rgba_img.dimensions();
+    let rgba_data = rgba_img.into_raw();
 
-                // Draw bar
-                if y >= bar_start && x % bar_width < bar_width - 1 {
-                    // Gradient from blue to cyan
-                    rgba[idx] = 50;      // R
-                    rgba[idx + 1] = 150 + ((y - bar_start) * 105 / bar_height) as u8;  // G
-                    rgba[idx + 2] = 255; // B
-                    rgba[idx + 3] = 255; // A
-                } else {
-                    rgba[idx + 3] = 0; // Transparent
-                }
-            } else {
-                rgba[idx + 3] = 0; // Transparent
-            }
-        }
+    tray_icon::Icon::from_rgba(rgba_data, width, height)
+        .expect("Failed to create tray icon")
+}
+
+/// Load application window icon
+fn load_window_icon() -> egui::IconData {
+    // Embed the icon at compile time
+    let icon_bytes = include_bytes!("../../../aaeq-icon.png");
+
+    // Load and decode the PNG
+    let img = image::load_from_memory(icon_bytes)
+        .expect("Failed to load window icon");
+
+    // Convert to RGBA
+    let rgba_img = img.to_rgba8();
+    let (width, height) = rgba_img.dimensions();
+    let rgba_data = rgba_img.into_raw();
+
+    egui::IconData {
+        rgba: rgba_data,
+        width: width as u32,
+        height: height as u32,
     }
-
-    tray_icon::Icon::from_rgba(rgba, size, size)
-        .expect("Failed to create icon")
 }
 
 /// Get the database path (platform-specific)

@@ -7,6 +7,9 @@ pub struct TrackMeta {
     pub title: String,
     pub album: String,
     pub genre: String,
+    /// The original genre from the device (before any override)
+    #[serde(default)]
+    pub device_genre: String,
 }
 
 impl TrackMeta {
@@ -140,6 +143,7 @@ mod tests {
             title: "Time".to_string(),
             album: "The Dark Side of the Moon".to_string(),
             genre: "Progressive Rock".to_string(),
+            device_genre: "Progressive Rock".to_string(),
         };
 
         assert_eq!(track.song_key(), "pink floyd - time");

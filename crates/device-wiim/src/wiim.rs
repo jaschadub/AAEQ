@@ -148,6 +148,7 @@ impl DeviceController for WiimController {
             title: Self::decode_metadata_field(&status.title),
             album: Self::decode_metadata_field(&status.album),
             genre: String::new(),  // WiiM API doesn't provide genre directly
+            device_genre: String::new(),  // WiiM API doesn't provide genre directly
         };
 
         // If metadata is missing, try to extract from vendor field or use placeholder

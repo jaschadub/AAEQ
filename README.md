@@ -39,6 +39,32 @@ docker run -d --network host ghcr.io/jaschadub/aaeq:latest
 
 ### Build from Source
 
+#### Prerequisites
+
+**All Platforms:**
+- Rust 1.75+ (stable)
+
+**Linux:**
+- GTK3 development libraries
+- libxdo (for system tray support)
+- libappindicator3 (for system tray support)
+
+```bash
+# Ubuntu/Debian
+sudo apt install libgtk-3-dev libxdo-dev libappindicator3-dev
+
+# Arch Linux/Manjaro
+sudo pacman -S gtk3 xdotool libappindicator-gtk3
+```
+
+**macOS:**
+- No additional dependencies required
+
+**Windows:**
+- No additional dependencies required
+
+#### Build Steps
+
 ```bash
 # Install Rust (if not already installed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -110,6 +136,7 @@ AAEQ/
 
 - Rust 1.75+ (stable)
 - SQLite development libraries
+- **Linux only**: GTK3, libxdo, and libappindicator3 (see Build from Source section)
 
 ### Running in Development
 

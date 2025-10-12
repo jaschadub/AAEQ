@@ -145,8 +145,8 @@ impl NowPlayingView {
                         action = Some(NowPlayingAction::UpdateGenre(self.genre_edit.clone()));
                     }
                     if ui.small_button("↻").on_hover_text("Reset to device genre").clicked() {
-                        self.genre_edit = track.genre.clone();
-                        action = Some(NowPlayingAction::UpdateGenre(track.genre.clone()));
+                        self.genre_edit = track.device_genre.clone();
+                        action = Some(NowPlayingAction::UpdateGenre(track.device_genre.clone()));
                     }
                 });
 

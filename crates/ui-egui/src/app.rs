@@ -474,6 +474,9 @@ impl AaeqApp {
                                 if last_track_key.as_deref() != Some(&track_key) {
                                     tracing::info!("Track changed: {} - {}", track.artist, track.title);
 
+                                    // Store device genre before applying override
+                                    track.device_genre = track.genre.clone();
+
                                     // Load genre override if exists
                                     let genre_repo = GenreOverrideRepository::new(pool.clone());
                                     if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
