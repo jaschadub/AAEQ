@@ -23,6 +23,7 @@ enum AppCommand {
 enum AppResponse {
     Connected(String),
     ConnectionFailed(String),
+    Disconnected(String), // Device went offline during operation
     PresetsLoaded(Vec<String>),
     PresetApplied(String),
     MappingSaved(String),
@@ -65,6 +66,9 @@ pub struct AaeqApp {
     /// UI state
     show_eq_editor: bool,
     status_message: Option<String>,
+    auto_reconnect: bool,
+    connection_lost_time: Option<Instant>,
+    reconnect_interval: Duration,
 
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
@@ -103,6 +107,9 @@ impl AaeqApp {
             last_track_key: None,
             show_eq_editor: false,
             status_message: None,
+            auto_reconnect: true, // Enable by default
+            connection_lost_time: None,
+            reconnect_interval: Duration::from_secs(5),
             command_tx,
             response_rx,
         }
@@ -502,6 +509,14 @@ impl AaeqApp {
                             }
                             Err(e) => {
                                 tracing::error!("Poll error: {}", e);
+                                // Device appears to be disconnected
+                                if device.is_some() {
+                                    tracing::warn!("Device connection lost - marking as disconnected");
+                                    device = None;
+                                    current_preset = None;
+                                    last_track_key = None;
+                                    let _ = response_tx.send(AppResponse::Disconnected("Connection lost during polling".to_string()));
+                                }
                             }
                         }
                     }
@@ -513,17 +528,39 @@ impl AaeqApp {
 
 impl eframe::App for AaeqApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle window close event - minimize to tray instead of quitting
+        if ctx.input(|i| i.viewport().close_requested()) {
+            tracing::info!("Close requested - minimizing to tray");
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+
         // Process responses from async worker
         while let Ok(response) = self.response_rx.try_recv() {
             match response {
                 AppResponse::Connected(host) => {
                     self.status_message = Some(format!("Connected to {}", host));
+                    self.connection_lost_time = None; // Clear reconnect timer
                     // Request preset refresh after connection
                     let _ = self.command_tx.send(AppCommand::RefreshPresets);
                 }
                 AppResponse::ConnectionFailed(host) => {
                     self.status_message = Some(format!("Device {} offline", host));
                     self.device = None;
+                }
+                AppResponse::Disconnected(msg) => {
+                    tracing::warn!("Device disconnected: {}", msg);
+                    self.status_message = Some(format!("Disconnected: {}", msg));
+                    self.device = None;
+                    self.current_track = None;
+                    self.current_preset = None;
+                    self.now_playing_view.track = None;
+                    self.now_playing_view.current_preset = None;
+                    // Mark connection lost time for auto-reconnect
+                    if self.auto_reconnect && self.connection_lost_time.is_none() {
+                        self.connection_lost_time = Some(Instant::now());
+                        tracing::info!("Auto-reconnect enabled - will retry in {:?}", self.reconnect_interval);
+                    }
                 }
                 AppResponse::PresetsLoaded(presets) => {
                     self.available_presets = presets.clone();
@@ -569,6 +606,19 @@ impl eframe::App for AaeqApp {
             }
         }
 
+        // Auto-reconnect logic
+        if self.auto_reconnect && self.device.is_none() {
+            if let Some(lost_time) = self.connection_lost_time {
+                if lost_time.elapsed() >= self.reconnect_interval {
+                    tracing::info!("Attempting auto-reconnect to {}", self.device_host);
+                    self.status_message = Some(format!("Reconnecting to {}...", self.device_host));
+                    let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
+                    // Reset timer - will be set again if connection fails
+                    self.connection_lost_time = Some(Instant::now());
+                }
+            }
+        }
+
         // Top bar
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -598,6 +648,20 @@ impl eframe::App for AaeqApp {
                     ui.label("✓ Connected");
                 } else {
                     ui.label("⚠ Disconnected");
+                }
+
+                ui.separator();
+
+                if ui.checkbox(&mut self.auto_reconnect, "Auto-reconnect").on_hover_text("Automatically reconnect when device goes offline").changed() {
+                    if self.auto_reconnect && self.device.is_none() {
+                        // Enable auto-reconnect for disconnected device
+                        self.connection_lost_time = Some(Instant::now());
+                        tracing::info!("Auto-reconnect enabled");
+                    } else if !self.auto_reconnect {
+                        // Disable auto-reconnect
+                        self.connection_lost_time = None;
+                        tracing::info!("Auto-reconnect disabled");
+                    }
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
