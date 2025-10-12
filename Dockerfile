@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-dev \
     libgtk-3-dev \
     libfontconfig1-dev \
+    # Required for mdns-sd
+    libglib2.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -45,6 +47,8 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     libgtk-3-0 \
     libfontconfig1 \
+    # Required for mdns-sd at runtime
+    libglib2.0-0 \
     # Network utilities for testing
     curl \
     iputils-ping \
