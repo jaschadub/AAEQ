@@ -83,6 +83,7 @@ mod tests {
             title: "Time".to_string(),
             album: "The Dark Side of the Moon".to_string(),
             genre: "Rock".to_string(),
+            device_genre: "Rock".to_string(),
         };
 
         let mut rules = RulesIndex::default();
@@ -102,6 +103,7 @@ mod tests {
             title: "Money".to_string(),
             album: "The Dark Side of the Moon".to_string(),
             genre: "Rock".to_string(),
+            device_genre: "Rock".to_string(),
         };
 
         let mut rules = RulesIndex::default();
@@ -119,6 +121,7 @@ mod tests {
             title: "Stairway to Heaven".to_string(),
             album: "Led Zeppelin IV".to_string(),
             genre: "Rock".to_string(),
+            device_genre: "Rock".to_string(),
         };
 
         let mut rules = RulesIndex::default();
@@ -136,6 +139,7 @@ mod tests {
             title: "Unknown Song".to_string(),
             album: "Unknown Album".to_string(),
             genre: "Unknown".to_string(),
+            device_genre: "Unknown".to_string(),
         };
 
         let mut rules = RulesIndex::default();

@@ -5,7 +5,7 @@ members = [
     "crates/device-wiim",
     "crates/persistence",
     "crates/ui-egui",
-    "apps/desktop",
+    "apps/desktop", "crates/stream-server",
 ]
 
 [workspace.package]
