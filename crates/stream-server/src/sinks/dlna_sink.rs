@@ -14,10 +14,24 @@ use axum::{
     routing::get,
     Router,
 };
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+
+/// Get the local IP address that can reach the target device
+fn get_local_ip_for_device(device_ip: &IpAddr) -> Option<String> {
+    use std::net::UdpSocket;
+
+    // Create a UDP socket and connect to the device
+    // This doesn't actually send data, but determines which local interface would be used
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect((*device_ip, 1234)).ok()?;
+
+    // Get the local address that would be used to reach the target
+    let local_addr = socket.local_addr().ok()?;
+    Some(local_addr.ip().to_string())
+}
 
 /// Operating mode for DLNA sink
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,12 +99,15 @@ impl DlnaSink {
     /// Get the stream URL that clients should connect to
     pub fn stream_url(&self) -> Option<String> {
         if self.is_open {
-            // Use the server's actual IP if we know it
+            // Get the local IP address that can reach the device
             if let Some(device) = &self.device {
-                if let Some(ip) = &device.ip {
-                    return Some(format!("http://{}:{}/stream.wav", ip, self.server_addr.port()));
+                if let Some(device_ip) = &device.ip {
+                    if let Some(local_ip) = get_local_ip_for_device(device_ip) {
+                        return Some(format!("http://{}:{}/stream.wav", local_ip, self.server_addr.port()));
+                    }
                 }
             }
+            // Fallback to bind address
             Some(format!("http://{}/stream.wav", self.server_addr))
         } else {
             None

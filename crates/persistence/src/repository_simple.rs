@@ -283,6 +283,30 @@ impl AppSettingsRepository {
 
         Ok(())
     }
+
+    pub async fn get_last_input_device(&self) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT last_input_device FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)))
+    }
+
+    pub async fn set_last_input_device(&self, device: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE app_settings SET last_input_device = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(device)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// Repository for tracking last applied state

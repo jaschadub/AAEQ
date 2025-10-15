@@ -1,0 +1,413 @@
+/// Audio input/capture abstractions for the stream server
+///
+/// This module provides functionality for capturing audio from various sources:
+/// - System audio (loopback/monitor devices)
+/// - Application-specific audio
+/// - File playback
+/// - Network streams
+
+use crate::types::OutputConfig;
+use anyhow::{anyhow, Result};
+use cpal::traits::{DeviceTrait, HostTrait};
+use tokio::sync::mpsc;
+use tracing::{error, info};
+
+/// Input source that captures from system audio (loopback/monitor device)
+pub struct LocalDacInput;
+
+/// Wrapper around cpal::Stream that implements Send
+/// This is safe because we manage the stream carefully and don't actually
+/// access it from multiple threads - we just need to move it for lifetime management
+struct StreamHolder(#[allow(dead_code)] cpal::Stream);
+
+unsafe impl Send for StreamHolder {}
+unsafe impl Sync for StreamHolder {}
+
+impl LocalDacInput {
+    /// List available input devices
+    pub fn list_devices() -> Result<Vec<String>> {
+        let host = cpal::default_host();
+        let mut devices = Vec::new();
+
+        // Add default device
+        if let Some(device) = host.default_input_device() {
+            if let Ok(name) = device.name() {
+                devices.push(format!("default ({})", name));
+            }
+        }
+
+        // Add ALSA-configured monitor devices
+        // Check if aaeq_monitor exists (configured in .asoundrc)
+        if let Ok(output) = std::process::Command::new("arecord")
+            .args(["-L"])
+            .output()
+        {
+            if let Ok(output_str) = String::from_utf8(output.stdout) {
+                for line in output_str.lines() {
+                    let line = line.trim();
+                    if line == "aaeq_monitor" {
+                        devices.push("🔊 aaeq_monitor (AAEQ Capture - System Audio)".to_string());
+                    } else if line == "pulse" && !devices.iter().any(|d| d.contains("pulse")) {
+                        devices.push("pulse (PulseAudio)".to_string());
+                    }
+                }
+            }
+        }
+
+        // Try to get PulseAudio monitor devices using pactl
+        if let Ok(output) = std::process::Command::new("pactl")
+            .args(["list", "sources"])
+            .output()
+        {
+            if let Ok(output_str) = String::from_utf8(output.stdout) {
+                let lines: Vec<&str> = output_str.lines().collect();
+                let mut i = 0;
+                while i < lines.len() {
+                    if lines[i].trim().starts_with("Name:") {
+                        let name = lines[i]
+                            .trim()
+                            .strip_prefix("Name:")
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
+
+                        // Look ahead for description
+                        let mut description = name.clone();
+                        for j in i + 1..std::cmp::min(i + 5, lines.len()) {
+                            if lines[j].trim().starts_with("Description:") {
+                                description = lines[j]
+                                    .trim()
+                                    .strip_prefix("Description:")
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string();
+                                break;
+                            }
+                        }
+
+                        // Check if it's a monitor device
+                        if name.contains(".monitor") {
+                            // Don't add if already added via ALSA
+                            if !devices.iter().any(|d| d.contains(&name)) {
+                                devices.push(format!("🔊 {} ({})", name, description));
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+            }
+        }
+
+        // List all input devices with indicators for loopback/monitor devices
+        for device in host.input_devices()? {
+            if let Ok(name) = device.name() {
+                let lower_name = name.to_lowercase();
+
+                // Mark monitor/loopback devices that capture system audio
+                if lower_name.contains("monitor")
+                    || lower_name.contains("loopback")
+                    || lower_name.contains("stereo mix")
+                    || lower_name.contains("wave out mix")
+                    || lower_name.contains("what u hear")
+                {
+                    devices.push(format!("🔊 {} (system audio)", name));
+                } else {
+                    devices.push(name);
+                }
+            }
+        }
+
+        Ok(devices)
+    }
+
+    /// Start capturing audio from the specified device
+    ///
+    /// This function starts audio capture and manages the stream lifetime internally.
+    /// Audio samples are sent through the provided channel as Vec<f64>.
+    ///
+    /// # Arguments
+    /// * `device_name` - Optional device name. If None, uses default input device
+    /// * `cfg` - Audio configuration (sample rate, channels, etc.)
+    /// * `tx` - Channel to send captured audio samples
+    ///
+    /// # Returns
+    /// A stop_sender channel - send `()` to stop the capture. The stream handle is
+    /// managed internally in a dedicated thread and will be dropped when stopped.
+    pub fn start_capture(
+        device_name: Option<String>,
+        cfg: OutputConfig,
+        tx: mpsc::Sender<Vec<f64>>,
+    ) -> Result<mpsc::Sender<()>> {
+        info!(
+            "Starting local DAC input capture ({})",
+            device_name.as_deref().unwrap_or("default")
+        );
+
+        let host = cpal::default_host();
+
+        // Find the device
+        let device = if let Some(ref name) = device_name {
+            if name.starts_with("default") {
+                host.default_input_device()
+                    .ok_or_else(|| anyhow!("No default input device available"))?
+            } else {
+                // Strip the emoji and description if present
+                // Format: "🔊 device_name (Description)"
+                let mut clean_name = name
+                    .trim_start_matches("🔊 ")
+                    .to_string();
+
+                // Find the last '(' to remove description
+                if let Some(idx) = clean_name.rfind(" (") {
+                    clean_name = clean_name[..idx].trim().to_string();
+                }
+
+                info!("Looking for input device: '{}' (cleaned: '{}')", name, clean_name);
+
+                // Try to find device by exact name match first
+                if let Some(device) = host.input_devices()?.find(|d| {
+                    d.name()
+                        .map(|n| n == clean_name || n == *name)
+                        .unwrap_or(false)
+                }) {
+                    device
+                } else {
+                    // If not found, it might be an ALSA device name
+                    // Try to open it by name string
+                    info!("Device '{}' not found in CPAL list, trying as ALSA device name", clean_name);
+
+                    // For ALSA device names like "aaeq_monitor" or "pulse", we need to use
+                    // cpal's device_from_name functionality
+                    // Since CPAL doesn't expose this directly, we'll try listing all devices
+                    // and checking if any match
+                    host.input_devices()?
+                        .find(|d| {
+                            if let Ok(d_name) = d.name() {
+                                // Check if device name contains our target
+                                d_name.contains(&clean_name)
+                                    || clean_name.contains(&d_name)
+                                    || d_name == "pulse"  // PulseAudio default
+                                    || d_name == "default"  // System default
+                            } else {
+                                false
+                            }
+                        })
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "Input device '{}' not found. Make sure ALSA can access it. \
+                                 Try running 'arecord -L' to see available devices.",
+                                clean_name
+                            )
+                        })?
+                }
+            }
+        } else {
+            host.default_input_device()
+                .ok_or_else(|| anyhow!("No default input device available"))?
+        };
+
+        let device_name = device.name()?;
+        info!("Using input device: {}", device_name);
+
+        // Get supported config
+        let supported_configs = device.supported_input_configs()?;
+        let supported_config = supported_configs
+            .filter(|c| c.channels() == cfg.channels)
+            .find(|c| {
+                c.min_sample_rate().0 <= cfg.sample_rate
+                    && c.max_sample_rate().0 >= cfg.sample_rate
+            })
+            .ok_or_else(|| anyhow!("No supported config found for {} Hz", cfg.sample_rate))?;
+
+        let config = supported_config.with_sample_rate(cpal::SampleRate(cfg.sample_rate));
+        let sample_format = config.sample_format();
+
+        info!(
+            "Input config: {:?} channels, {} Hz, {:?}",
+            config.channels(),
+            config.sample_rate().0,
+            sample_format
+        );
+
+        // Create stop channel
+        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
+        let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
+        let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_flag_clone = stop_flag.clone();
+
+        // Spawn a thread to wait for stop signal
+        let _stop_handle = std::thread::spawn(move || {
+            let _result = stop_rx.blocking_recv();
+            stop_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        // Build the input stream
+        let stream = match sample_format {
+            cpal::SampleFormat::F32 => {
+                let tx = tx.clone();
+                let stop_flag = stop_flag.clone();
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+
+                        // Convert f32 to f64
+                        let samples: Vec<f64> = data.iter().map(|&s| s as f64).collect();
+
+                        // Send to channel (non-blocking)
+                        if let Ok(tx_lock) = tx.lock() {
+                            if let Some(ref sender) = *tx_lock {
+                                let _ = sender.try_send(samples);
+                            }
+                        }
+                    },
+                    move |err| {
+                        error!("Input stream error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            cpal::SampleFormat::I16 => {
+                let tx = tx.clone();
+                let stop_flag = stop_flag.clone();
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+
+                        // Convert i16 to f64 (-1.0 to 1.0)
+                        let samples: Vec<f64> = data.iter().map(|&s| s as f64 / 32768.0).collect();
+
+                        // Send to channel (non-blocking)
+                        if let Ok(tx_lock) = tx.lock() {
+                            if let Some(ref sender) = *tx_lock {
+                                let _ = sender.try_send(samples);
+                            }
+                        }
+                    },
+                    move |err| {
+                        error!("Input stream error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            cpal::SampleFormat::U16 => {
+                let tx = tx.clone();
+                let stop_flag = stop_flag.clone();
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+
+                        // Convert u16 to f64 (-1.0 to 1.0)
+                        let samples: Vec<f64> = data
+                            .iter()
+                            .map(|&s| (s as f64 - 32768.0) / 32768.0)
+                            .collect();
+
+                        // Send to channel (non-blocking)
+                        if let Ok(tx_lock) = tx.lock() {
+                            if let Some(ref sender) = *tx_lock {
+                                let _ = sender.try_send(samples);
+                            }
+                        }
+                    },
+                    move |err| {
+                        error!("Input stream error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            cpal::SampleFormat::U8 => {
+                let tx = tx.clone();
+                let stop_flag = stop_flag.clone();
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[u8], _: &cpal::InputCallbackInfo| {
+                        if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            return;
+                        }
+
+                        // Convert u8 to f64 (-1.0 to 1.0)
+                        let samples: Vec<f64> = data
+                            .iter()
+                            .map(|&s| (s as f64 - 128.0) / 128.0)
+                            .collect();
+
+                        // Send to channel (non-blocking)
+                        if let Ok(tx_lock) = tx.lock() {
+                            if let Some(ref sender) = *tx_lock {
+                                let _ = sender.try_send(samples);
+                            }
+                        }
+                    },
+                    move |err| {
+                        error!("Input stream error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Unsupported sample format for input: {:?}",
+                    sample_format
+                ))
+            }
+        };
+
+        // Start the stream
+        use cpal::traits::StreamTrait;
+        stream.play()?;
+        info!("Input stream started successfully");
+
+        // Wrap the stream in a Send-able holder
+        let stream_holder = StreamHolder(stream);
+
+        // Spawn a dedicated thread to hold the stream handle
+        // The stream must be kept alive for capture to continue
+        let (thread_stop_tx, thread_stop_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let _stream = stream_holder; // Keep stream alive
+            // Block until stop signal received
+            let _ = thread_stop_rx.recv();
+            info!("Input stream thread exiting, stream will be dropped");
+        });
+
+        // Wrap the stop_tx to signal both the callback and the thread
+        let (final_stop_tx, mut final_stop_rx) = mpsc::channel::<()>(1);
+        tokio::spawn(async move {
+            let _ = final_stop_rx.recv().await;
+            let _ = stop_tx.send(()).await; // Signal stop flag
+            let _ = thread_stop_tx.send(()); // Signal thread to exit
+        });
+
+        Ok(final_stop_tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_list_input_devices() {
+        // This test may fail on systems without audio hardware
+        match LocalDacInput::list_devices() {
+            Ok(devices) => {
+                println!("Found {} input device(s)", devices.len());
+                for device in devices {
+                    println!("  - {}", device);
+                }
+            }
+            Err(e) => {
+                println!("Failed to list input devices (this is OK in CI): {}", e);
+            }
+        }
+    }
+}

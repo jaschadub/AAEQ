@@ -18,6 +18,7 @@ pub struct LocalDacSink {
     device: Option<Device>,
     stream: Option<Stream>,
     config: Option<OutputConfig>,
+    #[allow(dead_code)]
     tx: Option<mpsc::Sender<Vec<u8>>>,
     buffer: Arc<Mutex<RingBuffer>>,
     is_open: bool,

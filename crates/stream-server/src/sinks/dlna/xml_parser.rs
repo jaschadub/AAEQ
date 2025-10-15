@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use super::discovery::{DlnaDevice, DlnaService};
-use std::collections::HashMap;
 
 /// Parse UPnP device description XML using quick-xml
 pub fn parse_device_xml_proper(xml: &str, location: &str) -> Result<DlnaDevice> {

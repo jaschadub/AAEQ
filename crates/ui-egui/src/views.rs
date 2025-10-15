@@ -1,4 +1,5 @@
 use aaeq_core::{EqPreset, TrackMeta, Scope};
+use crate::audio_viz::AudioVizState;
 use crate::widgets::VerticalSlider;
 use egui::{Context, ScrollArea, Ui};
 
@@ -383,4 +384,382 @@ pub enum PresetAction {
     Select(String),
     Apply(String),
     CreateCustom,
+}
+
+/// View for DSP/Stream Server output control
+pub struct DspView {
+    pub selected_sink: SinkType,
+    pub available_devices: Vec<String>,
+    pub selected_device: Option<String>,
+    pub available_input_devices: Vec<String>,
+    pub selected_input_device: Option<String>,
+    pub sample_rate: u32,
+    pub format: FormatOption,
+    pub buffer_ms: u32,
+    pub is_streaming: bool,
+    pub stream_status: Option<StreamStatus>,
+    pub show_device_discovery: bool,
+    pub discovering: bool,
+    pub use_test_tone: bool, // Toggle between captured audio and test tone
+    pub audio_viz: AudioVizState, // Audio waveform visualization
+    pub selected_preset: Option<String>, // EQ preset for DSP processing
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SinkType {
+    LocalDac,
+    Dlna,
+    AirPlay,
+}
+
+impl SinkType {
+    #[allow(dead_code)]
+    fn as_str(&self) -> &'static str {
+        match self {
+            SinkType::LocalDac => "Local DAC",
+            SinkType::Dlna => "DLNA/UPnP",
+            SinkType::AirPlay => "AirPlay",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatOption {
+    F32,
+    S24LE,
+    S16LE,
+}
+
+impl FormatOption {
+    fn as_str(&self) -> &'static str {
+        match self {
+            FormatOption::F32 => "32-bit Float",
+            FormatOption::S24LE => "24-bit PCM",
+            FormatOption::S16LE => "16-bit PCM",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamStatus {
+    pub latency_ms: u32,
+    pub frames_written: u64,
+    pub underruns: u64,
+    pub buffer_fill: f32,
+}
+
+impl Default for DspView {
+    fn default() -> Self {
+        Self {
+            selected_sink: SinkType::LocalDac,
+            available_devices: vec![],
+            selected_device: None,
+            available_input_devices: vec![],
+            selected_input_device: None,
+            sample_rate: 48000,
+            format: FormatOption::F32, // Changed from S24LE - Local DAC only supports F32 and S16LE
+            buffer_ms: 150,
+            is_streaming: false,
+            stream_status: None,
+            show_device_discovery: false,
+            discovering: false,
+            use_test_tone: false, // Default to captured audio
+            audio_viz: AudioVizState::new(),
+            selected_preset: None, // No preset selected by default
+        }
+    }
+}
+
+impl DspView {
+    pub fn show(&mut self, ui: &mut Ui) -> Option<DspAction> {
+        let mut action = None;
+
+        ui.group(|ui| {
+            ui.heading("Audio Output (DSP)");
+            ui.separator();
+
+            // Sink type selector
+            ui.horizontal(|ui| {
+                ui.label("Output Type:");
+
+                if ui.selectable_label(self.selected_sink == SinkType::LocalDac, "Local DAC").clicked() {
+                    self.selected_sink = SinkType::LocalDac;
+                    action = Some(DspAction::SinkTypeChanged(SinkType::LocalDac));
+                }
+                if ui.selectable_label(self.selected_sink == SinkType::Dlna, "DLNA/UPnP").clicked() {
+                    self.selected_sink = SinkType::Dlna;
+                    action = Some(DspAction::SinkTypeChanged(SinkType::Dlna));
+                }
+                if ui.selectable_label(self.selected_sink == SinkType::AirPlay, "AirPlay").clicked() {
+                    self.selected_sink = SinkType::AirPlay;
+                    action = Some(DspAction::SinkTypeChanged(SinkType::AirPlay));
+                }
+            });
+
+            ui.add_space(5.0);
+            ui.separator();
+
+            // Audio Source section
+            ui.label("Audio Source:");
+
+            // Test tone toggle
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.use_test_tone, "Use Test Tone").on_hover_text("Use 1kHz test tone instead of captured audio").changed() {
+                    action = Some(DspAction::ToggleTestTone);
+                }
+            });
+
+            // Input device selection (only show if not using test tone)
+            if !self.use_test_tone {
+                ui.horizontal(|ui| {
+                    ui.label("Input Device:");
+
+                    egui::ComboBox::from_id_salt("input_device_selector")
+                        .selected_text(self.selected_input_device.as_deref().unwrap_or("(none)"))
+                        .show_ui(ui, |ui| {
+                            for device in &self.available_input_devices.clone() {
+                                if ui.selectable_label(
+                                    self.selected_input_device.as_ref() == Some(device),
+                                    device
+                                ).clicked() {
+                                    self.selected_input_device = Some(device.clone());
+                                    action = Some(DspAction::InputDeviceSelected(device.clone()));
+                                }
+                            }
+                        });
+
+                    if ui.button("🔍").on_hover_text("Discover input devices").clicked() {
+                        action = Some(DspAction::DiscoverInputDevices);
+                    }
+                });
+            }
+
+            ui.add_space(5.0);
+            ui.separator();
+
+            // Output Device selection
+            ui.label("Audio Output:");
+
+            ui.horizontal(|ui| {
+                ui.label("Output Device:");
+
+                egui::ComboBox::from_id_salt("device_selector")
+                    .selected_text(self.selected_device.as_deref().unwrap_or("(none)"))
+                    .show_ui(ui, |ui| {
+                        for device in &self.available_devices.clone() {
+                            if ui.selectable_label(
+                                self.selected_device.as_ref() == Some(device),
+                                device
+                            ).clicked() {
+                                self.selected_device = Some(device.clone());
+                                action = Some(DspAction::DeviceSelected(device.clone()));
+                            }
+                        }
+                    });
+
+                if ui.button("🔍 Discover").on_hover_text("Discover available devices").clicked() {
+                    self.show_device_discovery = true;
+                    self.discovering = true;
+                    action = Some(DspAction::DiscoverDevices);
+                }
+            });
+
+            ui.add_space(5.0);
+            ui.separator();
+            ui.label("Configuration:");
+
+            // Sample rate selector
+            ui.horizontal(|ui| {
+                ui.label("Sample Rate:");
+                egui::ComboBox::from_id_salt("sample_rate")
+                    .selected_text(format!("{} Hz", self.sample_rate))
+                    .show_ui(ui, |ui| {
+                        for &rate in &[44100, 48000, 96000, 192000] {
+                            if ui.selectable_label(
+                                self.sample_rate == rate,
+                                format!("{} Hz", rate)
+                            ).clicked() {
+                                self.sample_rate = rate;
+                            }
+                        }
+                    });
+            });
+
+            // Format selector
+            ui.horizontal(|ui| {
+                ui.label("Format:");
+                egui::ComboBox::from_id_salt("format")
+                    .selected_text(self.format.as_str())
+                    .show_ui(ui, |ui| {
+                        for &fmt in &[FormatOption::F32, FormatOption::S24LE, FormatOption::S16LE] {
+                            if ui.selectable_label(
+                                self.format == fmt,
+                                fmt.as_str()
+                            ).clicked() {
+                                self.format = fmt;
+                            }
+                        }
+                    });
+            });
+
+            // Buffer size
+            ui.horizontal(|ui| {
+                ui.label("Buffer:");
+                ui.add(egui::Slider::new(&mut self.buffer_ms, 50..=500).suffix(" ms"));
+            });
+
+            // EQ Preset selector
+            ui.horizontal(|ui| {
+                ui.label("EQ Preset:");
+                egui::ComboBox::from_id_salt("eq_preset")
+                    .selected_text(self.selected_preset.as_deref().unwrap_or("None"))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(self.selected_preset.is_none(), "None").clicked() {
+                            self.selected_preset = None;
+                            action = Some(DspAction::PresetSelected(None));
+                        }
+                        for preset_name in crate::preset_library::list_known_presets() {
+                            if ui.selectable_label(
+                                self.selected_preset.as_deref() == Some(preset_name),
+                                preset_name
+                            ).clicked() {
+                                self.selected_preset = Some(preset_name.to_string());
+                                action = Some(DspAction::PresetSelected(Some(preset_name.to_string())));
+                            }
+                        }
+                    });
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+
+            // Start/Stop controls
+            ui.horizontal(|ui| {
+                if !self.is_streaming {
+                    if ui.button("▶ Start Streaming").clicked() {
+                        action = Some(DspAction::StartStreaming);
+                    }
+                } else {
+                    if ui.button("⏹ Stop Streaming").clicked() {
+                        action = Some(DspAction::StopStreaming);
+                    }
+                }
+
+                if self.is_streaming {
+                    ui.label("🔴 Streaming");
+                } else {
+                    ui.label("⚪ Stopped");
+                }
+            });
+
+            // Stream status display
+            if let Some(status) = &self.stream_status {
+                ui.add_space(10.0);
+                ui.separator();
+                ui.label("Stream Status:");
+
+                ui.horizontal(|ui| {
+                    ui.label(format!("Latency: {} ms", status.latency_ms));
+                    ui.label(format!("Frames: {}", status.frames_written));
+                });
+
+                if status.underruns > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("⚠ Underruns: {}", status.underruns))
+                            .color(egui::Color32::YELLOW)
+                    );
+                }
+
+                // Buffer fill indicator
+                ui.horizontal(|ui| {
+                    ui.label("Buffer:");
+                    let progress_bar = egui::ProgressBar::new(status.buffer_fill)
+                        .text(format!("{:.0}%", status.buffer_fill * 100.0));
+                    ui.add(progress_bar);
+                });
+            }
+
+            ui.add_space(5.0);
+
+            // Audio visualization toggle
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.audio_viz.enabled, "Show Waveform").on_hover_text("Display real-time audio waveform visualization").changed() {
+                    action = Some(DspAction::ToggleVisualization);
+                }
+            });
+
+            // Show audio visualization if enabled
+            if self.audio_viz.enabled {
+                ui.add_space(5.0);
+                ui.separator();
+                self.audio_viz.show(ui);
+            }
+
+            ui.add_space(5.0);
+
+            // Test controls
+            if ui.button("🔊 Test Tone").on_hover_text("Play a 1kHz test tone for 2 seconds").clicked() {
+                action = Some(DspAction::PlayTestTone);
+            }
+        });
+
+        // Device discovery dialog
+        if self.show_device_discovery {
+            egui::Window::new("Discover Devices")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    if self.discovering && self.available_devices.is_empty() {
+                        ui.label("Scanning for devices...");
+                        ui.spinner();
+                    } else if self.available_devices.is_empty() {
+                        ui.label("No devices found");
+                    } else {
+                        ui.label(format!("Found {} device(s):", self.available_devices.len()));
+                        ui.separator();
+
+                        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                            for device in &self.available_devices.clone() {
+                                if ui.button(device).clicked() {
+                                    self.selected_device = Some(device.clone());
+                                    action = Some(DspAction::DeviceSelected(device.clone()));
+                                    self.show_device_discovery = false;
+                                    self.discovering = false;
+                                }
+                            }
+                        });
+                    }
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Scan Again").clicked() {
+                            self.discovering = true;
+                            action = Some(DspAction::DiscoverDevices);
+                        }
+
+                        if ui.button("Close").clicked() {
+                            self.show_device_discovery = false;
+                            self.discovering = false;
+                        }
+                    });
+                });
+        }
+
+        action
+    }
+}
+
+pub enum DspAction {
+    SinkTypeChanged(SinkType),
+    DeviceSelected(String),
+    DiscoverDevices,
+    ToggleTestTone,
+    InputDeviceSelected(String),
+    DiscoverInputDevices,
+    StartStreaming,
+    StopStreaming,
+    PlayTestTone,
+    ToggleVisualization,
+    PresetSelected(Option<String>),
 }

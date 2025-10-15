@@ -53,8 +53,14 @@ pub async fn discover_devices(timeout_secs: u64) -> Result<Vec<DlnaDevice>> {
     // Non-blocking socket for async operation
     socket.set_nonblocking(true)?;
 
+    let mut receive_attempts = 0;
+    let mut receive_timeouts = 0;
+
+    info!("Listening for SSDP responses...");
+
     while tokio::time::Instant::now() < deadline {
         let mut buf = [0u8; 2048];
+        receive_attempts += 1;
 
         match timeout(Duration::from_millis(100), async {
             loop {
@@ -74,7 +80,8 @@ pub async fn discover_devices(timeout_secs: u64) -> Result<Vec<DlnaDevice>> {
         {
             Ok(Ok((len, addr))) => {
                 let response = String::from_utf8_lossy(&buf[..len]);
-                debug!("Received SSDP response from {}: {}", addr, response);
+                info!("Received SSDP response from {} ({} bytes)", addr, len);
+                debug!("Response content: {}", response);
 
                 if let Some(device) = parse_ssdp_response(&response, addr.ip()).await {
                     if !devices.contains_key(&device.uuid) {
@@ -88,10 +95,12 @@ pub async fn discover_devices(timeout_secs: u64) -> Result<Vec<DlnaDevice>> {
             }
             Err(_) => {
                 // Timeout, continue searching
+                receive_timeouts += 1;
             }
         }
     }
 
+    debug!("Discovery stats: {} receive attempts, {} timeouts", receive_attempts, receive_timeouts);
     info!("DLNA discovery complete, found {} device(s)", devices.len());
     Ok(devices.into_values().collect())
 }
@@ -109,27 +118,111 @@ pub async fn find_device_by_name(
         .find(|d| d.name.to_lowercase().contains(&name_lower)))
 }
 
+/// Create a DLNA device manually from an IP address
+///
+/// This bypasses SSDP discovery and directly fetches the device description from a known IP.
+/// Useful when multicast discovery is blocked by firewalls or network configuration.
+pub async fn create_device_from_ip(ip: &str, port: Option<u16>) -> Result<DlnaDevice> {
+    let port = port.unwrap_or(49152); // Standard UPnP port
+    let location = format!("http://{}:{}/description.xml", ip, port);
+
+    info!("Attempting to create DLNA device from IP: {}", location);
+
+    match fetch_device_description(&location).await {
+        Ok(mut device) => {
+            // Parse the IP address
+            let ip_addr: IpAddr = ip.parse()
+                .map_err(|e| anyhow::anyhow!("Invalid IP address: {}", e))?;
+            device.ip = Some(ip_addr);
+            info!("Successfully created DLNA device from IP: {} ({})", device.name, device.uuid);
+            Ok(device)
+        }
+        Err(e) => {
+            warn!("Failed to create device from IP {}: {}", ip, e);
+            Err(e)
+        }
+    }
+}
+
 /// Create a UDP socket for SSDP multicast
 fn create_ssdp_socket() -> Result<UdpSocket> {
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    use std::net::Ipv4Addr;
+
+    // Use socket2 for more control over socket options
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+
+    // Enable address reuse to allow multiple discovery instances and coexist with other UPnP services
+    socket.set_reuse_address(true)?;
+    #[cfg(unix)]
+    socket.set_reuse_port(true)?;
+
+    // Bind to any available port for sending M-SEARCH, but we'll listen on the multicast group
+    let addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    socket.bind(&addr.into())?;
+
+    // Convert to std::net::UdpSocket
+    let socket: UdpSocket = socket.into();
+
+    // Get the actual bound address for logging
+    let local_addr = socket.local_addr()?;
+    info!("SSDP socket bound to: {}", local_addr);
+
     socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+    socket.set_write_timeout(Some(Duration::from_millis(100)))?;
+
+    // Join the SSDP multicast group to receive multicast responses
+    let multicast_addr = Ipv4Addr::new(239, 255, 255, 250);
+    let interface_addr = Ipv4Addr::UNSPECIFIED;
+
+    match socket.join_multicast_v4(&multicast_addr, &interface_addr) {
+        Ok(_) => info!("Successfully joined SSDP multicast group 239.255.255.250"),
+        Err(e) => {
+            warn!("Failed to join multicast group: {}. Discovery may not work.", e);
+            return Err(e.into());
+        }
+    }
+
+    // Set multicast TTL
+    socket.set_multicast_ttl_v4(2)?;
+
+    debug!("SSDP socket created and configured");
     Ok(socket)
 }
 
 /// Send M-SEARCH request to discover MediaRenderer devices
 fn send_msearch(socket: &UdpSocket) -> Result<()> {
-    let msearch = format!(
-        "M-SEARCH * HTTP/1.1\r\n\
-         HOST: {}\r\n\
-         MAN: \"ssdp:discover\"\r\n\
-         MX: {}\r\n\
-         ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\
-         \r\n",
-        SSDP_ADDR, SSDP_MX
-    );
+    // Try multiple search targets to maximize device discovery
+    let search_targets = vec![
+        "urn:schemas-upnp-org:device:MediaRenderer:1",
+        "ssdp:all",  // Search for all UPnP devices
+    ];
 
-    socket.send_to(msearch.as_bytes(), SSDP_ADDR)?;
-    debug!("Sent M-SEARCH for MediaRenderer devices");
+    for st in search_targets {
+        let msearch = format!(
+            "M-SEARCH * HTTP/1.1\r\n\
+             HOST: {}\r\n\
+             MAN: \"ssdp:discover\"\r\n\
+             MX: {}\r\n\
+             ST: {}\r\n\
+             \r\n",
+            SSDP_ADDR, SSDP_MX, st
+        );
+
+        match socket.send_to(msearch.as_bytes(), SSDP_ADDR) {
+            Ok(bytes_sent) => {
+                info!("Sent M-SEARCH for {} ({} bytes to {})", st, bytes_sent, SSDP_ADDR);
+            }
+            Err(e) => {
+                warn!("Failed to send M-SEARCH for {}: {}", st, e);
+                return Err(e.into());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -139,10 +232,7 @@ async fn parse_ssdp_response(response: &str, source_ip: IpAddr) -> Option<DlnaDe
     let location = response
         .lines()
         .find(|line| line.to_lowercase().starts_with("location:"))?
-        .split(':')
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join(":")
+        .trim_start_matches(|c: char| c.to_ascii_lowercase() != 'h') // Find the start of http://
         .trim()
         .to_string();
 

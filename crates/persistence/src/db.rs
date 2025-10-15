@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::migrate::MigrateDatabase;
+use sqlx::Row;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -109,6 +110,22 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     "#)
     .execute(pool)
     .await?;
+
+    // Migration 004: Add last_input_device to app_settings
+    // Check if column exists first (SQLite doesn't have IF NOT EXISTS for ALTER TABLE)
+    let column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('app_settings') WHERE name = 'last_input_device'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !column_exists {
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN last_input_device TEXT")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added last_input_device column to app_settings");
+    }
 
     tracing::info!("Database migrations completed");
     Ok(())

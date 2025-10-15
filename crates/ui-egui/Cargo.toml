@@ -8,6 +8,7 @@ license.workspace = true
 aaeq-core = { path = "../core" }
 aaeq-persistence = { path = "../persistence" }
 aaeq-device-wiim = { path = "../device-wiim" }
+stream-server = { path = "../stream-server" }
 eframe = { workspace = true }
 egui = { workspace = true }
 tokio = { workspace = true }
@@ -15,4 +16,5 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 sqlx = { workspace = true }
 chrono = { workspace = true }
+async-trait = { workspace = true }
 zip = "2.2"

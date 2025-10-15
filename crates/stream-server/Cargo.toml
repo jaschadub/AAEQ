@@ -9,6 +9,7 @@ homepage.workspace = true
 
 [dependencies]
 # Workspace dependencies
+aaeq-core = { path = "../core" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
@@ -33,6 +34,7 @@ async-stream = "0.3"
 serde_json = { workspace = true }
 reqwest = { version = "0.12", features = ["blocking"] }
 quick-xml = "0.36"
+socket2 = "0.5"
 
 # AirPlay / mDNS
 mdns-sd = { workspace = true }
