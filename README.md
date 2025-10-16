@@ -45,13 +45,6 @@ Download the latest release for your platform:
 
 [→ Latest Releases](https://github.com/jaschadub/AAEQ/releases)
 
-### Docker
-
-```bash
-docker pull ghcr.io/jaschadub/aaeq:latest
-docker run -d --network host ghcr.io/jaschadub/aaeq:latest
-```
-
 ### Build from Source
 
 #### Prerequisites
