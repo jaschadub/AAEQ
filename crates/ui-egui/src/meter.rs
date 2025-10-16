@@ -149,7 +149,8 @@ fn draw_one_meter(
     // arc geometry - slightly larger arc
     let cx = rect.center().x;
     let cy = rect.max.y - 15.0;
-    let radius = rect.width() * 0.95;
+    // Use the smaller of width or height to keep arc visible when window stretches
+    let radius = rect.width().min(rect.height() * 0.8) * 0.95;
     let start = -145f32.to_radians();
     let end   = -35f32.to_radians();
 
