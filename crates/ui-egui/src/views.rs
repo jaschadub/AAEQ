@@ -961,13 +961,18 @@ impl DspView {
                 self.pre_eq_meter.tick();
                 self.post_eq_meter.tick();
 
-                // Display meters side by side
+                // Display meters side by side, using available width like waveform
                 ui.horizontal(|ui| {
+                    let available_width = ui.available_width();
+                    let spacing = 20.0;
+                    let meter_width = (available_width - spacing) / 2.0;
+                    let meter_height = 200.0;
+
                     // Pre-EQ meter
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Pre-EQ").size(16.0).strong());
                         let (meter_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(280.0, 200.0),
+                            egui::vec2(meter_width, meter_height),
                             egui::Sense::hover()
                         );
                         if ui.is_rect_visible(meter_rect) {
@@ -976,13 +981,13 @@ impl DspView {
                         }
                     });
 
-                    ui.add_space(30.0);
+                    ui.add_space(spacing);
 
                     // Post-EQ meter
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new("Post-EQ").size(16.0).strong());
                         let (meter_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(280.0, 200.0),
+                            egui::vec2(meter_width, meter_height),
                             egui::Sense::hover()
                         );
                         if ui.is_rect_visible(meter_rect) {
