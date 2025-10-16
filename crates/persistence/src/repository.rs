@@ -287,3 +287,164 @@ impl LastAppliedRepository {
         }))
     }
 }
+
+/// Repository for custom EQ preset operations
+pub struct CustomEqPresetRepository {
+    pool: SqlitePool,
+}
+
+impl CustomEqPresetRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new custom EQ preset with bands
+    pub async fn create(&self, preset: &aaeq_core::EqPreset) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        let preset_id = sqlx::query!(
+            r#"
+            INSERT INTO custom_eq_preset (name, created_at, updated_at)
+            VALUES (?, ?, ?)
+            "#,
+            preset.name,
+            now,
+            now
+        )
+        .execute(&self.pool)
+        .await?
+        .last_insert_rowid();
+
+        // Insert bands
+        for band in &preset.bands {
+            sqlx::query!(
+                r#"
+                INSERT INTO custom_eq_band (preset_id, frequency, gain)
+                VALUES (?, ?, ?)
+                "#,
+                preset_id,
+                band.frequency,
+                band.gain
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(preset_id)
+    }
+
+    /// Update an existing custom EQ preset
+    pub async fn update(&self, preset: &aaeq_core::EqPreset, preset_id: i64) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query!(
+            r#"
+            UPDATE custom_eq_preset
+            SET name = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+            preset.name,
+            now,
+            preset_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Delete old bands
+        sqlx::query!(
+            r#"
+            DELETE FROM custom_eq_band WHERE preset_id = ?
+            "#,
+            preset_id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Insert new bands
+        for band in &preset.bands {
+            sqlx::query!(
+                r#"
+                INSERT INTO custom_eq_band (preset_id, frequency, gain)
+                VALUES (?, ?, ?)
+                "#,
+                preset_id,
+                band.frequency,
+                band.gain
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Get a custom EQ preset by name
+    pub async fn get_by_name(&self, name: &str) -> Result<Option<aaeq_core::EqPreset>> {
+        let preset_row = sqlx::query!(
+            r#"
+            SELECT id, name
+            FROM custom_eq_preset
+            WHERE name = ?
+            "#,
+            name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(preset_row) = preset_row else {
+            return Ok(None);
+        };
+
+        let bands = sqlx::query!(
+            r#"
+            SELECT frequency, gain
+            FROM custom_eq_band
+            WHERE preset_id = ?
+            ORDER BY frequency
+            "#,
+            preset_row.id
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|row| aaeq_core::EqBand {
+            frequency: row.frequency as u32,
+            gain: row.gain as f32,
+        })
+        .collect();
+
+        Ok(Some(aaeq_core::EqPreset {
+            name: preset_row.name,
+            bands,
+        }))
+    }
+
+    /// List all custom EQ preset names
+    pub async fn list_names(&self) -> Result<Vec<String>> {
+        let names = sqlx::query_scalar!(
+            r#"
+            SELECT name
+            FROM custom_eq_preset
+            ORDER BY name
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(names)
+    }
+
+    /// Delete a custom EQ preset by name
+    pub async fn delete(&self, name: &str) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM custom_eq_preset WHERE name = ?
+            "#,
+            name
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+}

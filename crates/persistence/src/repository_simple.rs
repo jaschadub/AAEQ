@@ -297,11 +297,41 @@ impl AppSettingsRepository {
     pub async fn set_last_input_device(&self, device: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
+        // Use INSERT OR REPLACE to handle both initial insert and updates
         sqlx::query(
-            "UPDATE app_settings SET last_input_device = ?, updated_at = ? WHERE id = 1"
+            "INSERT OR REPLACE INTO app_settings (id, last_input_device, created_at, updated_at)
+             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
         )
         .bind(device)
-        .bind(now)
+        .bind(now)  // created_at if new row
+        .bind(now)  // updated_at always
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_last_output_device(&self) -> Result<Option<String>> {
+        let row = sqlx::query(
+            "SELECT last_output_device FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)))
+    }
+
+    pub async fn set_last_output_device(&self, device: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        // Use INSERT OR REPLACE to handle both initial insert and updates
+        sqlx::query(
+            "INSERT OR REPLACE INTO app_settings (id, last_output_device, created_at, updated_at)
+             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
+        )
+        .bind(device)
+        .bind(now)  // created_at if new row
+        .bind(now)  // updated_at always
         .execute(&self.pool)
         .await?;
 
@@ -353,5 +383,162 @@ impl LastAppliedRepository {
                 _ => None,
             }
         }))
+    }
+}
+
+/// Repository for custom EQ preset operations
+pub struct CustomEqPresetRepository {
+    pool: SqlitePool,
+}
+
+impl CustomEqPresetRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new custom EQ preset with bands
+    pub async fn create(&self, preset: &aaeq_core::EqPreset) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        let result = sqlx::query(
+            "INSERT INTO custom_eq_preset (name, created_at, updated_at) VALUES (?, ?, ?)"
+        )
+        .bind(&preset.name)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        let preset_id = result.last_insert_rowid();
+
+        // Insert bands
+        for band in &preset.bands {
+            sqlx::query(
+                "INSERT INTO custom_eq_band (preset_id, frequency, gain) VALUES (?, ?, ?)"
+            )
+            .bind(preset_id)
+            .bind(band.frequency)
+            .bind(band.gain)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(preset_id)
+    }
+
+    /// Update an existing custom EQ preset (upsert by name)
+    pub async fn upsert(&self, preset: &aaeq_core::EqPreset) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        // Try to get existing preset ID
+        let existing = sqlx::query("SELECT id FROM custom_eq_preset WHERE name = ?")
+            .bind(&preset.name)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        let preset_id = if let Some(row) = existing {
+            let id: i64 = row.get(0);
+
+            // Update timestamp
+            sqlx::query("UPDATE custom_eq_preset SET updated_at = ? WHERE id = ?")
+                .bind(now)
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+
+            // Delete old bands
+            sqlx::query("DELETE FROM custom_eq_band WHERE preset_id = ?")
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+
+            id
+        } else {
+            // Insert new preset
+            let result = sqlx::query(
+                "INSERT INTO custom_eq_preset (name, created_at, updated_at) VALUES (?, ?, ?)"
+            )
+            .bind(&preset.name)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+
+            result.last_insert_rowid()
+        };
+
+        // Insert bands
+        for band in &preset.bands {
+            sqlx::query(
+                "INSERT INTO custom_eq_band (preset_id, frequency, gain) VALUES (?, ?, ?)"
+            )
+            .bind(preset_id)
+            .bind(band.frequency)
+            .bind(band.gain)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(preset_id)
+    }
+
+    /// Get a custom EQ preset by name
+    pub async fn get_by_name(&self, name: &str) -> Result<Option<aaeq_core::EqPreset>> {
+        let preset_row = sqlx::query(
+            "SELECT id, name FROM custom_eq_preset WHERE name = ?"
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(preset_row) = preset_row else {
+            return Ok(None);
+        };
+
+        let preset_id: i64 = preset_row.get(0);
+        let preset_name: String = preset_row.get(1);
+
+        let band_rows = sqlx::query(
+            "SELECT frequency, gain FROM custom_eq_band WHERE preset_id = ? ORDER BY frequency"
+        )
+        .bind(preset_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let bands = band_rows.iter().map(|row| {
+            let frequency: i64 = row.get(0);
+            let gain: f64 = row.get(1);
+            aaeq_core::EqBand {
+                frequency: frequency as u32,
+                gain: gain as f32,
+            }
+        }).collect();
+
+        Ok(Some(aaeq_core::EqPreset {
+            name: preset_name,
+            bands,
+        }))
+    }
+
+    /// List all custom EQ preset names
+    pub async fn list_names(&self) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT name FROM custom_eq_preset ORDER BY name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let names = rows.iter().map(|r| r.get(0)).collect();
+        Ok(names)
+    }
+
+    /// Delete a custom EQ preset by name
+    pub async fn delete(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM custom_eq_preset WHERE name = ?")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 }

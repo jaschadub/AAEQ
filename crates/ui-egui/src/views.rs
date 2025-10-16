@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub struct EqEditorView {
     pub preset: EqPreset,
     pub preset_name: String,
+    pub existing_presets: Vec<String>, // List of existing preset names for validation
+    pub name_error: Option<String>,    // Error message if name is invalid
 }
 
 impl Default for EqEditorView {
@@ -16,6 +18,8 @@ impl Default for EqEditorView {
         Self {
             preset: EqPreset::default(),
             preset_name: "Custom".to_string(),
+            existing_presets: vec![],
+            name_error: None,
         }
     }
 }
@@ -25,7 +29,13 @@ impl EqEditorView {
         Self {
             preset_name: preset.name.clone(),
             preset,
+            existing_presets: vec![],
+            name_error: None,
         }
+    }
+
+    fn check_name_conflict(&self) -> bool {
+        self.existing_presets.iter().any(|p| p == &self.preset_name)
     }
 
     pub fn show(&mut self, ctx: &Context) -> Option<EqEditorAction> {
@@ -37,8 +47,30 @@ impl EqEditorView {
 
             ui.horizontal(|ui| {
                 ui.label("Preset Name:");
-                ui.text_edit_singleline(&mut self.preset_name);
+                let response = ui.text_edit_singleline(&mut self.preset_name);
+
+                // Check for name conflict when text changes
+                if response.changed() {
+                    if self.check_name_conflict() {
+                        self.name_error = Some(format!("Preset '{}' already exists! Please choose a different name.", self.preset_name));
+                    } else if self.preset_name.trim().is_empty() {
+                        self.name_error = Some("Preset name cannot be empty!".to_string());
+                    } else {
+                        self.name_error = None;
+                    }
+                }
             });
+
+            // Show error message if name is invalid
+            if let Some(error) = &self.name_error {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("⚠ {}", error))
+                            .color(egui::Color32::from_rgb(255, 100, 100))
+                            .strong()
+                    );
+                });
+            }
 
             ui.add_space(10.0);
 
@@ -72,15 +104,24 @@ impl EqEditorView {
                     action = Some(EqEditorAction::Modified);
                 }
 
-                if ui.button("Save Preset").clicked() {
-                    self.preset.name = self.preset_name.clone();
-                    action = Some(EqEditorAction::Save(self.preset.clone()));
-                }
+                // Disable Save/Apply buttons if name is invalid
+                let can_save = self.name_error.is_none();
 
-                if ui.button("Apply to Device").clicked() {
-                    self.preset.name = self.preset_name.clone();
-                    action = Some(EqEditorAction::Apply(self.preset.clone()));
-                }
+                ui.add_enabled_ui(can_save, |ui| {
+                    if ui.button("Save Preset").on_hover_text_at_pointer(
+                        if can_save { "Save preset to database" } else { "Fix name errors before saving" }
+                    ).clicked() {
+                        self.preset.name = self.preset_name.clone();
+                        action = Some(EqEditorAction::Save(self.preset.clone()));
+                    }
+
+                    if ui.button("Apply to Device").on_hover_text_at_pointer(
+                        if can_save { "Save and apply preset immediately" } else { "Fix name errors before applying" }
+                    ).clicked() {
+                        self.preset.name = self.preset_name.clone();
+                        action = Some(EqEditorAction::Apply(self.preset.clone()));
+                    }
+                });
             });
         });
 
@@ -107,9 +148,12 @@ fn format_frequency(hz: u32) -> String {
 pub struct NowPlayingView {
     pub track: Option<TrackMeta>,
     pub current_preset: Option<String>,
+    pub current_preset_curve: Option<EqPreset>, // Cached EQ curve for display
+    pub custom_presets: Vec<String>, // List of custom preset names (for determining if curve is exact or estimated)
     pub genre_edit: String,
     album_art_texture: Option<egui::TextureHandle>,
     last_album_art_url: Option<String>,
+    default_icon_texture: Option<egui::TextureHandle>, // Default icon when no album art available
 }
 
 impl Default for NowPlayingView {
@@ -117,9 +161,12 @@ impl Default for NowPlayingView {
         Self {
             track: None,
             current_preset: None,
+            current_preset_curve: None,
+            custom_presets: vec![],
             genre_edit: String::new(),
             album_art_texture: None,
             last_album_art_url: None,
+            default_icon_texture: None,
         }
     }
 }
@@ -136,6 +183,32 @@ impl NowPlayingView {
     pub fn show(&mut self, ui: &mut Ui, album_art_cache: Arc<AlbumArtCache>) -> Option<NowPlayingAction> {
         let mut action = None;
 
+        // Load default icon on first run
+        if self.default_icon_texture.is_none() {
+            // Load the default icon from the project root
+            let icon_path = "aaeq-icon.png";
+            match image::open(icon_path) {
+                Ok(img) => {
+                    let size = [img.width() as usize, img.height() as usize];
+                    let rgba_image = img.to_rgba8();
+                    let pixels = rgba_image.as_flat_samples();
+                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                        size,
+                        pixels.as_slice(),
+                    );
+                    let texture = ui.ctx().load_texture(
+                        "default_album_art",
+                        color_image,
+                        Default::default(),
+                    );
+                    self.default_icon_texture = Some(texture);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load default album art icon: {}", e);
+                }
+            }
+        }
+
         ui.group(|ui| {
             ui.heading("Now Playing");
 
@@ -148,55 +221,45 @@ impl NowPlayingView {
                         self.last_album_art_url = Some(art_url.clone());
                     }
 
-                    // Try to get loaded image and convert to texture
-                    let cache_clone = album_art_cache.clone();
-                    let url_clone = art_url.clone();
-                    let ctx = ui.ctx().clone();
-
-                    // Spawn task to check cache state and load if needed
+                    // Try to get loaded image and convert to texture (non-blocking)
                     if self.album_art_texture.is_none() {
-                        let texture_ready = self.album_art_texture.is_some();
-                        tokio::spawn(async move {
-                            let state = cache_clone.get(&url_clone).await;
+                        if let Some(state) = album_art_cache.try_get(art_url) {
                             match state {
                                 AlbumArtState::NotLoaded => {
-                                    cache_clone.load(url_clone);
-                                    ctx.request_repaint();
+                                    // Start loading
+                                    album_art_cache.load(art_url.clone());
+                                    ui.ctx().request_repaint();
                                 }
                                 AlbumArtState::Loading => {
-                                    ctx.request_repaint();
+                                    // Still loading, request repaint to check again
+                                    ui.ctx().request_repaint();
                                 }
-                                AlbumArtState::Loaded(_) if !texture_ready => {
-                                    ctx.request_repaint();
+                                AlbumArtState::Loaded(color_image) => {
+                                    // Convert ColorImage to texture
+                                    let texture = ui.ctx().load_texture(
+                                        &format!("album_art_{}", art_url),
+                                        color_image.as_ref().clone(),
+                                        Default::default(),
+                                    );
+                                    self.album_art_texture = Some(texture);
                                 }
-                                _ => {}
+                                AlbumArtState::Failed => {
+                                    // Failed to load, don't retry
+                                }
                             }
-                        });
-                    }
-
-                    // Try to load texture from cache if not already loaded
-                    if self.album_art_texture.is_none() {
-                        let cache_clone = album_art_cache.clone();
-                        let url_clone = art_url.clone();
-                        let rt = tokio::runtime::Handle::current();
-                        let state = rt.block_on(cache_clone.get(&url_clone));
-                        if let AlbumArtState::Loaded(color_image) = state {
-                            // Convert ColorImage to texture
-                            let texture = ui.ctx().load_texture(
-                                &format!("album_art_{}", art_url),
-                                color_image.as_ref().clone(),
-                                Default::default(),
-                            );
-                            self.album_art_texture = Some(texture);
                         }
                     }
                 }
 
                 // Display layout with album art
                 ui.horizontal(|ui| {
-                    // Album art on the left
+                    // Album art on the left - show album art if available, otherwise show default icon
                     if let Some(texture) = &self.album_art_texture {
                         ui.add(egui::Image::new(texture).max_size(egui::vec2(150.0, 150.0)));
+                        ui.add_space(10.0);
+                    } else if let Some(default_texture) = &self.default_icon_texture {
+                        // Show default icon when no album art is loaded
+                        ui.add(egui::Image::new(default_texture).max_size(egui::vec2(150.0, 150.0)));
                         ui.add_space(10.0);
                     }
 
@@ -235,14 +298,20 @@ impl NowPlayingView {
                         ui.strong(preset);
                     });
 
-                    // Visual EQ display
-                    if let Some(eq_preset) = crate::preset_library::get_preset_curve(preset) {
+                    // Visual EQ display - use cached curve if available
+                    if let Some(eq_preset) = &self.current_preset_curve {
                         ui.add_space(5.0);
                         ui.separator();
 
                         // Show label with indicator for estimated curves
+                        // Curves are exact (not estimated) if they are:
+                        // 1. Known presets from the preset library, OR
+                        // 2. Custom presets created and saved by the user
                         let is_known = crate::preset_library::is_known_preset(preset);
-                        if is_known {
+                        let is_custom = self.custom_presets.iter().any(|p| p == preset);
+                        let is_exact_curve = is_known || is_custom;
+
+                        if is_exact_curve {
                             ui.label("EQ Curve:");
                         } else {
                             ui.horizontal(|ui| {
@@ -381,7 +450,14 @@ impl NowPlayingView {
                     });
                 });
             } else {
-                ui.label("No track playing");
+                // No track playing - show default icon
+                ui.horizontal(|ui| {
+                    if let Some(default_texture) = &self.default_icon_texture {
+                        ui.add(egui::Image::new(default_texture).max_size(egui::vec2(150.0, 150.0)));
+                        ui.add_space(10.0);
+                    }
+                    ui.label("No track playing");
+                });
             }
         });
 
@@ -396,7 +472,8 @@ pub enum NowPlayingAction {
 
 /// View for listing and managing presets
 pub struct PresetsView {
-    pub presets: Vec<String>,
+    pub presets: Vec<String>,         // WiiM device presets
+    pub custom_presets: Vec<String>,  // Custom EQ presets
     pub selected_preset: Option<String>,
 }
 
@@ -404,30 +481,55 @@ impl Default for PresetsView {
     fn default() -> Self {
         Self {
             presets: vec![],
+            custom_presets: vec![],
             selected_preset: None,
         }
     }
 }
 
 impl PresetsView {
-    pub fn show(&mut self, ui: &mut Ui) -> Option<PresetAction> {
+    pub fn show(&mut self, ui: &mut Ui, show_custom_eq: bool, device_connected: bool) -> Option<PresetAction> {
         let mut action = None;
 
         ui.group(|ui| {
             ui.heading("Presets");
 
-            if ui.button("Refresh from Device").clicked() {
-                action = Some(PresetAction::Refresh);
+            // Only show "Refresh from Device" button when connected to a WiiM device
+            if device_connected {
+                if ui.button("Refresh from Device").clicked() {
+                    action = Some(PresetAction::Refresh);
+                }
+                ui.add_space(5.0);
             }
 
-            ui.add_space(5.0);
 
-            ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
-                for preset in &self.presets {
-                    let is_selected = self.selected_preset.as_deref() == Some(preset);
-                    if ui.selectable_label(is_selected, preset).clicked() {
-                        self.selected_preset = Some(preset.clone());
-                        action = Some(PresetAction::Select(preset.clone()));
+            ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                // Show WiiM device presets
+                if !self.presets.is_empty() {
+                    ui.label(egui::RichText::new("Device Presets").strong().color(egui::Color32::LIGHT_GREEN));
+                    ui.separator();
+                    for preset in &self.presets.clone() {
+                        let is_selected = self.selected_preset.as_deref() == Some(preset.as_str());
+                        if ui.selectable_label(is_selected, preset).clicked() {
+                            self.selected_preset = Some(preset.clone());
+                            action = Some(PresetAction::Select(preset.clone()));
+                        }
+                    }
+                }
+
+                // Show custom EQ presets
+                if !self.custom_presets.is_empty() {
+                    if !self.presets.is_empty() {
+                        ui.add_space(5.0);
+                    }
+                    ui.label(egui::RichText::new("Custom Presets").strong().color(egui::Color32::from_rgb(255, 180, 100)));
+                    ui.separator();
+                    for preset in &self.custom_presets.clone() {
+                        let is_selected = self.selected_preset.as_deref() == Some(preset.as_str());
+                        if ui.selectable_label(is_selected, preset).clicked() {
+                            self.selected_preset = Some(preset.clone());
+                            action = Some(PresetAction::Select(preset.clone()));
+                        }
                     }
                 }
             });
@@ -440,8 +542,19 @@ impl PresetsView {
                 }
             }
 
-            if ui.button("Create Custom EQ").clicked() {
-                action = Some(PresetAction::CreateCustom);
+            // Show "Create Custom EQ" only when DSP is active
+            if show_custom_eq {
+                if ui.button("Create Custom EQ").clicked() {
+                    action = Some(PresetAction::CreateCustom);
+                }
+            } else {
+                ui.add_space(5.0);
+                ui.label(
+                    egui::RichText::new("💡 Custom EQ available when DSP streaming is active")
+                        .color(egui::Color32::from_rgb(150, 150, 150))
+                        .italics()
+                        .size(10.0)
+                ).on_hover_text("Start DSP streaming to create and use custom EQ presets.\nGo to DSP Server tab, configure output, and start streaming.");
             }
         });
 
@@ -473,6 +586,10 @@ pub struct DspView {
     pub use_test_tone: bool, // Toggle between captured audio and test tone
     pub audio_viz: AudioVizState, // Audio waveform visualization
     pub selected_preset: Option<String>, // EQ preset for DSP processing
+    pub wiim_presets: Vec<String>, // Presets loaded from WiiM device
+    pub custom_presets: Vec<String>, // Custom EQ presets saved by user
+    pub pre_eq_meter: crate::meter::MeterState, // Pre-EQ audio levels
+    pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -536,6 +653,10 @@ impl Default for DspView {
             use_test_tone: false, // Default to captured audio
             audio_viz: AudioVizState::new(),
             selected_preset: None, // No preset selected by default
+            wiim_presets: vec![],
+            custom_presets: vec![],
+            pre_eq_meter: crate::meter::MeterState::default(),
+            post_eq_meter: crate::meter::MeterState::default(),
         }
     }
 }
@@ -544,6 +665,7 @@ impl DspView {
     pub fn show(&mut self, ui: &mut Ui) -> Option<DspAction> {
         let mut action = None;
 
+        ScrollArea::vertical().show(ui, |ui| {
         ui.group(|ui| {
             ui.heading("Audio Output (DSP)");
             ui.separator();
@@ -602,6 +724,32 @@ impl DspView {
                         action = Some(DspAction::DiscoverInputDevices);
                     }
                 });
+
+                // Check if loopback setup is needed (Linux-specific)
+                #[cfg(target_os = "linux")]
+                {
+                    let has_loopback_device = self.available_input_devices.iter()
+                        .any(|d| d.contains("aaeq_capture") || d.contains("aaeq_monitor"));
+
+                    if !has_loopback_device && !self.available_input_devices.is_empty() {
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("💡")
+                                    .color(egui::Color32::LIGHT_BLUE)
+                            );
+                            ui.label(
+                                egui::RichText::new("Tip: To capture system audio, run setup-audio-loopback.sh")
+                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .italics()
+                            ).on_hover_text(
+                                "This script sets up a virtual audio sink that captures system audio.\n\
+                                Run: ./setup-audio-loopback.sh\n\
+                                Then discover devices again to see 'aaeq_capture' or 'aaeq_monitor'."
+                            );
+                        });
+                    }
+                }
             }
 
             ui.add_space(5.0);
@@ -688,13 +836,51 @@ impl DspView {
                             self.selected_preset = None;
                             action = Some(DspAction::PresetSelected(None));
                         }
-                        for preset_name in crate::preset_library::list_known_presets() {
-                            if ui.selectable_label(
-                                self.selected_preset.as_deref() == Some(preset_name),
-                                preset_name
-                            ).clicked() {
-                                self.selected_preset = Some(preset_name.to_string());
-                                action = Some(DspAction::PresetSelected(Some(preset_name.to_string())));
+
+                        // Built-in library presets
+                        if !crate::preset_library::list_known_presets().is_empty() {
+                            ui.label(egui::RichText::new("Built-in Presets").strong().color(egui::Color32::LIGHT_BLUE));
+                            ui.separator();
+                            for preset_name in crate::preset_library::list_known_presets() {
+                                if ui.selectable_label(
+                                    self.selected_preset.as_deref() == Some(preset_name),
+                                    preset_name
+                                ).clicked() {
+                                    self.selected_preset = Some(preset_name.to_string());
+                                    action = Some(DspAction::PresetSelected(Some(preset_name.to_string())));
+                                }
+                            }
+                        }
+
+                        // Custom EQ presets
+                        if !self.custom_presets.is_empty() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("Custom Presets").strong().color(egui::Color32::from_rgb(255, 180, 100)));
+                            ui.separator();
+                            for preset_name in &self.custom_presets.clone() {
+                                if ui.selectable_label(
+                                    self.selected_preset.as_deref() == Some(preset_name.as_str()),
+                                    preset_name
+                                ).clicked() {
+                                    self.selected_preset = Some(preset_name.clone());
+                                    action = Some(DspAction::PresetSelected(Some(preset_name.clone())));
+                                }
+                            }
+                        }
+
+                        // WiiM device presets
+                        if !self.wiim_presets.is_empty() {
+                            ui.separator();
+                            ui.label(egui::RichText::new("WiiM Device Presets").strong().color(egui::Color32::LIGHT_GREEN));
+                            ui.separator();
+                            for preset_name in &self.wiim_presets.clone() {
+                                if ui.selectable_label(
+                                    self.selected_preset.as_deref() == Some(preset_name.as_str()),
+                                    preset_name
+                                ).clicked() {
+                                    self.selected_preset = Some(preset_name.clone());
+                                    action = Some(DspAction::PresetSelected(Some(preset_name.clone())));
+                                }
                             }
                         }
                     });
@@ -765,6 +951,48 @@ impl DspView {
                 self.audio_viz.show(ui);
             }
 
+            // Audio level meters (only show when streaming)
+            if self.is_streaming {
+                ui.add_space(10.0);
+                ui.separator();
+                ui.label("Audio Levels:");
+
+                // Update meter ballistics
+                self.pre_eq_meter.tick();
+                self.post_eq_meter.tick();
+
+                // Display meters side by side
+                ui.horizontal(|ui| {
+                    // Pre-EQ meter
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Pre-EQ").size(16.0).strong());
+                        let (meter_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(280.0, 200.0),
+                            egui::Sense::hover()
+                        );
+                        if ui.is_rect_visible(meter_rect) {
+                            let painter = ui.painter_at(meter_rect);
+                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.pre_eq_meter);
+                        }
+                    });
+
+                    ui.add_space(30.0);
+
+                    // Post-EQ meter
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("Post-EQ").size(16.0).strong());
+                        let (meter_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(280.0, 200.0),
+                            egui::Sense::hover()
+                        );
+                        if ui.is_rect_visible(meter_rect) {
+                            let painter = ui.painter_at(meter_rect);
+                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.post_eq_meter);
+                        }
+                    });
+                });
+            }
+
             ui.add_space(5.0);
 
             // Test controls
@@ -772,6 +1000,8 @@ impl DspView {
                 action = Some(DspAction::PlayTestTone);
             }
         });
+
+        });  // End of ScrollArea
 
         // Device discovery dialog
         if self.show_device_discovery {
@@ -832,4 +1062,5 @@ pub enum DspAction {
     PlayTestTone,
     ToggleVisualization,
     PresetSelected(Option<String>),
+    SaveCustomPreset(EqPreset),
 }

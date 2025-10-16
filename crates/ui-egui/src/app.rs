@@ -1,6 +1,6 @@
 use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
 use aaeq_device_wiim::{WiimController, discover_devices_quick};
-use aaeq_persistence::{AppSettingsRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
+use aaeq_persistence::{AppSettingsRepository, CustomEqPresetRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
 use crate::views::*;
 use crate::album_art::AlbumArtCache;
 use anyhow::Result;
@@ -9,6 +9,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use stream_server::{OutputConfig, SampleFormat, LocalDacSink, DlnaSink, OutputManager, AudioBlock, SinkStats, EqProcessor};
+
+/// Application mode tabs
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AppMode {
+    EqManagement,
+    DspServer,
+}
+
+/// Operating mode selected at startup - determines how the app functions
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum OperatingMode {
+    NotSelected,      // User hasn't chosen yet
+    WiimDevice,       // Use WiiM API for EQ control
+    DspProcessor,     // Use DSP mode for EQ processing
+}
 
 /// Commands that can be sent from UI to async worker
 enum AppCommand {
@@ -21,10 +36,15 @@ enum AppCommand {
     BackupDatabase(String), // (db_path)
     Poll,
     SaveInputDevice(String), // Save last input device to settings
+    SaveOutputDevice(String), // Save last output device to settings
+    LoadCustomPresets, // Load custom EQ presets from database
+    SaveCustomPreset(aaeq_core::EqPreset), // Save custom EQ preset to database
+    LoadPresetCurve(String), // Load EQ curve for a preset (for display)
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
     DspStopStreaming,
+    DspChangePreset(String), // Change EQ preset during active streaming
 }
 
 /// Responses from async worker to UI
@@ -45,6 +65,20 @@ enum AppResponse {
     DspStreamingStopped,
     DspStreamStatus(StreamStatus),
     DspAudioSamples(Vec<f64>), // For visualization
+    DspAudioMetrics {
+        pre_eq_rms_l: f32,
+        pre_eq_rms_r: f32,
+        pre_eq_peak_l: f32,
+        pre_eq_peak_r: f32,
+        post_eq_rms_l: f32,
+        post_eq_rms_r: f32,
+        post_eq_peak_l: f32,
+        post_eq_peak_r: f32,
+    },
+    CustomPresetsLoaded(Vec<String>),
+    CustomPresetSaved(String),
+    PresetCurveLoaded(Option<aaeq_core::EqPreset>), // EQ curve for display
+    DspPresetChanged(String), // Preset changed during streaming
 }
 
 /// Main application state
@@ -68,6 +102,7 @@ pub struct AaeqApp {
     /// Current state
     current_track: Option<TrackMeta>,
     current_preset: Option<String>,
+    current_preset_curve: Option<aaeq_core::EqPreset>, // Cached EQ curve for display
     available_presets: Vec<String>,
 
     /// Mapping rules cache
@@ -80,14 +115,16 @@ pub struct AaeqApp {
     last_track_key: Option<String>,
 
     /// UI state
+    current_mode: AppMode,
     show_eq_editor: bool,
-    show_dsp_panel: bool,
     status_message: Option<String>,
     auto_reconnect: bool,
     connection_lost_time: Option<Instant>,
     reconnect_interval: Duration,
     discovered_devices: Vec<(String, String)>, // Vec<(name, host)>
     show_discovery: bool,
+    last_viz_state: bool, // Track previous visualization state for window resizing
+    last_streaming_state: bool, // Track previous streaming state for window resizing
 
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
@@ -123,19 +160,22 @@ impl AaeqApp {
             dsp_view: DspView::default(),
             current_track: None,
             current_preset: None,
+            current_preset_curve: None,
             available_presets: vec![],
             rules_index,
             last_poll: Instant::now(),
             poll_interval: Duration::from_millis(1000),
             last_track_key: None,
+            current_mode: AppMode::EqManagement,
             show_eq_editor: false,
-            show_dsp_panel: false,
             status_message: None,
             auto_reconnect: true, // Enable by default
             connection_lost_time: None,
             reconnect_interval: Duration::from_secs(5),
             discovered_devices: vec![],
             show_discovery: false,
+            last_viz_state: false,
+            last_streaming_state: false,
             command_tx,
             response_rx,
             album_art_cache: Arc::new(AlbumArtCache::new()),
@@ -161,6 +201,15 @@ impl AaeqApp {
             tracing::info!("Loading last input device: {}", last_input);
             self.dsp_view.selected_input_device = Some(last_input);
         }
+
+        // Load last output device from settings
+        if let Ok(Some(last_output)) = settings_repo.get_last_output_device().await {
+            tracing::info!("Loading last output device: {}", last_output);
+            self.dsp_view.selected_device = Some(last_output);
+        }
+
+        // Load custom EQ presets
+        let _ = self.command_tx.send(AppCommand::LoadCustomPresets);
 
         Ok(())
     }
@@ -322,6 +371,8 @@ impl AaeqApp {
         let mut output_manager = OutputManager::new();
         let mut streaming_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut stream_shutdown_tx: Option<mpsc::Sender<()>> = None;
+        let mut stream_preset_change_tx: Option<mpsc::Sender<String>> = None;
+        let mut dsp_is_streaming = false;
 
         // DLNA device cache
         let mut discovered_dlna_devices: Vec<stream_server::sinks::dlna::DlnaDevice> = Vec::new();
@@ -532,6 +583,53 @@ impl AaeqApp {
                     }
                 }
 
+                AppCommand::SaveOutputDevice(device_name) => {
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_last_output_device(&device_name).await {
+                        tracing::error!("Failed to save last output device: {}", e);
+                    } else {
+                        tracing::info!("Saved last output device: {}", device_name);
+                    }
+                }
+
+                AppCommand::LoadCustomPresets => {
+                    let custom_repo = CustomEqPresetRepository::new(pool.clone());
+                    match custom_repo.list_names().await {
+                        Ok(presets) => {
+                            tracing::info!("Loaded {} custom presets", presets.len());
+                            let _ = response_tx.send(AppResponse::CustomPresetsLoaded(presets));
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load custom presets: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to load custom presets: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::SaveCustomPreset(preset) => {
+                    let custom_repo = CustomEqPresetRepository::new(pool.clone());
+                    match custom_repo.upsert(&preset).await {
+                        Ok(_) => {
+                            tracing::info!("Saved custom preset: {}", preset.name);
+                            let _ = response_tx.send(AppResponse::CustomPresetSaved(preset.name.clone()));
+                            // Reload custom presets list
+                            if let Ok(presets) = custom_repo.list_names().await {
+                                let _ = response_tx.send(AppResponse::CustomPresetsLoaded(presets));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to save custom preset: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to save custom preset: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::LoadPresetCurve(preset_name) => {
+                    // Load EQ curve for display using the database-aware function
+                    let curve = crate::preset_library::get_preset_curve_with_db(&preset_name, &pool).await;
+                    let _ = response_tx.send(AppResponse::PresetCurveLoaded(curve));
+                }
+
                 AppCommand::Poll => {
                     // Poll from WiiM device if connected, otherwise try MPRIS for DSP mode
                     if let Some(dev) = &device {
@@ -580,15 +678,32 @@ impl AaeqApp {
                                     // Apply if different from current
                                     if current_preset.as_deref() != Some(&desired_preset) {
                                         tracing::info!("Applying preset: {}", desired_preset);
-                                        if let Err(e) = dev.apply_preset(&desired_preset).await {
-                                            tracing::error!("Failed to apply preset: {}", e);
-                                        } else {
-                                            current_preset = Some(desired_preset.clone());
 
-                                            // Save to database
-                                            if let Some(dev_id) = device_id {
-                                                let repo = LastAppliedRepository::new(pool.clone());
-                                                let _ = repo.update(dev_id, &track_key, &desired_preset).await;
+                                        // If DSP is streaming, change preset there instead of via WiiM API
+                                        if dsp_is_streaming {
+                                            if let Some(preset_tx) = &stream_preset_change_tx {
+                                                match preset_tx.send(desired_preset.clone()).await {
+                                                    Ok(_) => {
+                                                        current_preset = Some(desired_preset.clone());
+                                                        let _ = response_tx.send(AppResponse::DspPresetChanged(desired_preset.clone()));
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to send preset change to DSP: {}", e);
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            // Use WiiM API
+                                            if let Err(e) = dev.apply_preset(&desired_preset).await {
+                                                tracing::error!("Failed to apply preset: {}", e);
+                                            } else {
+                                                current_preset = Some(desired_preset.clone());
+
+                                                // Save to database
+                                                if let Some(dev_id) = device_id {
+                                                    let repo = LastAppliedRepository::new(pool.clone());
+                                                    let _ = repo.update(dev_id, &track_key, &desired_preset).await;
+                                                }
                                             }
                                         }
                                     }
@@ -630,14 +745,31 @@ impl AaeqApp {
                                         track.genre = genre_override;
                                     }
 
-                                    // Note: In DSP mode without WiiM API, we can't apply presets to the device
-                                    // But we can still show the track info and what preset would be used
+                                    // Resolve preset based on rules
                                     let rules = rules_index.read().await;
                                     let desired_preset = resolve_preset(&track, &rules, "Flat");
                                     drop(rules);
 
-                                    current_preset = Some(desired_preset.clone());
-                                    tracing::info!("Preset for track (DSP mode): {}", desired_preset);
+                                    // If DSP is streaming and preset changed, apply it automatically
+                                    if dsp_is_streaming && current_preset.as_deref() != Some(&desired_preset) {
+                                        tracing::info!("Auto-applying preset in DSP mode: {}", desired_preset);
+
+                                        if let Some(preset_tx) = &stream_preset_change_tx {
+                                            match preset_tx.send(desired_preset.clone()).await {
+                                                Ok(_) => {
+                                                    current_preset = Some(desired_preset.clone());
+                                                    let _ = response_tx.send(AppResponse::DspPresetChanged(desired_preset.clone()));
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to send preset change: {}", e);
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        // Not streaming, just update the current preset for display
+                                        current_preset = Some(desired_preset.clone());
+                                        tracing::info!("Preset for track (DSP mode): {}", desired_preset);
+                                    }
 
                                     last_track_key = Some(track_key);
                                 }
@@ -742,6 +874,9 @@ impl AaeqApp {
                         tracing::warn!("Failed to close active sink: {}", e);
                     }
 
+                    // Wait a moment for port to be released
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+
                     // Create and register the appropriate sink
                     let sink_result: Result<(), String> = match sink_type {
                         SinkType::LocalDac => {
@@ -799,6 +934,10 @@ impl AaeqApp {
                             let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
                             stream_shutdown_tx = Some(shutdown_tx);
 
+                            // Create preset change channel for the streaming task
+                            let (preset_change_tx, mut preset_change_rx) = mpsc::channel::<String>(8);
+                            stream_preset_change_tx = Some(preset_change_tx);
+
                             // Setup audio capture if not using test tone
                             let audio_capture_for_task: Option<(mpsc::Receiver<Vec<f64>>, mpsc::Sender<()>)> =
                                 if !use_test_tone {
@@ -841,15 +980,69 @@ impl AaeqApp {
 
                                 let mut audio_capture = audio_capture_for_task;
 
+                                // Helper function to calculate RMS and peak from interleaved stereo samples
+                                let calculate_metrics = |samples: &[f64]| -> (f32, f32, f32, f32) {
+                                    let mut sum_sq_l = 0.0f64;
+                                    let mut sum_sq_r = 0.0f64;
+                                    let mut peak_l = 0.0f32;
+                                    let mut peak_r = 0.0f32;
+                                    let frame_count = samples.len() / channels;
+
+                                    for i in 0..frame_count {
+                                        let l = samples[i * channels];
+                                        let r = samples[i * channels + 1];
+
+                                        sum_sq_l += l * l;
+                                        sum_sq_r += r * r;
+
+                                        peak_l = peak_l.max(l.abs() as f32);
+                                        peak_r = peak_r.max(r.abs() as f32);
+                                    }
+
+                                    let rms_l = (sum_sq_l / frame_count as f64).sqrt() as f32;
+                                    let rms_r = (sum_sq_r / frame_count as f64).sqrt() as f32;
+
+                                    // Convert to dBFS
+                                    let rms_dbfs_l = if rms_l > 0.0 { 20.0 * rms_l.log10() } else { -120.0 };
+                                    let rms_dbfs_r = if rms_r > 0.0 { 20.0 * rms_r.log10() } else { -120.0 };
+                                    let peak_dbfs_l = if peak_l > 0.0 { 20.0 * peak_l.log10() } else { -120.0 };
+                                    let peak_dbfs_r = if peak_r > 0.0 { 20.0 * peak_r.log10() } else { -120.0 };
+
+                                    (rms_dbfs_l, rms_dbfs_r, peak_dbfs_l, peak_dbfs_r)
+                                };
+
+                                // Helper function to load a preset from library or database
+                                let load_preset_curve = |preset_name: &str| -> Option<aaeq_core::EqPreset> {
+                                    crate::preset_library::get_preset_curve(preset_name)
+                                        .or_else(|| {
+                                            let custom_repo = CustomEqPresetRepository::new(_pool_for_task.clone());
+                                            let rt = tokio::runtime::Handle::current();
+                                            rt.block_on(async {
+                                                match custom_repo.get_by_name(preset_name).await {
+                                                    Ok(Some(custom_preset)) => {
+                                                        tracing::info!("Loaded custom preset: {}", preset_name);
+                                                        Some(custom_preset)
+                                                    }
+                                                    Ok(None) => {
+                                                        tracing::warn!("Preset '{}' not found", preset_name);
+                                                        None
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to load preset: {}", e);
+                                                        None
+                                                    }
+                                                }
+                                            })
+                                        })
+                                };
+
                                 // Initialize EQ processor if preset is provided
                                 let mut eq_processor = EqProcessor::new(sample_rate, channels);
-                                if let Some(preset_name) = preset_name {
+                                if let Some(ref preset_name) = preset_name {
                                     tracing::info!("Loading EQ preset: {}", preset_name);
-                                    if let Some(preset) = crate::preset_library::get_preset_curve(&preset_name) {
+                                    if let Some(preset) = load_preset_curve(preset_name) {
                                         eq_processor.load_preset(&preset);
                                         tracing::info!("EQ preset loaded: {} ({} bands)", preset_name, eq_processor.band_count());
-                                    } else {
-                                        tracing::warn!("Preset '{}' not found in library", preset_name);
                                     }
                                 }
 
@@ -887,6 +1080,15 @@ impl AaeqApp {
                                             tracing::info!("Streaming task received shutdown signal");
                                             break;
                                         }
+                                        Some(new_preset_name) = preset_change_rx.recv() => {
+                                            tracing::info!("Preset change requested: {}", new_preset_name);
+                                            if let Some(preset) = load_preset_curve(&new_preset_name) {
+                                                eq_processor.load_preset(&preset);
+                                                tracing::info!("EQ preset changed to: {} ({} bands)", new_preset_name, eq_processor.band_count());
+                                            } else {
+                                                tracing::warn!("Failed to load preset: {}", new_preset_name);
+                                            }
+                                        }
                                         // Audio capture mode - wait for samples
                                         Some(mut captured_samples) = async {
                                             if let Some((rx, _)) = audio_capture.as_mut() {
@@ -898,8 +1100,14 @@ impl AaeqApp {
                                             // Process captured audio samples
                                             // The captured samples are already interleaved stereo f64
 
+                                            // Calculate pre-EQ metrics
+                                            let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&captured_samples);
+
                                             // Apply EQ processing
                                             eq_processor.process(&mut captured_samples);
+
+                                            // Calculate post-EQ metrics
+                                            let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&captured_samples);
 
                                             // Send samples for visualization
                                             let viz_samples: Vec<f64> = captured_samples.iter()
@@ -921,7 +1129,19 @@ impl AaeqApp {
 
                                             frame_count += (captured_samples.len() / channels) as u64;
 
-                                            // Send status update periodically
+                                            // Send audio metrics for every audio block (for meters)
+                                            let _ = tx.send(AppResponse::DspAudioMetrics {
+                                                pre_eq_rms_l: pre_rms_l,
+                                                pre_eq_rms_r: pre_rms_r,
+                                                pre_eq_peak_l: pre_peak_l,
+                                                pre_eq_peak_r: pre_peak_r,
+                                                post_eq_rms_l: post_rms_l,
+                                                post_eq_rms_r: post_rms_r,
+                                                post_eq_peak_l: post_peak_l,
+                                                post_eq_peak_r: post_peak_r,
+                                            });
+
+                                            // Send status update periodically (every ~100ms)
                                             if frame_count % (sample_rate as u64 / 10) == 0 {
                                                 let latency = mgr.active_sink_latency().unwrap_or(0);
                                                 let stats = mgr.active_sink_stats()
@@ -954,8 +1174,14 @@ impl AaeqApp {
                                                 }
                                             }
 
+                                            // Calculate pre-EQ metrics
+                                            let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&audio_data);
+
                                             // Apply EQ processing
                                             eq_processor.process(&mut audio_data);
+
+                                            // Calculate post-EQ metrics
+                                            let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&audio_data);
 
                                             // Send samples for visualization
                                             let viz_samples: Vec<f64> = audio_data.iter()
@@ -976,7 +1202,19 @@ impl AaeqApp {
 
                                             frame_count += frames_per_block as u64;
 
-                                            // Send status update every 100ms
+                                            // Send audio metrics for every audio block (for meters)
+                                            let _ = tx.send(AppResponse::DspAudioMetrics {
+                                                pre_eq_rms_l: pre_rms_l,
+                                                pre_eq_rms_r: pre_rms_r,
+                                                pre_eq_peak_l: pre_peak_l,
+                                                pre_eq_peak_r: pre_peak_r,
+                                                post_eq_rms_l: post_rms_l,
+                                                post_eq_rms_r: post_rms_r,
+                                                post_eq_peak_l: post_peak_l,
+                                                post_eq_peak_r: post_peak_r,
+                                            });
+
+                                            // Send status update periodically (every ~100ms)
                                             if frame_count % (sample_rate as u64 / 10) == 0 {
                                                 let latency = mgr.active_sink_latency().unwrap_or(0);
                                                 let stats = mgr.active_sink_stats()
@@ -1016,6 +1254,7 @@ impl AaeqApp {
                             });
 
                             streaming_task = Some(task);
+                            dsp_is_streaming = true;
                             let _ = response_tx.send(AppResponse::DspStreamingStarted);
                         }
                         Err(e) => {
@@ -1042,8 +1281,32 @@ impl AaeqApp {
                         tracing::warn!("Failed to close active sink: {}", e);
                     }
 
+                    // Clear preset change channel
+                    stream_preset_change_tx = None;
+                    dsp_is_streaming = false;
+
                     let _ = response_tx.send(AppResponse::DspStreamingStopped);
                     tracing::info!("DSP streaming stopped successfully");
+                }
+
+                AppCommand::DspChangePreset(preset_name) => {
+                    tracing::info!("Changing DSP preset to: {}", preset_name);
+
+                    if let Some(preset_tx) = &stream_preset_change_tx {
+                        match preset_tx.send(preset_name.clone()).await {
+                            Ok(_) => {
+                                current_preset = Some(preset_name.clone());
+                                let _ = response_tx.send(AppResponse::DspPresetChanged(preset_name));
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send preset change to streaming task: {}", e);
+                                let _ = response_tx.send(AppResponse::Error(format!("Failed to change preset: {}", e)));
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Cannot change preset - no active streaming session");
+                        let _ = response_tx.send(AppResponse::Error("No active streaming session".to_string()));
+                    }
                 }
             }
         }
@@ -1097,7 +1360,9 @@ impl eframe::App for AaeqApp {
                 }
                 AppResponse::PresetsLoaded(presets) => {
                     self.available_presets = presets.clone();
-                    self.presets_view.presets = presets;
+                    self.presets_view.presets = presets.clone();
+                    // Also make them available in DSP mode
+                    self.dsp_view.wiim_presets = presets;
                 }
                 AppResponse::PresetApplied(preset) => {
                     self.current_preset = Some(preset.clone());
@@ -1112,14 +1377,39 @@ impl eframe::App for AaeqApp {
                         .map(|t| t.track_key() != track.track_key())
                         .unwrap_or(true);
 
+                    // Check if preset changed
+                    let preset_changed = self.current_preset != preset;
+
+                    // Only update genre_edit if track changed (to avoid overwriting user edits)
+                    if track_changed {
+                        // When track changes, reset genre_edit to match new track
+                        self.now_playing_view.genre_edit = track.genre.clone();
+                    }
+                    // If track didn't change but genre changed (e.g., override was applied),
+                    // update genre_edit only if it matches the old genre (preserve user edits in textbox)
+                    else if self.current_track.as_ref().map(|t| t.genre.clone()) != Some(track.genre.clone()) {
+                        // Genre changed on same track (likely from override being applied)
+                        // Only update if genre_edit matches the old genre (not a pending user edit)
+                        if let Some(old_track) = &self.current_track {
+                            if self.now_playing_view.genre_edit == old_track.genre {
+                                self.now_playing_view.genre_edit = track.genre.clone();
+                            }
+                        }
+                    }
+
                     self.current_track = Some(track.clone());
                     self.current_preset = preset;
                     self.now_playing_view.track = Some(track.clone());
                     self.now_playing_view.current_preset = self.current_preset.clone();
 
-                    // Only update genre_edit if track changed (not on every poll)
-                    if track_changed {
-                        self.now_playing_view.genre_edit = track.genre.clone();
+                    // Load preset curve if preset changed
+                    if preset_changed {
+                        if let Some(preset_name) = &self.current_preset {
+                            let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name.clone()));
+                        } else {
+                            self.current_preset_curve = None;
+                            self.now_playing_view.current_preset_curve = None;
+                        }
                     }
                 }
                 AppResponse::BackupCreated(path) => {
@@ -1149,6 +1439,33 @@ impl eframe::App for AaeqApp {
                 AppResponse::DspAudioSamples(samples) => {
                     // Update visualization with audio samples
                     self.dsp_view.audio_viz.push_samples(&samples);
+                }
+                AppResponse::DspAudioMetrics {
+                    pre_eq_rms_l, pre_eq_rms_r, pre_eq_peak_l, pre_eq_peak_r,
+                    post_eq_rms_l, post_eq_rms_r, post_eq_peak_l, post_eq_peak_r
+                } => {
+                    // Update meter states with audio metrics
+                    self.dsp_view.pre_eq_meter.update_from_block(pre_eq_rms_l, pre_eq_rms_r, pre_eq_peak_l, pre_eq_peak_r);
+                    self.dsp_view.post_eq_meter.update_from_block(post_eq_rms_l, post_eq_rms_r, post_eq_peak_l, post_eq_peak_r);
+                }
+                AppResponse::CustomPresetsLoaded(presets) => {
+                    self.dsp_view.custom_presets = presets.clone();
+                    self.presets_view.custom_presets = presets.clone();
+                    self.now_playing_view.custom_presets = presets;
+                }
+                AppResponse::CustomPresetSaved(preset_name) => {
+                    self.status_message = Some(format!("Saved custom preset: {}", preset_name));
+                }
+                AppResponse::PresetCurveLoaded(curve) => {
+                    self.current_preset_curve = curve;
+                    self.now_playing_view.current_preset_curve = self.current_preset_curve.clone();
+                }
+                AppResponse::DspPresetChanged(preset) => {
+                    self.current_preset = Some(preset.clone());
+                    self.now_playing_view.current_preset = Some(preset.clone());
+                    self.status_message = Some(format!("DSP preset changed: {}", preset));
+                    // Load the EQ curve for display
+                    let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
                 }
             }
         }
@@ -1196,10 +1513,19 @@ impl eframe::App for AaeqApp {
                 ui.label("Device IP:");
                 ui.text_edit_singleline(&mut self.device_host);
 
-                if ui.button("Connect").clicked() {
-                    let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
-                    // Optimistically set device as connected (will be updated by response)
-                    self.device = Some(Arc::new(WiimController::new("WiiM Device", self.device_host.clone())));
+                // Show Connect or Disconnect button based on connection state
+                if self.device.is_some() {
+                    if ui.button("Disconnect").clicked() {
+                        tracing::info!("Disconnecting from WiiM device");
+                        self.device = None;
+                        self.status_message = Some("Disconnected".to_string());
+                    }
+                } else {
+                    if ui.button("Connect").clicked() {
+                        let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
+                        // Optimistically set device as connected (will be updated by response)
+                        self.device = Some(Arc::new(WiimController::new("WiiM Device", self.device_host.clone())));
+                    }
                 }
 
                 if ui.button("🔍 Discover").on_hover_text("Discover WiiM devices on local network").clicked() {
@@ -1233,12 +1559,17 @@ impl eframe::App for AaeqApp {
                         let db_path = self.db_path.display().to_string();
                         let _ = self.command_tx.send(AppCommand::BackupDatabase(db_path));
                     }
-
-                    if ui.button(if self.show_dsp_panel { "⏺ Hide DSP" } else { "⏺ Show DSP" })
-                        .on_hover_text("Show/hide DSP audio output panel").clicked() {
-                        self.show_dsp_panel = !self.show_dsp_panel;
-                    }
                 });
+            });
+        });
+
+        // Tab bar for mode selection
+        egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.current_mode, AppMode::EqManagement, "EQ Management")
+                    .on_hover_text("Manage EQ presets and mappings for WiiM device");
+                ui.selectable_value(&mut self.current_mode, AppMode::DspServer, "DSP Server")
+                    .on_hover_text("Stream audio with DSP processing to various outputs");
             });
         });
 
@@ -1289,41 +1620,69 @@ impl eframe::App for AaeqApp {
                 });
         }
 
-        // Main content
-        if self.show_eq_editor {
-            // Show EQ editor
-            if let Some(editor) = &mut self.eq_editor_view {
-                if let Some(action) = editor.show(ctx) {
-                    match action {
-                        EqEditorAction::Save(preset) => {
-                            tracing::info!("Saving preset: {}", preset.name);
-                            // TODO: Save to device
-                            self.show_eq_editor = false;
-                        }
-                        EqEditorAction::Apply(_preset) => {
-                            // Note: Custom EQ not supported by WiiM API yet
-                            // For now just close the editor
-                            tracing::warn!("Custom EQ application not yet implemented");
-                            self.status_message = Some("Custom EQ not supported by device API".to_string());
-                            self.show_eq_editor = false;
-                        }
-                        EqEditorAction::Modified => {
-                            // Just redraw
+        // Main content based on current mode
+        match self.current_mode {
+            AppMode::EqManagement => {
+                // EQ Management Mode: Show presets panel + now playing
+                if self.show_eq_editor {
+                    // Show EQ editor
+                    if let Some(editor) = &mut self.eq_editor_view {
+                        if let Some(action) = editor.show(ctx) {
+                            match action {
+                                EqEditorAction::Save(preset) => {
+                                    tracing::info!("Saving custom preset: {}", preset.name);
+                                    let preset_name = preset.name.clone();
+                                    let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset));
+
+                                    // If DSP is streaming, also apply it
+                                    if self.dsp_view.is_streaming {
+                                        tracing::info!("Applying saved custom preset to DSP: {}", preset_name);
+                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset_name.clone()));
+                                        self.current_preset = Some(preset_name.clone());
+                                        self.now_playing_view.current_preset = Some(preset_name.clone());
+                                        let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name));
+                                    }
+
+                                    self.show_eq_editor = false;
+                                }
+                                EqEditorAction::Apply(preset) => {
+                                    // Save and apply the preset
+                                    if self.dsp_view.is_streaming {
+                                        tracing::info!("Saving and applying custom preset: {}", preset.name);
+                                        let preset_name = preset.name.clone();
+                                        let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset.clone()));
+                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset_name.clone()));
+                                        self.status_message = Some(format!("Applied custom preset: {}", preset_name));
+                                        self.current_preset = Some(preset_name.clone());
+                                        self.now_playing_view.current_preset = Some(preset_name.clone());
+                                        let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name));
+                                        self.show_eq_editor = false;
+                                    } else {
+                                        tracing::warn!("Custom EQ not supported by WiiM API");
+                                        self.status_message = Some("Custom EQ not supported by WiiM device API. Start DSP streaming to use custom EQ.".to_string());
+                                    }
+                                }
+                                EqEditorAction::Modified => {
+                                    // Just redraw
+                                }
+                            }
                         }
                     }
-                }
-            }
 
-            // Close button
-            egui::TopBottomPanel::bottom("close_editor").show(ctx, |ui| {
-                if ui.button("Close Editor").clicked() {
-                    self.show_eq_editor = false;
-                }
-            });
-        } else {
-            // Show main view
-            egui::SidePanel::left("presets_panel").show(ctx, |ui| {
-                if let Some(action) = self.presets_view.show(ui) {
+                    // Close button
+                    egui::TopBottomPanel::bottom("close_editor").show(ctx, |ui| {
+                        if ui.button("Close Editor").clicked() {
+                            self.show_eq_editor = false;
+                        }
+                    });
+                } else {
+                    // Show presets panel on left
+                    egui::SidePanel::left("presets_panel").show(ctx, |ui| {
+                // Show custom EQ option if DSP is streaming (custom EQ works in DSP mode)
+                // Hide it if using WiiM API only (device doesn't support custom EQ)
+                let show_custom_eq = self.dsp_view.is_streaming;
+                let device_connected = self.device.is_some();
+                if let Some(action) = self.presets_view.show(ui, show_custom_eq, device_connected) {
                     match action {
                         PresetAction::Refresh => {
                             let _ = self.command_tx.send(AppCommand::RefreshPresets);
@@ -1332,21 +1691,79 @@ impl eframe::App for AaeqApp {
                             tracing::info!("Selected preset: {}", preset);
                         }
                         PresetAction::Apply(preset) => {
-                            if self.device.is_some() {
-                                let _ = self.command_tx.send(AppCommand::ApplyPreset(preset));
+                            // If DSP is streaming, use DspChangePreset; otherwise use WiiM API
+                            if self.dsp_view.is_streaming {
+                                tracing::info!("Applying preset to DSP: {}", preset);
+                                let _ = self.command_tx.send(AppCommand::DspChangePreset(preset.clone()));
+                                self.status_message = Some(format!("Applying DSP preset: {}", preset));
+
+                                // Immediately update UI state for instant feedback
+                                self.current_preset = Some(preset.clone());
+                                self.now_playing_view.current_preset = Some(preset.clone());
+
+                                // Load the EQ curve for display
+                                let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
+                            } else if self.device.is_some() {
+                                tracing::info!("Applying preset to WiiM device: {}", preset);
+                                let _ = self.command_tx.send(AppCommand::ApplyPreset(preset.clone()));
+                                self.status_message = Some(format!("Applying preset: {}", preset));
+
+                                // Immediately update UI state for instant feedback
+                                self.current_preset = Some(preset.clone());
+                                self.now_playing_view.current_preset = Some(preset.clone());
+
+                                // Load the EQ curve for display
+                                let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
+                            } else {
+                                self.status_message = Some("Not connected (no WiiM device or DSP streaming)".to_string());
                             }
                         }
                         PresetAction::CreateCustom => {
-                            self.eq_editor_view = Some(EqEditorView::default());
+                            let mut editor = EqEditorView::default();
+                            // Populate existing presets list for validation
+                            editor.existing_presets = self.dsp_view.custom_presets.clone();
+                            self.eq_editor_view = Some(editor);
                             self.show_eq_editor = true;
                         }
                     }
                 }
             });
 
-            // Show DSP panel if enabled
-            if self.show_dsp_panel {
-                egui::SidePanel::right("dsp_panel").min_width(300.0).show(ctx, |ui| {
+                    // Central panel for now playing
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone()) {
+                            match action {
+                                NowPlayingAction::SaveMapping(scope) => {
+                                    // Pass track and preset to the async worker for saving
+                                    if let (Some(track), Some(preset)) = (&self.current_track, &self.current_preset) {
+                                        let _ = self.command_tx.send(AppCommand::SaveMapping(scope, track.clone(), preset.clone()));
+                                    } else {
+                                        self.status_message = Some("No track or preset to save".to_string());
+                                    }
+                                }
+                                NowPlayingAction::UpdateGenre(genre) => {
+                                    // Update genre for current track
+                                    if let Some(track) = &self.current_track {
+                                        let track_key = track.track_key();
+                                        let _ = self.command_tx.send(AppCommand::UpdateGenre(track_key, genre.clone()));
+
+                                        // Update the current track's genre locally
+                                        if let Some(track) = &mut self.current_track {
+                                            track.genre = genre.clone();
+                                            self.now_playing_view.track = Some(track.clone());
+                                            self.now_playing_view.genre_edit = genre; // Keep the edited value
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            AppMode::DspServer => {
+                // DSP Server Mode: Show DSP controls in main area
+                egui::CentralPanel::default().show(ctx, |ui| {
                     if let Some(action) = self.dsp_view.show(ui) {
                         match action {
                             DspAction::SinkTypeChanged(sink_type) => {
@@ -1375,6 +1792,8 @@ impl eframe::App for AaeqApp {
                             }
                             DspAction::DeviceSelected(device) => {
                                 tracing::info!("DSP device selected: {}", device);
+                                // Save the selected output device to settings
+                                let _ = self.command_tx.send(AppCommand::SaveOutputDevice(device));
                             }
                             DspAction::DiscoverDevices => {
                                 let _ = self.command_tx.send(AppCommand::DspDiscoverDevices(self.dsp_view.selected_sink, Some(self.device_host.clone())));
@@ -1482,40 +1901,97 @@ impl eframe::App for AaeqApp {
                                 } else {
                                     tracing::info!("EQ preset cleared");
                                 }
+
+                                // If streaming is active, restart to apply the new preset
+                                if self.dsp_view.is_streaming {
+                                    tracing::info!("Restarting stream to apply preset change");
+
+                                    // Stop current stream
+                                    let _ = self.command_tx.send(AppCommand::DspStopStreaming);
+
+                                    // Start new stream with updated preset after a brief delay
+                                    let command_tx = self.command_tx.clone();
+                                    let sink_type = self.dsp_view.selected_sink;
+                                    let device = self.dsp_view.selected_device.clone();
+                                    let use_test_tone = self.dsp_view.use_test_tone;
+                                    let input_device = self.dsp_view.selected_input_device.clone();
+                                    let preset_clone = preset.clone();
+                                    let format = match self.dsp_view.format {
+                                        FormatOption::F32 => SampleFormat::F32,
+                                        FormatOption::S24LE => SampleFormat::S24LE,
+                                        FormatOption::S16LE => SampleFormat::S16LE,
+                                    };
+                                    let config = OutputConfig {
+                                        sample_rate: self.dsp_view.sample_rate,
+                                        channels: 2,
+                                        format,
+                                        buffer_ms: self.dsp_view.buffer_ms,
+                                        exclusive: false,
+                                    };
+
+                                    tokio::spawn(async move {
+                                        // Wait for stop to complete
+                                        tokio::time::sleep(Duration::from_millis(200)).await;
+
+                                        if let Some(device) = device {
+                                            let _ = command_tx.send(AppCommand::DspStartStreaming(
+                                                sink_type,
+                                                device,
+                                                config,
+                                                use_test_tone,
+                                                input_device,
+                                                preset_clone,
+                                            ));
+                                        }
+                                    });
+
+                                    self.status_message = Some("Restarting stream with new preset...".to_string());
+                                }
+                            }
+                            DspAction::SaveCustomPreset(preset) => {
+                                tracing::info!("Saving custom preset: {}", preset.name);
+                                let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset));
                             }
                         }
                     }
                 });
             }
+        }
 
-            egui::CentralPanel::default().show(ctx, |ui| {
-                if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone()) {
-                    match action {
-                        NowPlayingAction::SaveMapping(scope) => {
-                            // Pass track and preset to the async worker for saving
-                            if let (Some(track), Some(preset)) = (&self.current_track, &self.current_preset) {
-                                let _ = self.command_tx.send(AppCommand::SaveMapping(scope, track.clone(), preset.clone()));
-                            } else {
-                                self.status_message = Some("No track or preset to save".to_string());
-                            }
-                        }
-                        NowPlayingAction::UpdateGenre(genre) => {
-                            // Update genre for current track
-                            if let Some(track) = &self.current_track {
-                                let track_key = track.track_key();
-                                let _ = self.command_tx.send(AppCommand::UpdateGenre(track_key, genre.clone()));
+        // Window resize logic for visualization elements
+        let viz_enabled = self.dsp_view.audio_viz.enabled;
+        let is_streaming = self.dsp_view.is_streaming;
 
-                                // Update the current track's genre locally
-                                if let Some(track) = &mut self.current_track {
-                                    track.genre = genre.clone();
-                                    self.now_playing_view.track = Some(track.clone());
-                                    self.now_playing_view.genre_edit = genre; // Keep the edited value
-                                }
-                            }
-                        }
-                    }
-                }
-            });
+        // Check if visualization or streaming state changed
+        if viz_enabled != self.last_viz_state || is_streaming != self.last_streaming_state {
+            tracing::info!("Window resize needed - viz: {} -> {}, streaming: {} -> {}",
+                self.last_viz_state, viz_enabled, self.last_streaming_state, is_streaming);
+
+            // Calculate new window height based on visible elements
+            let base_height = 600.0;
+            let mut new_height = base_height;
+
+            // Add height for waveform visualization (~220px)
+            if viz_enabled {
+                new_height += 220.0;
+            }
+
+            // Add height for audio meters (~250px)
+            if is_streaming {
+                new_height += 250.0;
+            }
+
+            // Apply window resize
+            let current_size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+            if let Some(size) = current_size {
+                let new_size = egui::vec2(size.x, new_height);
+                tracing::info!("Resizing window from {}x{} to {}x{}", size.x, size.y, new_size.x, new_size.y);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
+            }
+
+            // Update tracking state
+            self.last_viz_state = viz_enabled;
+            self.last_streaming_state = is_streaming;
         }
 
         // Request continuous repaint for polling

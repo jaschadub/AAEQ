@@ -12,6 +12,7 @@ pub struct MediaMetadata {
     pub album: Option<String>,
     pub genre: Option<String>,
     pub duration: Option<String>, // Format: H:MM:SS
+    pub album_art_uri: Option<String>, // URL to album artwork
 }
 
 impl Default for MediaMetadata {
@@ -22,6 +23,7 @@ impl Default for MediaMetadata {
             album: None,
             genre: None,
             duration: None,
+            album_art_uri: None,
         }
     }
 }
@@ -71,6 +73,11 @@ pub fn generate_didl_lite(
     // Genre (optional)
     if let Some(genre) = &metadata.genre {
         didl.push_str(&format!("<upnp:genre>{}</upnp:genre>", escape_xml(genre)));
+    }
+
+    // Album Art URI (optional)
+    if let Some(album_art_uri) = &metadata.album_art_uri {
+        didl.push_str(&format!("<upnp:albumArtURI>{}</upnp:albumArtURI>", escape_xml(album_art_uri)));
     }
 
     // Class

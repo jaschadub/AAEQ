@@ -1,7 +1,7 @@
 use crate::convert::convert_format;
 use crate::sink::OutputSink;
 use crate::sinks::dlna::{
-    avtransport::AVTransport, didl::generate_simple_didl_lite, discovery::DlnaDevice,
+    avtransport::AVTransport, didl::{generate_didl_lite, MediaMetadata}, discovery::DlnaDevice,
 };
 use crate::types::{AudioBlock, OutputConfig, SampleFormat};
 use anyhow::{anyhow, Result};
@@ -130,6 +130,7 @@ impl DlnaSink {
         let app = Router::new()
             .route("/stream.wav", get(stream_handler))
             .route("/status", get(status_handler))
+            .route("/album_art.png", get(album_art_handler))
             .with_state(app_state);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -221,6 +222,29 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, axum::Json(status))
 }
 
+async fn album_art_handler() -> Response {
+    // Serve the default aaeq-icon.png as album art
+    let icon_path = "aaeq-icon.png";
+
+    match tokio::fs::read(icon_path).await {
+        Ok(data) => {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "image/png")
+                .header(header::CACHE_CONTROL, "public, max-age=86400")
+                .body(Body::from(data))
+                .unwrap()
+        }
+        Err(e) => {
+            error!("Failed to read album art icon: {}", e);
+            Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap()
+        }
+    }
+}
+
 fn create_wav_header_for_config(cfg: &OutputConfig) -> Vec<u8> {
     let sample_rate = cfg.sample_rate;
     let channels = cfg.channels;
@@ -298,8 +322,24 @@ impl OutputSink for DlnaSink {
                     avtransport_service.service_type.clone(),
                 );
 
-                // Generate DIDL-Lite metadata
-                let didl = generate_simple_didl_lite(&stream_url, "AAEQ Stream", &cfg);
+                // Generate DIDL-Lite metadata with album art
+                // Extract host:port from stream URL and construct album art URL
+                let album_art_url = if let Some(host_port) = stream_url.split("://").nth(1).and_then(|s| s.split('/').next()) {
+                    format!("http://{}/album_art.png", host_port)
+                } else {
+                    format!("http://{}/album_art.png", self.server_addr)
+                };
+
+                let metadata = MediaMetadata {
+                    title: "AAEQ Stream".to_string(),
+                    artist: None,
+                    album: None,
+                    genre: None,
+                    duration: None,
+                    album_art_uri: Some(album_art_url),
+                };
+
+                let didl = generate_didl_lite(&stream_url, &metadata, &cfg);
 
                 // Set the URI on the renderer
                 avtransport
