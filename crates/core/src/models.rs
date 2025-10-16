@@ -147,6 +147,7 @@ mod tests {
             album: "The Dark Side of the Moon".to_string(),
             genre: "Progressive Rock".to_string(),
             device_genre: "Progressive Rock".to_string(),
+            album_art_url: None,
         };
 
         assert_eq!(track.song_key(), "pink floyd - time");

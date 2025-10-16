@@ -84,6 +84,7 @@ mod tests {
             album: "The Dark Side of the Moon".to_string(),
             genre: "Rock".to_string(),
             device_genre: "Rock".to_string(),
+            album_art_url: None,
         };
 
         let mut rules = RulesIndex::default();
@@ -104,6 +105,7 @@ mod tests {
             album: "The Dark Side of the Moon".to_string(),
             genre: "Rock".to_string(),
             device_genre: "Rock".to_string(),
+            album_art_url: None,
         };
 
         let mut rules = RulesIndex::default();
@@ -122,6 +124,7 @@ mod tests {
             album: "Led Zeppelin IV".to_string(),
             genre: "Rock".to_string(),
             device_genre: "Rock".to_string(),
+            album_art_url: None,
         };
 
         let mut rules = RulesIndex::default();
@@ -140,6 +143,7 @@ mod tests {
             album: "Unknown Album".to_string(),
             genre: "Unknown".to_string(),
             device_genre: "Unknown".to_string(),
+            album_art_url: None,
         };
 
         let mut rules = RulesIndex::default();
