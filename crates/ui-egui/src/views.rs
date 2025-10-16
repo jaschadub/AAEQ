@@ -504,11 +504,26 @@ impl PresetsView {
 
 
             ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                // Show WiiM device presets
-                if !self.presets.is_empty() {
-                    ui.label(egui::RichText::new("Device Presets").strong().color(egui::Color32::LIGHT_GREEN));
+                // Show WiiM device presets if connected, otherwise show default WiiM presets
+                let presets_to_show = if !self.presets.is_empty() {
+                    &self.presets
+                } else {
+                    // Show default WiiM presets when no device is connected
+                    &crate::preset_library::list_known_presets()
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<String>>()
+                };
+
+                if !presets_to_show.is_empty() {
+                    let label = if !self.presets.is_empty() {
+                        "Device Presets"
+                    } else {
+                        "Default EQ Presets"
+                    };
+                    ui.label(egui::RichText::new(label).strong().color(egui::Color32::LIGHT_GREEN));
                     ui.separator();
-                    for preset in &self.presets.clone() {
+                    for preset in presets_to_show {
                         let is_selected = self.selected_preset.as_deref() == Some(preset.as_str());
                         if ui.selectable_label(is_selected, preset).clicked() {
                             self.selected_preset = Some(preset.clone());
@@ -519,7 +534,7 @@ impl PresetsView {
 
                 // Show custom EQ presets
                 if !self.custom_presets.is_empty() {
-                    if !self.presets.is_empty() {
+                    if !presets_to_show.is_empty() {
                         ui.add_space(5.0);
                     }
                     ui.label(egui::RichText::new("Custom Presets").strong().color(egui::Color32::from_rgb(255, 180, 100)));
@@ -824,66 +839,6 @@ impl DspView {
             ui.horizontal(|ui| {
                 ui.label("Buffer:");
                 ui.add(egui::Slider::new(&mut self.buffer_ms, 50..=500).suffix(" ms"));
-            });
-
-            // EQ Preset selector
-            ui.horizontal(|ui| {
-                ui.label("EQ Preset:");
-                egui::ComboBox::from_id_salt("eq_preset")
-                    .selected_text(self.selected_preset.as_deref().unwrap_or("None"))
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(self.selected_preset.is_none(), "None").clicked() {
-                            self.selected_preset = None;
-                            action = Some(DspAction::PresetSelected(None));
-                        }
-
-                        // Built-in library presets
-                        if !crate::preset_library::list_known_presets().is_empty() {
-                            ui.label(egui::RichText::new("Built-in Presets").strong().color(egui::Color32::LIGHT_BLUE));
-                            ui.separator();
-                            for preset_name in crate::preset_library::list_known_presets() {
-                                if ui.selectable_label(
-                                    self.selected_preset.as_deref() == Some(preset_name),
-                                    preset_name
-                                ).clicked() {
-                                    self.selected_preset = Some(preset_name.to_string());
-                                    action = Some(DspAction::PresetSelected(Some(preset_name.to_string())));
-                                }
-                            }
-                        }
-
-                        // Custom EQ presets
-                        if !self.custom_presets.is_empty() {
-                            ui.separator();
-                            ui.label(egui::RichText::new("Custom Presets").strong().color(egui::Color32::from_rgb(255, 180, 100)));
-                            ui.separator();
-                            for preset_name in &self.custom_presets.clone() {
-                                if ui.selectable_label(
-                                    self.selected_preset.as_deref() == Some(preset_name.as_str()),
-                                    preset_name
-                                ).clicked() {
-                                    self.selected_preset = Some(preset_name.clone());
-                                    action = Some(DspAction::PresetSelected(Some(preset_name.clone())));
-                                }
-                            }
-                        }
-
-                        // WiiM device presets
-                        if !self.wiim_presets.is_empty() {
-                            ui.separator();
-                            ui.label(egui::RichText::new("WiiM Device Presets").strong().color(egui::Color32::LIGHT_GREEN));
-                            ui.separator();
-                            for preset_name in &self.wiim_presets.clone() {
-                                if ui.selectable_label(
-                                    self.selected_preset.as_deref() == Some(preset_name.as_str()),
-                                    preset_name
-                                ).clicked() {
-                                    self.selected_preset = Some(preset_name.clone());
-                                    action = Some(DspAction::PresetSelected(Some(preset_name.clone())));
-                                }
-                            }
-                        }
-                    });
             });
 
             ui.add_space(10.0);

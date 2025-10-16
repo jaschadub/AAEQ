@@ -112,28 +112,41 @@ fn get_known_preset_curve(preset_name: &str) -> Option<EqPreset> {
 }
 
 /// Get a list of all known preset names in the library
+/// Includes all WiiM default presets plus common additional presets
 #[allow(dead_code)]
 pub fn list_known_presets() -> Vec<&'static str> {
     vec![
+        // WiiM default presets (same order as WiiM API)
         "Flat",
-        "Bass Booster",
-        "Treble Booster",
-        "Hip-Hop",
-        "R&B",
-        "Dance",
-        "Rock",
-        "Metal",
-        "Pop",
-        "Classical",
-        "Jazz",
         "Acoustic",
+        "Bass Booster",
+        "Bass Reducer",
+        "Classical",
+        "Dance",
+        "Deep",
+        "Electronic",
+        "Hip-Hop",
+        "Jazz",
+        "Latin",
+        "Loudness",
+        "Lounge",
+        "Piano",
+        "Pop",
+        "R&B",
+        "Rock",
+        "Small Speakers",
+        "Spoken Word",
+        "Treble Booster",
+        "Treble Reducer",
+        "Vocal Booster",
+        // Additional common presets
+        "Metal",
         "V-Shape",
         "Live",
         "Reggae",
         "Country",
         "Blues",
         "Funk",
-        "Spoken Word",
     ]
 }
 
