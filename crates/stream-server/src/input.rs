@@ -36,8 +36,8 @@ impl LocalDacInput {
             }
         }
 
-        // Add ALSA-configured monitor devices
-        // Check if aaeq_monitor exists (configured in .asoundrc)
+        // Add ALSA-configured capture devices
+        // Check if aaeq_monitor or aaeq_capture exists (configured in .asoundrc)
         if let Ok(output) = std::process::Command::new("arecord")
             .args(["-L"])
             .output()
@@ -45,8 +45,10 @@ impl LocalDacInput {
             if let Ok(output_str) = String::from_utf8(output.stdout) {
                 for line in output_str.lines() {
                     let line = line.trim();
-                    if line == "aaeq_monitor" {
-                        devices.push("🔊 aaeq_monitor (AAEQ Capture - System Audio)".to_string());
+                    if line == "aaeq_capture" {
+                        devices.push("🔊 aaeq_capture (AAEQ Capture - System Audio)".to_string());
+                    } else if line == "aaeq_monitor" {
+                        devices.push("🔊 aaeq_monitor (AAEQ Monitor - System Audio)".to_string());
                     } else if line == "pulse" && !devices.iter().any(|d| d.contains("pulse")) {
                         devices.push("pulse (PulseAudio)".to_string());
                     }
@@ -101,6 +103,11 @@ impl LocalDacInput {
         // List all input devices with indicators for loopback/monitor devices
         for device in host.input_devices()? {
             if let Ok(name) = device.name() {
+                // Skip if already added (avoid duplicates from ALSA/PulseAudio discovery)
+                if devices.iter().any(|d| d.contains(&name)) {
+                    continue;
+                }
+
                 let lower_name = name.to_lowercase();
 
                 // Mark monitor/loopback devices that capture system audio

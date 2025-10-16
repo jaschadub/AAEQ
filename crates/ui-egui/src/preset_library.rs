@@ -10,6 +10,29 @@ pub fn get_preset_curve(preset_name: &str) -> Option<EqPreset> {
         .or_else(|| generate_default_curve(preset_name))
 }
 
+/// Get a preset curve with database fallback for custom presets
+/// This is an async version that checks the database before generating a default curve
+pub async fn get_preset_curve_with_db(
+    preset_name: &str,
+    pool: &sqlx::SqlitePool,
+) -> Option<EqPreset> {
+    use aaeq_persistence::CustomEqPresetRepository;
+
+    // First try built-in known presets
+    if let Some(preset) = get_known_preset_curve(preset_name) {
+        return Some(preset);
+    }
+
+    // Then try loading from custom presets database
+    let custom_repo = CustomEqPresetRepository::new(pool.clone());
+    if let Ok(Some(custom_preset)) = custom_repo.get_by_name(preset_name).await {
+        return Some(custom_preset);
+    }
+
+    // Finally, generate a default curve based on name heuristics (for WiiM presets)
+    generate_default_curve(preset_name)
+}
+
 /// Check if a preset has a known curve in our library
 pub fn is_known_preset(preset_name: &str) -> bool {
     get_known_preset_curve(preset_name).is_some()

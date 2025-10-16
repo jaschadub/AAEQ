@@ -53,6 +53,12 @@ impl AlbumArtCache {
         cache.get(url).cloned().unwrap_or(AlbumArtState::NotLoaded)
     }
 
+    /// Try to get the current state without blocking (returns None if lock is held)
+    pub fn try_get(&self, url: &str) -> Option<AlbumArtState> {
+        let cache = self.cache.try_read().ok()?;
+        Some(cache.get(url).cloned().unwrap_or(AlbumArtState::NotLoaded))
+    }
+
     /// Request loading of an album art image (async)
     /// Returns immediately - use get() to check if loaded
     pub fn load(&self, url: String) {
