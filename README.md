@@ -7,7 +7,18 @@
 
 AAEQ is a cross-platform desktop application that intelligently manages EQ settings on your WiiM (LinkPlay) and DLNA devices based on what's currently playing. It also features a powerful DSP streaming mode that captures your computer's audio, applies real-time processing, and streams it to network devices. Set your favorite EQ preset once per song, album, or genre, and AAEQ will remember and apply it automatically.
 
-![AAEQ Screenshot](docs/screenshot.png)
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshot.png" alt="AAEQ EQ Management Mode" />
+      <p align="center"><em>EQ Management Mode</em></p>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshot2.png" alt="AAEQ DSP Streaming Mode" />
+      <p align="center"><em>DSP Streaming Mode</em></p>
+    </td>
+  </tr>
+</table>
 
 ## ✨ Features
 
@@ -17,21 +28,26 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🔌 **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
 - 📡 **DLNA Support** - Discover and control DLNA/UPnP media renderers
 - 🎯 **Now Playing Detection** - Tracks what's playing on your WiiM device or via MPRIS (Spotify, Strawberry, etc.)
+- 🎨 **Album Art Display** - Shows album artwork for the currently playing track with default fallback icon
+- 📊 **EQ Curve Visualization** - View exact EQ curves for both built-in and custom presets
 
 ### DSP Streaming Mode
 - 🎚️ **Real-Time Audio Processing** - Capture system audio with configurable DSP chain
-- 🎛️ **Multi-Band Parametric EQ** - Up to 10-band equalizer with adjustable Q, gain, and frequency
-- 🔊 **Dynamic Range Control** - Compressor, limiter, and gain control
-- 🎼 **Audio Enhancement** - Bass boost, treble boost, and stereo width control
-- 📤 **Multi-Format Streaming** - Stream to DLNA devices, local DAC, or AirPlay (experimental)
-- 🎵 **Format Conversion** - Supports WAV, FLAC output with configurable sample rates (44.1kHz - 192kHz)
-- 📊 **Real-Time Visualization** - Live waveform and spectrum analyzer
+- 🎛️ **Custom EQ Presets** - Create, save, and manage unlimited custom EQ presets in database
+- 🎯 **10-Band Parametric EQ** - Precise control over frequency, gain, and Q factor per band
+- 📤 **Multi-Format Streaming** - Stream to DLNA devices (with album art), local DAC, or AirPlay (experimental)
+- 🎵 **Format Conversion** - Supports S16LE, S24LE, F32 with configurable sample rates (44.1kHz - 192kHz)
+- 📊 **Real-Time Visualization** - Live waveform display and dual audio level meters (pre/post EQ)
+- 📈 **Audio Meters** - Professional VU meters showing RMS and peak levels in dBFS
 - 🎙️ **MPRIS Integration** - Automatically detects what's playing on Linux media players
+- 🔄 **Device Persistence** - Remembers last used input/output devices between sessions
+- 🪟 **Auto-Resize Window** - Window automatically adjusts to fit waveform and meters when enabled
 
 ### General
 - 💾 **Local-First** - All data stored locally in SQLite, no cloud required
 - 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
 - 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
+- 🔌 **Smart Connection Management** - Toggle between Connect/Disconnect states with auto-reconnect
 
 ## 📥 Installation
 
@@ -239,7 +255,9 @@ AAEQ stores its configuration and database in:
 - `mapping` - Song/album/genre → preset mappings
 - `genre_override` - Manual genre assignments
 - `last_applied` - Tracking state for debouncing
-- `app_settings` - Application settings (last connected device, last input device)
+- `app_settings` - Application settings (last connected device, last input/output devices)
+- `custom_eq_preset` - User-created custom EQ presets
+- `custom_eq_band` - EQ band definitions for custom presets
 
 ## 🤝 Contributing
 
@@ -255,7 +273,8 @@ Contributions are welcome! Please:
 
 ### WiiM API Mode
 - **WiiM API Constraints**:
-  - Cannot create or save custom EQ presets (only load built-in presets)
+  - Can only apply WiiM's built-in EQ presets via the API
+  - Custom EQ presets work only in DSP Streaming Mode
   - Genre metadata often missing from streaming services
   - Metadata encoding issues with some sources (handled via hex decoding)
 
