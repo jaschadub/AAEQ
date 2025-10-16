@@ -187,6 +187,7 @@ mod tests {
             album: Some("Test Album".to_string()),
             genre: Some("Rock".to_string()),
             duration: Some("3:45".to_string()),
+            album_art_uri: None,
         };
 
         let didl = generate_didl_lite("http://example.com/stream.wav", &metadata, &config);
