@@ -1768,9 +1768,52 @@ impl eframe::App for AaeqApp {
                         match action {
                             DspAction::SinkTypeChanged(sink_type) => {
                                 tracing::info!("DSP sink type changed: {:?}", sink_type);
-                                // Clear current device selection when switching sink types
+
+                                // Save current device to appropriate field before switching
+                                if let Some(device) = &self.dsp_view.selected_device {
+                                    match self.dsp_view.selected_sink {
+                                        SinkType::LocalDac => {
+                                            self.dsp_view.last_local_dac_device = Some(device.clone());
+                                            tracing::info!("Saved Local DAC device: {}", device);
+                                        }
+                                        SinkType::Dlna => {
+                                            self.dsp_view.last_dlna_device = Some(device.clone());
+                                            tracing::info!("Saved DLNA device: {}", device);
+                                        }
+                                        SinkType::AirPlay => {
+                                            self.dsp_view.last_airplay_device = Some(device.clone());
+                                            tracing::info!("Saved AirPlay device: {}", device);
+                                        }
+                                    }
+                                }
+
+                                // Clear devices for new sink type
                                 self.dsp_view.available_devices.clear();
-                                self.dsp_view.selected_device = None;
+
+                                // Restore saved device for new sink type
+                                self.dsp_view.selected_device = match sink_type {
+                                    SinkType::LocalDac => {
+                                        let saved = self.dsp_view.last_local_dac_device.clone();
+                                        if let Some(ref device) = saved {
+                                            tracing::info!("Restored Local DAC device: {}", device);
+                                        }
+                                        saved
+                                    }
+                                    SinkType::Dlna => {
+                                        let saved = self.dsp_view.last_dlna_device.clone();
+                                        if let Some(ref device) = saved {
+                                            tracing::info!("Restored DLNA device: {}", device);
+                                        }
+                                        saved
+                                    }
+                                    SinkType::AirPlay => {
+                                        let saved = self.dsp_view.last_airplay_device.clone();
+                                        if let Some(ref device) = saved {
+                                            tracing::info!("Restored AirPlay device: {}", device);
+                                        }
+                                        saved
+                                    }
+                                };
 
                                 // Adjust format based on sink type
                                 match sink_type {
@@ -1792,7 +1835,21 @@ impl eframe::App for AaeqApp {
                             }
                             DspAction::DeviceSelected(device) => {
                                 tracing::info!("DSP device selected: {}", device);
-                                // Save the selected output device to settings
+
+                                // Save device to appropriate per-sink field
+                                match self.dsp_view.selected_sink {
+                                    SinkType::LocalDac => {
+                                        self.dsp_view.last_local_dac_device = Some(device.clone());
+                                    }
+                                    SinkType::Dlna => {
+                                        self.dsp_view.last_dlna_device = Some(device.clone());
+                                    }
+                                    SinkType::AirPlay => {
+                                        self.dsp_view.last_airplay_device = Some(device.clone());
+                                    }
+                                }
+
+                                // Also save the selected output device to settings (for initial restore on startup)
                                 let _ = self.command_tx.send(AppCommand::SaveOutputDevice(device));
                             }
                             DspAction::DiscoverDevices => {
