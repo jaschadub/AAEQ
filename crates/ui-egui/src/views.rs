@@ -1,7 +1,9 @@
 use aaeq_core::{EqPreset, TrackMeta, Scope};
 use crate::audio_viz::AudioVizState;
 use crate::widgets::VerticalSlider;
+use crate::album_art::{AlbumArtCache, AlbumArtState};
 use egui::{Context, ScrollArea, Ui};
+use std::sync::Arc;
 
 /// View for creating/editing EQ presets with vertical sliders
 pub struct EqEditorView {
@@ -106,6 +108,8 @@ pub struct NowPlayingView {
     pub track: Option<TrackMeta>,
     pub current_preset: Option<String>,
     pub genre_edit: String,
+    album_art_texture: Option<egui::TextureHandle>,
+    last_album_art_url: Option<String>,
 }
 
 impl Default for NowPlayingView {
@@ -114,6 +118,8 @@ impl Default for NowPlayingView {
             track: None,
             current_preset: None,
             genre_edit: String::new(),
+            album_art_texture: None,
+            last_album_art_url: None,
         }
     }
 }
@@ -127,36 +133,100 @@ impl NowPlayingView {
         !is_unknown
     }
 
-    pub fn show(&mut self, ui: &mut Ui) -> Option<NowPlayingAction> {
+    pub fn show(&mut self, ui: &mut Ui, album_art_cache: Arc<AlbumArtCache>) -> Option<NowPlayingAction> {
         let mut action = None;
 
         ui.group(|ui| {
             ui.heading("Now Playing");
 
             if let Some(track) = &self.track {
-                ui.horizontal(|ui| {
-                    ui.label("Artist:");
-                    ui.label(&track.artist);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Title:");
-                    ui.label(&track.title);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Album:");
-                    ui.label(&track.album);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Genre:");
-                    let response = ui.text_edit_singleline(&mut self.genre_edit);
-                    // Only update on Enter key, not on every keystroke
-                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        action = Some(NowPlayingAction::UpdateGenre(self.genre_edit.clone()));
+                // Handle album art loading and display
+                if let Some(art_url) = &track.album_art_url {
+                    // Check if URL changed - if so, clear cached texture
+                    if self.last_album_art_url.as_ref() != Some(art_url) {
+                        self.album_art_texture = None;
+                        self.last_album_art_url = Some(art_url.clone());
                     }
-                    if ui.small_button("↻").on_hover_text("Reset to device genre").clicked() {
-                        self.genre_edit = track.device_genre.clone();
-                        action = Some(NowPlayingAction::UpdateGenre(track.device_genre.clone()));
+
+                    // Try to get loaded image and convert to texture
+                    let cache_clone = album_art_cache.clone();
+                    let url_clone = art_url.clone();
+                    let ctx = ui.ctx().clone();
+
+                    // Spawn task to check cache state and load if needed
+                    if self.album_art_texture.is_none() {
+                        let texture_ready = self.album_art_texture.is_some();
+                        tokio::spawn(async move {
+                            let state = cache_clone.get(&url_clone).await;
+                            match state {
+                                AlbumArtState::NotLoaded => {
+                                    cache_clone.load(url_clone);
+                                    ctx.request_repaint();
+                                }
+                                AlbumArtState::Loading => {
+                                    ctx.request_repaint();
+                                }
+                                AlbumArtState::Loaded(_) if !texture_ready => {
+                                    ctx.request_repaint();
+                                }
+                                _ => {}
+                            }
+                        });
                     }
+
+                    // Try to load texture from cache if not already loaded
+                    if self.album_art_texture.is_none() {
+                        let cache_clone = album_art_cache.clone();
+                        let url_clone = art_url.clone();
+                        let rt = tokio::runtime::Handle::current();
+                        let state = rt.block_on(cache_clone.get(&url_clone));
+                        if let AlbumArtState::Loaded(color_image) = state {
+                            // Convert ColorImage to texture
+                            let texture = ui.ctx().load_texture(
+                                &format!("album_art_{}", art_url),
+                                color_image.as_ref().clone(),
+                                Default::default(),
+                            );
+                            self.album_art_texture = Some(texture);
+                        }
+                    }
+                }
+
+                // Display layout with album art
+                ui.horizontal(|ui| {
+                    // Album art on the left
+                    if let Some(texture) = &self.album_art_texture {
+                        ui.add(egui::Image::new(texture).max_size(egui::vec2(150.0, 150.0)));
+                        ui.add_space(10.0);
+                    }
+
+                    // Track info on the right
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Artist:");
+                            ui.label(&track.artist);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Title:");
+                            ui.label(&track.title);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Album:");
+                            ui.label(&track.album);
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Genre:");
+                            let response = ui.text_edit_singleline(&mut self.genre_edit);
+                            // Only update on Enter key, not on every keystroke
+                            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                action = Some(NowPlayingAction::UpdateGenre(self.genre_edit.clone()));
+                            }
+                            if ui.small_button("↻").on_hover_text("Reset to device genre").clicked() {
+                                self.genre_edit = track.device_genre.clone();
+                                action = Some(NowPlayingAction::UpdateGenre(track.device_genre.clone()));
+                            }
+                        });
+                    });
                 });
 
                 if let Some(preset) = &self.current_preset {

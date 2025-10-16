@@ -11,6 +11,7 @@ aaeq-device-wiim = { path = "../device-wiim" }
 stream-server = { path = "../stream-server" }
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_extras = { version = "0.29", features = ["image"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -18,3 +19,5 @@ sqlx = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
 zip = "2.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+reqwest = { workspace = true }

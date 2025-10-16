@@ -239,7 +239,10 @@ pub fn get_now_playing_mpris() -> Result<TrackMeta> {
         .cloned()
         .unwrap_or_else(|| "Unknown".to_string());
 
-    debug!("MPRIS metadata: artist={}, title={}, album={}, genre={}", artist, title, album, genre);
+    let album_art_url = metadata.get("mpris:artUrl").cloned();
+
+    debug!("MPRIS metadata: artist={}, title={}, album={}, genre={}, art_url={:?}",
+           artist, title, album, genre, album_art_url);
 
     Ok(TrackMeta {
         artist,
@@ -247,6 +250,7 @@ pub fn get_now_playing_mpris() -> Result<TrackMeta> {
         album,
         genre: genre.clone(),
         device_genre: genre, // Same for MPRIS
+        album_art_url,
     })
 }
 

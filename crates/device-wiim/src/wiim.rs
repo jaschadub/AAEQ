@@ -149,7 +149,16 @@ impl DeviceController for WiimController {
             album: Self::decode_metadata_field(&status.album),
             genre: String::new(),  // WiiM API doesn't provide genre directly
             device_genre: String::new(),  // WiiM API doesn't provide genre directly
+            album_art_url: None,  // Will be set below if available
         };
+
+        // Try to get album art URL from the device
+        // WiiM devices serve album art at: http://{host}/Artwork
+        if !meta.title.is_empty() && status.status == "play" || status.status == "pause" {
+            // Album art is available while playing
+            let artwork_url = format!("http://{}/Artwork", self.host);
+            meta.album_art_url = Some(artwork_url);
+        }
 
         // If metadata is missing, try to extract from vendor field or use placeholder
         if meta.title.is_empty() && meta.artist.is_empty() {

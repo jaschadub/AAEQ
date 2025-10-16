@@ -2,6 +2,7 @@ use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, Tr
 use aaeq_device_wiim::{WiimController, discover_devices_quick};
 use aaeq_persistence::{AppSettingsRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
 use crate::views::*;
+use crate::album_art::AlbumArtCache;
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -91,6 +92,9 @@ pub struct AaeqApp {
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
     response_rx: mpsc::UnboundedReceiver<AppResponse>,
+
+    /// Album art cache
+    album_art_cache: Arc<AlbumArtCache>,
 }
 
 impl AaeqApp {
@@ -134,6 +138,7 @@ impl AaeqApp {
             show_discovery: false,
             command_tx,
             response_rx,
+            album_art_cache: Arc::new(AlbumArtCache::new()),
         }
     }
 
@@ -1484,7 +1489,7 @@ impl eframe::App for AaeqApp {
             }
 
             egui::CentralPanel::default().show(ctx, |ui| {
-                if let Some(action) = self.now_playing_view.show(ui) {
+                if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone()) {
                     match action {
                         NowPlayingAction::SaveMapping(scope) => {
                             // Pass track and preset to the async worker for saving

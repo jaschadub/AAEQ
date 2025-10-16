@@ -10,6 +10,9 @@ pub struct TrackMeta {
     /// The original genre from the device (before any override)
     #[serde(default)]
     pub device_genre: String,
+    /// URL to album artwork (optional)
+    #[serde(default)]
+    pub album_art_url: Option<String>,
 }
 
 impl TrackMeta {
