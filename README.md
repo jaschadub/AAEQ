@@ -345,10 +345,15 @@ Contributions are welcome! Please:
 
 ### General
 - **System Tray on XFCE**:
-  - The system tray icon may not appear on XFCE desktop due to limited StatusNotifier protocol support
-  - The application window and all features work normally; only the tray icon visibility is affected
-  - Works correctly on GNOME, KDE, and other desktop environments
-  - Workaround: Keep the application window visible or use keyboard shortcuts to show/hide
+  - AAEQ uses libappindicator for the system tray icon, which requires specific XFCE panel plugins
+  - **Solution**: Add one of these plugins to your XFCE panel:
+    - **Indicator Plugin** (xfce4-indicator-plugin) - Recommended for most apps
+    - **Status Notifier Plugin** (xfce4-statusnotifier-plugin) - Modern D-Bus based
+    - **Status Tray** (XFCE 4.15+) - Built-in support for statusnotifier items
+  - **How to add**: Right-click XFCE panel → Panel → Add New Items → Select "Indicator Plugin" or "Status Notifier Plugin"
+  - **Note**: Don't use both Indicator and Status Notifier plugins simultaneously as they conflict
+  - The "Notification Area" (systray) plugin only supports legacy XEMBED icons, not libappindicator
+  - Works out-of-box on GNOME, KDE, and other desktop environments with native indicator support
 
 ## 📝 License
 
