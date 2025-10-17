@@ -12,6 +12,10 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
+// Windows-specific imports for WASAPI loopback
+#[cfg(target_os = "windows")]
+use wasapi::{initialize_mta, DeviceEnumerator, Direction, ShareMode};
+
 /// Input source that captures from system audio (loopback/monitor device)
 pub struct LocalDacInput;
 
@@ -419,8 +423,6 @@ impl LocalDacInput {
     /// Windows-specific: List WASAPI loopback devices (system audio capture)
     #[cfg(target_os = "windows")]
     fn list_windows_loopback_devices() -> Result<Vec<String>> {
-        use wasapi::*;
-
         let mut loopback_devices = Vec::new();
 
         // Initialize COM
@@ -482,7 +484,6 @@ impl LocalDacInput {
         cfg: OutputConfig,
         tx: mpsc::Sender<Vec<f64>>,
     ) -> Result<mpsc::Sender<()>> {
-        use wasapi::*;
         use std::sync::atomic::{AtomicBool, Ordering};
 
         // Extract clean device name (remove emoji and "(Loopback)")
