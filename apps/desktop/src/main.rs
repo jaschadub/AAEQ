@@ -83,12 +83,37 @@ async fn main() -> Result<()> {
     tracing::info!("Loading tray icon image...");
     let icon = load_icon();
     tracing::info!("Building tray icon...");
-    let _tray_icon = TrayIconBuilder::new()
+    let _tray_icon = match TrayIconBuilder::new()
         .with_menu(Box::new(tray_menu))
         .with_tooltip("AAEQ - Adaptive Audio Equalizer")
         .with_icon(icon)
-        .build()?;
-    tracing::info!("Tray icon created successfully");
+        .build() {
+            Ok(icon) => {
+                tracing::info!("Tray icon created successfully");
+                icon
+            }
+            Err(e) => {
+                tracing::warn!("Failed to create tray icon: {}", e);
+                #[cfg(target_os = "linux")]
+                {
+                    // Check if we're on XFCE
+                    if std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase().contains("xfce") {
+                        tracing::warn!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                        tracing::warn!("XFCE detected: Tray icon requires panel plugin!");
+                        tracing::warn!("Add 'Indicator Plugin' or 'Status Notifier Plugin':");
+                        tracing::warn!("  1. Right-click XFCE panel → Panel → Add New Items");
+                        tracing::warn!("  2. Select 'Indicator Plugin' (recommended)");
+                        tracing::warn!("  3. Restart AAEQ to see the tray icon");
+                        tracing::warn!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+                    } else {
+                        tracing::warn!("Make sure libappindicator3 is installed:");
+                        tracing::warn!("  Ubuntu/Debian: sudo apt install libappindicator3-1");
+                        tracing::warn!("  Arch: sudo pacman -S libappindicator-gtk3");
+                    }
+                }
+                return Err(e.into());
+            }
+        };
 
     // Track window visibility
     let window_visible = Arc::new(Mutex::new(true));
