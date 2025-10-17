@@ -241,16 +241,28 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-      - name: Create archive
+      - name: Create ZIP archive
         run: |
           cd target/release
           7z a aaeq-windows-x64.zip aaeq.exe
 
-      - name: Upload artifact
+      - name: Install cargo-wix
+        run: cargo install cargo-wix
+
+      - name: Build MSI installer
+        run: cargo wix --nocapture --output target/wix/aaeq-windows-x64.msi
+
+      - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aaeq-windows-x64
+          name: aaeq-windows-x64-zip
           path: target/release/aaeq-windows-x64.zip
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaeq-windows-x64-msi
+          path: target/wix/aaeq-windows-x64.msi
 
   upload-release-assets:
     name: Upload Release Assets
@@ -279,7 +291,8 @@ jobs:
             artifacts/aaeq-linux-arm64/*.tar.gz
             artifacts/aaeq-macos-dmg/*.dmg
             artifacts/aaeq-macos-tarball/*.tar.gz
-            artifacts/aaeq-windows-x64/*.zip
+            artifacts/aaeq-windows-x64-zip/*.zip
+            artifacts/aaeq-windows-x64-msi/*.msi
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
