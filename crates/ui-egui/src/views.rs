@@ -831,7 +831,14 @@ impl DspView {
                 egui::ComboBox::from_id_salt("format")
                     .selected_text(self.format.as_str())
                     .show_ui(ui, |ui| {
-                        for &fmt in &[FormatOption::F32, FormatOption::S24LE, FormatOption::S16LE] {
+                        // Local DAC only supports F32 and S16LE
+                        let available_formats = if self.selected_sink == SinkType::LocalDac {
+                            vec![FormatOption::F32, FormatOption::S16LE]
+                        } else {
+                            vec![FormatOption::F32, FormatOption::S24LE, FormatOption::S16LE]
+                        };
+
+                        for &fmt in &available_formats {
                             if ui.selectable_label(
                                 self.format == fmt,
                                 fmt.as_str()
@@ -840,6 +847,14 @@ impl DspView {
                             }
                         }
                     });
+
+                // Show hint for Local DAC
+                if self.selected_sink == SinkType::LocalDac {
+                    ui.label(
+                        egui::RichText::new("ℹ")
+                            .color(egui::Color32::LIGHT_BLUE)
+                    ).on_hover_text("Local DAC only supports 32-bit Float (F32) and 16-bit PCM (S16LE)");
+                }
             });
 
             // Buffer size

@@ -152,6 +152,118 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     .execute(pool)
     .await?;
 
+    // Migration 006: Add last_output_device to app_settings
+    let output_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('app_settings') WHERE name = 'last_output_device'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !output_column_exists {
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN last_output_device TEXT")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added last_output_device column to app_settings");
+    }
+
+    // Migration 007: Profiles
+    // Check if profile table exists
+    let profile_table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='profile'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !profile_table_exists {
+        // Create profile table
+        sqlx::query(r#"
+            CREATE TABLE profile (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                is_builtin INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            INSERT INTO profile (name, is_builtin, created_at, updated_at)
+            VALUES
+                ('Default', 1, strftime('%s', 'now'), strftime('%s', 'now')),
+                ('Headphones', 1, strftime('%s', 'now'), strftime('%s', 'now'));
+        "#)
+        .execute(pool)
+        .await?;
+
+        // Recreate mapping table with profile_id in a single transaction
+        sqlx::query(r#"
+            -- Create new mapping table with profile support
+            CREATE TABLE mapping_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL CHECK(scope IN ('song', 'album', 'genre', 'default')),
+                key_normalized TEXT,
+                preset_name TEXT NOT NULL,
+                profile_id INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(profile_id, scope, key_normalized),
+                FOREIGN KEY (profile_id) REFERENCES profile(id) ON DELETE CASCADE
+            );
+
+            -- Copy existing mappings to new table (all with profile_id=1 for "Default")
+            INSERT INTO mapping_new (id, scope, key_normalized, preset_name, profile_id, created_at, updated_at)
+            SELECT id, scope, key_normalized, preset_name, 1, created_at, updated_at
+            FROM mapping;
+
+            -- Drop old table
+            DROP TABLE mapping;
+
+            -- Rename new table
+            ALTER TABLE mapping_new RENAME TO mapping;
+        "#)
+        .execute(pool)
+        .await?;
+
+        // Recreate indexes
+        sqlx::query(r#"
+            CREATE INDEX IF NOT EXISTS idx_mapping_profile ON mapping(profile_id);
+            CREATE INDEX IF NOT EXISTS idx_mapping_scope ON mapping(scope);
+            CREATE INDEX IF NOT EXISTS idx_mapping_key ON mapping(key_normalized);
+        "#)
+        .execute(pool)
+        .await?;
+
+        // Recreate app_settings with active_profile_id in a single transaction
+        sqlx::query(r#"
+            -- Create new app_settings table with active_profile_id
+            CREATE TABLE app_settings_new (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_connected_host TEXT,
+                last_input_device TEXT,
+                last_output_device TEXT,
+                active_profile_id INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (active_profile_id) REFERENCES profile(id)
+            );
+
+            -- Copy existing settings
+            INSERT INTO app_settings_new (id, last_connected_host, last_input_device, last_output_device, active_profile_id, created_at, updated_at)
+            SELECT id, last_connected_host, last_input_device, last_output_device, 1, created_at, updated_at
+            FROM app_settings;
+
+            -- Drop old table
+            DROP TABLE app_settings;
+
+            -- Rename new table
+            ALTER TABLE app_settings_new RENAME TO app_settings;
+        "#)
+        .execute(pool)
+        .await?;
+
+        tracing::info!("Added profile support with Default and Headphones profiles");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

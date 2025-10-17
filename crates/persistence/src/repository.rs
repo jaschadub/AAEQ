@@ -1,4 +1,4 @@
-use aaeq_core::{Device, Mapping, Scope};
+use aaeq_core::{Device, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::SqlitePool;
 use chrono::Utc;
@@ -152,12 +152,13 @@ impl MappingRepository {
 
         let id = sqlx::query!(
             r#"
-            INSERT INTO mapping (scope, key_normalized, preset_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO mapping (scope, key_normalized, preset_name, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             "#,
             scope_str,
             mapping.key_normalized,
             mapping.preset_name,
+            mapping.profile_id,
             now,
             now
         )
@@ -174,15 +175,16 @@ impl MappingRepository {
 
         let id = sqlx::query!(
             r#"
-            INSERT INTO mapping (scope, key_normalized, preset_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(scope, key_normalized)
+            INSERT INTO mapping (scope, key_normalized, preset_name, profile_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(profile_id, scope, key_normalized)
             DO UPDATE SET preset_name = excluded.preset_name, updated_at = excluded.updated_at
             RETURNING id
             "#,
             scope_str,
             mapping.key_normalized,
             mapping.preset_name,
+            mapping.profile_id,
             now,
             now
         )
@@ -196,9 +198,9 @@ impl MappingRepository {
     pub async fn list_all(&self) -> Result<Vec<Mapping>> {
         let rows = sqlx::query!(
             r#"
-            SELECT id, scope, key_normalized, preset_name, created_at, updated_at
+            SELECT id, scope, key_normalized, preset_name, profile_id, created_at, updated_at
             FROM mapping
-            ORDER BY scope, key_normalized
+            ORDER BY profile_id, scope, key_normalized
             "#
         )
         .fetch_all(&self.pool)
@@ -213,6 +215,40 @@ impl MappingRepository {
                     scope,
                     key_normalized: row.key_normalized,
                     preset_name: row.preset_name,
+                    profile_id: row.profile_id,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                })
+            })
+            .collect();
+
+        Ok(mappings)
+    }
+
+    /// List mappings for a specific profile
+    pub async fn list_by_profile(&self, profile_id: i64) -> Result<Vec<Mapping>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, scope, key_normalized, preset_name, profile_id, created_at, updated_at
+            FROM mapping
+            WHERE profile_id = ?
+            ORDER BY scope, key_normalized
+            "#,
+            profile_id
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mappings = rows
+            .into_iter()
+            .filter_map(|row| {
+                let scope = Scope::from_str(&row.scope)?;
+                Some(Mapping {
+                    id: Some(row.id),
+                    scope,
+                    key_normalized: row.key_normalized,
+                    preset_name: row.preset_name,
+                    profile_id: row.profile_id,
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                 })
@@ -441,6 +477,143 @@ impl CustomEqPresetRepository {
             DELETE FROM custom_eq_preset WHERE name = ?
             "#,
             name
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
+/// Repository for profile operations
+pub struct ProfileRepository {
+    pool: SqlitePool,
+}
+
+impl ProfileRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new profile
+    pub async fn create(&self, profile: &Profile) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let is_builtin = if profile.is_builtin { 1 } else { 0 };
+
+        let id = sqlx::query!(
+            r#"
+            INSERT INTO profile (name, is_builtin, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+            "#,
+            profile.name,
+            is_builtin,
+            now,
+            now
+        )
+        .execute(&self.pool)
+        .await?
+        .last_insert_rowid();
+
+        Ok(id)
+    }
+
+    /// Get a profile by ID
+    pub async fn get_by_id(&self, id: i64) -> Result<Option<Profile>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT id, name, is_builtin, created_at, updated_at
+            FROM profile
+            WHERE id = ?
+            "#,
+            id
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Profile {
+            id: Some(r.id),
+            name: r.name,
+            is_builtin: r.is_builtin != 0,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }))
+    }
+
+    /// Get a profile by name
+    pub async fn get_by_name(&self, name: &str) -> Result<Option<Profile>> {
+        let row = sqlx::query!(
+            r#"
+            SELECT id, name, is_builtin, created_at, updated_at
+            FROM profile
+            WHERE name = ?
+            "#,
+            name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Profile {
+            id: Some(r.id),
+            name: r.name,
+            is_builtin: r.is_builtin != 0,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        }))
+    }
+
+    /// List all profiles
+    pub async fn list_all(&self) -> Result<Vec<Profile>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, name, is_builtin, created_at, updated_at
+            FROM profile
+            ORDER BY is_builtin DESC, name
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let profiles = rows
+            .into_iter()
+            .map(|r| Profile {
+                id: Some(r.id),
+                name: r.name,
+                is_builtin: r.is_builtin != 0,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect();
+
+        Ok(profiles)
+    }
+
+    /// Update a profile name (only for user-created profiles)
+    pub async fn update_name(&self, id: i64, name: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query!(
+            r#"
+            UPDATE profile
+            SET name = ?, updated_at = ?
+            WHERE id = ? AND is_builtin = 0
+            "#,
+            name,
+            now,
+            id
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a profile (only for user-created profiles)
+    pub async fn delete(&self, id: i64) -> Result<()> {
+        sqlx::query!(
+            r#"
+            DELETE FROM profile WHERE id = ? AND is_builtin = 0
+            "#,
+            id
         )
         .execute(&self.pool)
         .await?;
