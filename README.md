@@ -44,6 +44,8 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🪟 **Auto-Resize Window** - Window automatically adjusts to fit waveform and meters when enabled
 
 ### General
+- 👤 **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Car")
+- 🔄 **Profile Switching** - Instantly switch between profiles to apply different EQ settings for the same songs
 - 💾 **Local-First** - All data stored locally in SQLite, no cloud required
 - 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
 - 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
@@ -193,8 +195,48 @@ Since many streaming services don't provide genre metadata via the WiiM API, AAE
 
 1. Click on the genre field in "Now Playing"
 2. Type the genre (e.g., "Rock", "Jazz", "Classical")
-3. The genre is automatically saved and will be used for preset resolution
+3. Press Enter to save - the genre persists across app restarts
 4. Use the ↻ button to reset to device-provided genre (if available)
+
+## 👤 Multiple Profiles
+
+AAEQ supports multiple EQ profiles, allowing you to maintain different EQ mappings for different listening scenarios:
+
+### Use Cases
+- **Headphones** - Bright EQ for detailed listening
+- **Speakers** - Balanced EQ for room acoustics
+- **Car** - Bass-heavy EQ for road noise
+- **Night** - Reduced dynamics for quiet listening
+
+### Managing Profiles
+
+1. **Create a new profile**
+   - Click the profile dropdown in the top-left
+   - Select "➕ New Profile"
+   - Enter a name (e.g., "Headphones")
+
+2. **Switch between profiles**
+   - Select a profile from the dropdown
+   - EQ mappings update instantly
+   - The currently playing track applies the new profile's preset
+
+3. **Each profile has its own mappings**
+   - Same song can have different EQ in different profiles
+   - For example: "Song A" → "Bass Booster" in "Car" profile
+   - But "Song A" → "Flat" in "Headphones" profile
+
+4. **Built-in profiles**
+   - "Default" profile is created automatically
+   - Built-in profiles cannot be deleted
+   - You can rename and delete user-created profiles
+
+### How It Works
+
+When you switch profiles:
+1. AAEQ loads the mappings for the new profile
+2. If a track is currently playing, it re-resolves the preset using the new profile's mappings
+3. The new preset is applied automatically
+4. Your active profile persists across app restarts
 
 ## 📁 Project Structure
 
@@ -252,10 +294,11 @@ AAEQ stores its configuration and database in:
 
 - `device` - Connected devices
 - `device_preset` - Cached presets from devices
-- `mapping` - Song/album/genre → preset mappings
+- `profile` - User-created EQ profiles (e.g., "Headphones", "Speakers")
+- `mapping` - Song/album/genre → preset mappings (scoped per profile)
 - `genre_override` - Manual genre assignments
 - `last_applied` - Tracking state for debouncing
-- `app_settings` - Application settings (last connected device, last input/output devices)
+- `app_settings` - Application settings (last connected device, last input/output devices, active profile)
 - `custom_eq_preset` - User-created custom EQ presets
 - `custom_eq_band` - EQ band definitions for custom presets
 
