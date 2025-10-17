@@ -65,7 +65,7 @@ Download the latest release for your platform:
 
 - **Linux**: `aaeq-linux-x64.tar.gz`
 - **macOS**: `aaeq-macos-universal.dmg`
-- **Windows**: `aaeq-windows-x64.zip`
+- **Windows**: `aaeq-windows-x64.msi` (installer) or `aaeq-windows-x64.zip` (portable)
 
 [→ Latest Releases](https://github.com/jaschadub/AAEQ/releases)
 

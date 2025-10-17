@@ -12,7 +12,7 @@ members = [
 version = "0.4.0"
 edition = "2021"
 license = "MIT"
-authors = ["Jascha <jascha@duck.com>"]
+authors = ["Jascha Wanger <jascha@duck.com> / Tarnover, LLC"]
 repository = "https://github.com/jaschadub/AAEQ"
 homepage = "https://github.com/jaschadub/AAEQ"
 
