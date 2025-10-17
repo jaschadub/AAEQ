@@ -164,14 +164,42 @@ impl OutputSink for LocalDacSink {
         let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
         info!("Using audio device: {}", device_name);
 
+        // Check what formats the device supports
+        let supported_configs = device.supported_output_configs()?;
+        let mut supports_f32 = false;
+        let mut supports_i16 = false;
+
+        for config_range in supported_configs {
+            match config_range.sample_format() {
+                cpal::SampleFormat::F32 => supports_f32 = true,
+                cpal::SampleFormat::I16 => supports_i16 = true,
+                _ => {}
+            }
+        }
+
+        debug!("Device format support: F32={}, I16={}", supports_f32, supports_i16);
+
+        // Determine actual format to use
+        let actual_format = match cfg.format {
+            SampleFormat::F32 if !supports_f32 && supports_i16 => {
+                warn!("Device doesn't support F32, falling back to S16LE");
+                SampleFormat::S16LE
+            }
+            SampleFormat::S16LE if !supports_i16 && supports_f32 => {
+                warn!("Device doesn't support S16LE, falling back to F32");
+                SampleFormat::F32
+            }
+            _ => cfg.format
+        };
+
         // Create stream config
         let stream_config = self.create_stream_config(&cfg)?;
 
         // Create buffer for audio data
         let buffer = self.buffer.clone();
 
-        // Create audio stream based on format
-        let stream = match cfg.format {
+        // Create audio stream based on actual format we'll use
+        let stream = match actual_format {
             SampleFormat::F32 => {
                 device.build_output_stream(
                     &stream_config,
@@ -225,18 +253,22 @@ impl OutputSink for LocalDacSink {
             _ => {
                 return Err(anyhow!(
                     "Unsupported format {:?} for local DAC (use F32 or S16LE)",
-                    cfg.format
+                    actual_format
                 ));
             }
         };
 
         // Start the stream
         stream.play()?;
-        info!("Audio stream started");
+        info!("Audio stream started with format: {:?}", actual_format);
+
+        // Store the config with the actual format we're using
+        let mut actual_cfg = cfg;
+        actual_cfg.format = actual_format;
 
         self.device = Some(device);
         self.stream = Some(stream);
-        self.config = Some(cfg);
+        self.config = Some(actual_cfg);
         self.is_open = true;
 
         Ok(())
