@@ -183,11 +183,11 @@ impl NowPlayingView {
     pub fn show(&mut self, ui: &mut Ui, album_art_cache: Arc<AlbumArtCache>) -> Option<NowPlayingAction> {
         let mut action = None;
 
-        // Load default icon on first run
+        // Load default icon on first run (embedded at compile time)
         if self.default_icon_texture.is_none() {
-            // Load the default icon from the project root
-            let icon_path = "aaeq-icon.png";
-            match image::open(icon_path) {
+            // Load the default icon from embedded bytes
+            let icon_bytes = include_bytes!("../../../aaeq-icon.png");
+            match image::load_from_memory(icon_bytes) {
                 Ok(img) => {
                     let size = [img.width() as usize, img.height() as usize];
                     let rgba_image = img.to_rgba8();
@@ -215,40 +215,136 @@ impl NowPlayingView {
             if let Some(track) = &self.track {
                 // Handle album art loading and display
                 if let Some(art_url) = &track.album_art_url {
+                    tracing::debug!("Track has album art URL: {} (last: {:?}, texture: {})",
+                        art_url, self.last_album_art_url, self.album_art_texture.is_some());
+
                     // Check if URL changed - if so, clear cached texture
                     if self.last_album_art_url.as_ref() != Some(art_url) {
+                        tracing::debug!("Album art URL changed from {:?} to {}, clearing cached texture",
+                            self.last_album_art_url, art_url);
                         self.album_art_texture = None;
                         self.last_album_art_url = Some(art_url.clone());
                     }
 
-                    // Try to get loaded image and convert to texture (non-blocking)
-                    if self.album_art_texture.is_none() {
-                        if let Some(state) = album_art_cache.try_get(art_url) {
-                            match state {
-                                AlbumArtState::NotLoaded => {
-                                    // Start loading
-                                    album_art_cache.load(art_url.clone());
-                                    ui.ctx().request_repaint();
+                    // Handle lookup:// URLs (album art lookup from external services)
+                    if art_url.starts_with("lookup://") {
+                        // Extract artist and album from lookup URL
+                        if let Some(metadata) = art_url.strip_prefix("lookup://") {
+                            let parts: Vec<&str> = metadata.split('|').collect();
+                            if parts.len() == 2 {
+                                let artist = parts[0];
+                                let album = parts[1];
+
+                                // Check if we've already looked up this artist/album
+                                let lookup_cache_key = format!("looked_up:{}", art_url);
+                                tracing::debug!("Checking lookup cache for key: {}, texture_is_none: {}",
+                                    lookup_cache_key, self.album_art_texture.is_none());
+
+                                if self.album_art_texture.is_none() {
+                                    // Try to get cached state, default to NotLoaded if not found
+                                    let state = album_art_cache.try_get(&lookup_cache_key)
+                                        .unwrap_or(AlbumArtState::NotLoaded);
+
+                                    tracing::debug!("Cache state for {}: {:?}", lookup_cache_key,
+                                        match &state {
+                                            AlbumArtState::NotLoaded => "NotLoaded",
+                                            AlbumArtState::Loading => "Loading",
+                                            AlbumArtState::Loaded(_) => "Loaded",
+                                            AlbumArtState::Failed => "Failed",
+                                        });
+
+                                    match state {
+                                        AlbumArtState::NotLoaded => {
+                                            // Start lookup
+                                            tracing::info!("Starting album art lookup for: {} - {}", artist, album);
+                                            let artist = artist.to_string();
+                                            let album = album.to_string();
+                                            let cache = album_art_cache.clone();
+                                            let cache_key = lookup_cache_key.clone();
+
+                                            // Mark as loading immediately
+                                            album_art_cache.mark_loading(lookup_cache_key.clone());
+
+                                            // Spawn lookup task
+                                            tokio::spawn(async move {
+                                                match crate::album_art_lookup::lookup_album_art(&artist, &album).await {
+                                                    Ok(Some(url)) => {
+                                                        tracing::info!("Album art lookup succeeded: {}", url);
+                                                        // Load the actual image URL but cache it under the lookup key
+                                                        cache.load_as(url, cache_key);
+                                                    }
+                                                    Ok(None) => {
+                                                        tracing::debug!("Album art lookup returned no results");
+                                                        // Mark as failed in cache so we don't retry
+                                                        cache.mark_failed(cache_key);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("Album art lookup failed: {}", e);
+                                                        cache.mark_failed(cache_key);
+                                                    }
+                                                }
+                                            });
+
+                                            ui.ctx().request_repaint();
+                                        }
+                                        AlbumArtState::Loading => {
+                                            tracing::trace!("Album art lookup in progress...");
+                                            ui.ctx().request_repaint();
+                                        }
+                                        AlbumArtState::Loaded(color_image) => {
+                                            // Convert to texture
+                                            tracing::debug!("Album art from lookup loaded, converting to texture");
+                                            let texture = ui.ctx().load_texture(
+                                                &format!("album_art_{}", art_url),
+                                                color_image.as_ref().clone(),
+                                                Default::default(),
+                                            );
+                                            self.album_art_texture = Some(texture);
+                                        }
+                                        AlbumArtState::Failed => {
+                                            tracing::trace!("Album art lookup previously failed");
+                                            // Don't retry
+                                        }
+                                    }
                                 }
-                                AlbumArtState::Loading => {
-                                    // Still loading, request repaint to check again
-                                    ui.ctx().request_repaint();
-                                }
-                                AlbumArtState::Loaded(color_image) => {
-                                    // Convert ColorImage to texture
-                                    let texture = ui.ctx().load_texture(
-                                        &format!("album_art_{}", art_url),
-                                        color_image.as_ref().clone(),
-                                        Default::default(),
-                                    );
-                                    self.album_art_texture = Some(texture);
-                                }
-                                AlbumArtState::Failed => {
-                                    // Failed to load, don't retry
+                            }
+                        }
+                    } else {
+                        // Handle regular HTTP/HTTPS URLs
+                        if self.album_art_texture.is_none() {
+                            if let Some(state) = album_art_cache.try_get(art_url) {
+                                match state {
+                                    AlbumArtState::NotLoaded => {
+                                        // Start loading
+                                        tracing::debug!("Album art not loaded, starting load for: {}", art_url);
+                                        album_art_cache.load(art_url.clone());
+                                        ui.ctx().request_repaint();
+                                    }
+                                    AlbumArtState::Loading => {
+                                        // Still loading, request repaint to check again
+                                        tracing::trace!("Album art still loading...");
+                                        ui.ctx().request_repaint();
+                                    }
+                                    AlbumArtState::Loaded(color_image) => {
+                                        // Convert ColorImage to texture
+                                        tracing::debug!("Album art loaded successfully, converting to texture");
+                                        let texture = ui.ctx().load_texture(
+                                            &format!("album_art_{}", art_url),
+                                            color_image.as_ref().clone(),
+                                            Default::default(),
+                                        );
+                                        self.album_art_texture = Some(texture);
+                                    }
+                                    AlbumArtState::Failed => {
+                                        // Failed to load, don't retry
+                                        tracing::warn!("Album art failed to load for: {}", art_url);
+                                    }
                                 }
                             }
                         }
                     }
+                } else {
+                    tracing::debug!("Track has no album art URL");
                 }
 
                 // Display layout with album art
@@ -532,8 +628,8 @@ impl PresetsView {
                     }
                 }
 
-                // Show custom EQ presets
-                if !self.custom_presets.is_empty() {
+                // Show custom EQ presets (only when DSP is streaming)
+                if show_custom_eq && !self.custom_presets.is_empty() {
                     if !presets_to_show.is_empty() {
                         ui.add_space(5.0);
                     }
@@ -772,6 +868,63 @@ impl DspView {
                         });
                     }
                 }
+
+                // Check if loopback setup is needed (Windows-specific)
+                #[cfg(target_os = "windows")]
+                {
+                    let has_loopback_device = self.available_input_devices.iter()
+                        .any(|d| d.contains("(Loopback)"));
+
+                    if !has_loopback_device && !self.available_input_devices.is_empty() {
+                        ui.add_space(5.0);
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("💡")
+                                        .color(egui::Color32::LIGHT_BLUE)
+                                );
+                                ui.label(
+                                    egui::RichText::new("To capture system audio on Windows:")
+                                        .color(egui::Color32::LIGHT_GRAY)
+                                        .strong()
+                                );
+                            });
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new("  1. WASAPI Loopback devices may appear after clicking 🔍 Discover")
+                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .italics()
+                                    .size(10.0)
+                            );
+                            ui.label(
+                                egui::RichText::new("  2. Enable 'Stereo Mix' in Sound Settings → Recording → Show Disabled Devices")
+                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .italics()
+                                    .size(10.0)
+                            );
+                            ui.label(
+                                egui::RichText::new("  3. Or install VB-Audio Virtual Cable for system audio capture")
+                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .italics()
+                                    .size(10.0)
+                            );
+                        });
+                    } else if has_loopback_device {
+                        ui.add_space(5.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("✓")
+                                    .color(egui::Color32::LIGHT_GREEN)
+                            );
+                            ui.label(
+                                egui::RichText::new("WASAPI loopback devices available - select one marked with 🔊 (Loopback)")
+                                    .color(egui::Color32::LIGHT_GRAY)
+                                    .italics()
+                                    .size(10.0)
+                            );
+                        });
+                    }
+                }
             }
 
             ui.add_space(5.0);
@@ -861,6 +1014,74 @@ impl DspView {
             ui.horizontal(|ui| {
                 ui.label("Buffer:");
                 ui.add(egui::Slider::new(&mut self.buffer_ms, 50..=500).suffix(" ms"));
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+
+            // EQ Preset selection
+            ui.label("EQ Preset:");
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("dsp_preset_selector")
+                    .selected_text(self.selected_preset.as_deref().unwrap_or("None"))
+                    .show_ui(ui, |ui| {
+                        // Option to disable EQ
+                        if ui.selectable_label(
+                            self.selected_preset.is_none(),
+                            "None (No EQ)"
+                        ).clicked() {
+                            self.selected_preset = None;
+                            action = Some(DspAction::PresetSelected(None));
+                        }
+
+                        // Show WiiM presets (from device or known presets)
+                        let wiim_presets_to_show = if !self.wiim_presets.is_empty() {
+                            self.wiim_presets.clone()
+                        } else {
+                            // Show default known presets if no WiiM device connected
+                            crate::preset_library::list_known_presets()
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect::<Vec<String>>()
+                        };
+
+                        if !wiim_presets_to_show.is_empty() {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("WiiM Presets")
+                                    .strong()
+                                    .color(egui::Color32::LIGHT_GREEN)
+                            );
+                            for preset in &wiim_presets_to_show {
+                                if ui.selectable_label(
+                                    self.selected_preset.as_ref() == Some(preset),
+                                    preset
+                                ).clicked() {
+                                    self.selected_preset = Some(preset.clone());
+                                    action = Some(DspAction::PresetSelected(Some(preset.clone())));
+                                }
+                            }
+                        }
+
+                        // Show custom EQ presets
+                        if !self.custom_presets.is_empty() {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new("Custom Presets")
+                                    .strong()
+                                    .color(egui::Color32::from_rgb(255, 180, 100))
+                            );
+                            for preset in &self.custom_presets.clone() {
+                                if ui.selectable_label(
+                                    self.selected_preset.as_ref() == Some(preset),
+                                    preset
+                                ).clicked() {
+                                    self.selected_preset = Some(preset.clone());
+                                    action = Some(DspAction::PresetSelected(Some(preset.clone())));
+                                }
+                            }
+                        }
+                    });
             });
 
             ui.add_space(10.0);

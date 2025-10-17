@@ -36,6 +36,14 @@ impl LocalDacInput {
             }
         }
 
+        // On Windows, enumerate WASAPI loopback devices (system audio capture)
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(loopback_devices) = Self::list_windows_loopback_devices() {
+                devices.extend(loopback_devices);
+            }
+        }
+
         // Add ALSA-configured capture devices
         // Check if aaeq_monitor or aaeq_capture exists (configured in .asoundrc)
         if let Ok(output) = std::process::Command::new("arecord")
@@ -149,6 +157,17 @@ impl LocalDacInput {
             "Starting local DAC input capture ({})",
             device_name.as_deref().unwrap_or("default")
         );
+
+        // On Windows, check if this is a loopback device
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ref name) = device_name {
+                if name.contains("(Loopback)") {
+                    info!("Detected Windows WASAPI loopback device, using WASAPI directly");
+                    return Self::start_wasapi_loopback_capture(name, cfg, tx);
+                }
+            }
+        }
 
         let host = cpal::default_host();
 
@@ -395,6 +414,256 @@ impl LocalDacInput {
         });
 
         Ok(final_stop_tx)
+    }
+
+    /// Windows-specific: List WASAPI loopback devices (system audio capture)
+    #[cfg(target_os = "windows")]
+    fn list_windows_loopback_devices() -> Result<Vec<String>> {
+        use wasapi::*;
+
+        let mut loopback_devices = Vec::new();
+
+        // Initialize COM
+        match initialize_mta() {
+            Ok(_) => {
+                info!("WASAPI: COM initialized successfully");
+            }
+            Err(e) => {
+                info!("WASAPI: COM initialization returned: {:?} (might already be initialized)", e);
+            }
+        }
+
+        // Get device enumerator
+        let enumerator = match DeviceEnumerator::new() {
+            Ok(e) => e,
+            Err(e) => {
+                info!("WASAPI: Failed to create device enumerator: {:?}", e);
+                return Ok(loopback_devices);
+            }
+        };
+
+        // Get render (output) devices - these can be used for loopback capture
+        let render_collection = match enumerator.get_device_collection(Direction::Render) {
+            Ok(c) => c,
+            Err(e) => {
+                info!("WASAPI: Failed to get render device collection: {:?}", e);
+                return Ok(loopback_devices);
+            }
+        };
+
+        let device_count = match render_collection.get_nbr_devices() {
+            Ok(count) => count,
+            Err(e) => {
+                info!("WASAPI: Failed to get device count: {:?}", e);
+                return Ok(loopback_devices);
+            }
+        };
+
+        info!("WASAPI: Found {} render device(s) for loopback", device_count);
+
+        // Enumerate each render device
+        for i in 0..device_count {
+            if let Ok(device) = render_collection.get_device(i) {
+                if let Ok(name) = device.get_friendlyname() {
+                    // Add device with loopback indicator
+                    loopback_devices.push(format!("🔊 {} (Loopback)", name));
+                    info!("WASAPI: Added loopback device: {}", name);
+                }
+            }
+        }
+
+        Ok(loopback_devices)
+    }
+
+    /// Windows-specific: Start WASAPI loopback capture
+    #[cfg(target_os = "windows")]
+    fn start_wasapi_loopback_capture(
+        device_name: &str,
+        cfg: OutputConfig,
+        tx: mpsc::Sender<Vec<f64>>,
+    ) -> Result<mpsc::Sender<()>> {
+        use wasapi::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Extract clean device name (remove emoji and "(Loopback)")
+        let clean_name = device_name
+            .trim_start_matches("🔊 ")
+            .trim_end_matches(" (Loopback)")
+            .to_string();
+
+        info!("Starting WASAPI loopback capture for: {}", clean_name);
+
+        // Initialize COM
+        match initialize_mta() {
+            Ok(_) => info!("WASAPI: COM initialized for capture"),
+            Err(e) => info!("WASAPI: COM initialization returned: {:?}", e),
+        }
+
+        // Get device enumerator
+        let enumerator = DeviceEnumerator::new()
+            .map_err(|e| anyhow!("Failed to create WASAPI device enumerator: {:?}", e))?;
+
+        // Get render devices
+        let render_collection = enumerator
+            .get_device_collection(Direction::Render)
+            .map_err(|e| anyhow!("Failed to get render device collection: {:?}", e))?;
+
+        let device_count = render_collection
+            .get_nbr_devices()
+            .map_err(|e| anyhow!("Failed to get device count: {:?}", e))?;
+
+        // Find matching device
+        let mut target_device = None;
+        for i in 0..device_count {
+            if let Ok(device) = render_collection.get_device(i) {
+                if let Ok(name) = device.get_friendlyname() {
+                    if name == clean_name {
+                        target_device = Some(device);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let device = target_device
+            .ok_or_else(|| anyhow!("WASAPI device '{}' not found", clean_name))?;
+
+        // Initialize audio client in loopback mode
+        let audio_client = device
+            .get_iaudioclient()
+            .map_err(|e| anyhow!("Failed to get audio client: {:?}", e))?;
+
+        // Get device format
+        let waveformat = audio_client
+            .get_mixformat()
+            .map_err(|e| anyhow!("Failed to get device format: {:?}", e))?;
+
+        info!(
+            "WASAPI device format: {} Hz, {} channels, {} bits",
+            waveformat.get_samplespersec(),
+            waveformat.get_nchannels(),
+            waveformat.get_bitspersample()
+        );
+
+        // Initialize in loopback mode
+        let blockalign = waveformat.get_blockalign();
+        let (def_time, min_time) = audio_client
+            .get_periods()
+            .map_err(|e| anyhow!("Failed to get periods: {:?}", e))?;
+
+        audio_client
+            .initialize_client(
+                &waveformat,
+                def_time,
+                &Direction::Capture,
+                &ShareMode::Shared,
+                true, // loopback mode
+            )
+            .map_err(|e| anyhow!("Failed to initialize audio client: {:?}", e))?;
+
+        let buffer_frame_count = audio_client
+            .get_bufferframecount()
+            .map_err(|e| anyhow!("Failed to get buffer frame count: {:?}", e))?;
+
+        let capture_client = audio_client
+            .get_audiocaptureclient()
+            .map_err(|e| anyhow!("Failed to get capture client: {:?}", e))?;
+
+        let sample_rate = waveformat.get_samplespersec();
+        let channels = waveformat.get_nchannels() as u32;
+
+        info!(
+            "WASAPI: Initialized loopback capture: {} Hz, {} channels, {} frames buffer",
+            sample_rate, channels, buffer_frame_count
+        );
+
+        // Start capture
+        audio_client
+            .start_stream()
+            .map_err(|e| anyhow!("Failed to start stream: {:?}", e))?;
+
+        // Create stop channel
+        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
+        let stop_flag = std::sync::Arc::new(AtomicBool::new(false));
+        let stop_flag_clone = stop_flag.clone();
+
+        // Spawn capture thread
+        std::thread::spawn(move || {
+            info!("WASAPI: Capture thread started");
+
+            while !stop_flag.load(Ordering::Relaxed) {
+                // Check for stop signal (non-blocking)
+                if stop_rx.try_recv().is_ok() {
+                    stop_flag.store(true, Ordering::Relaxed);
+                    break;
+                }
+
+                // Get available frames
+                match capture_client.get_next_nbr_frames() {
+                    Ok(frames_available) if frames_available > 0 => {
+                        // Read buffer
+                        match capture_client.read_from_device(frames_available as usize) {
+                            Ok(data) => {
+                                // Convert to f64 samples
+                                let samples: Vec<f64> = match waveformat.get_bitspersample() {
+                                    16 => {
+                                        // 16-bit PCM
+                                        data.chunks_exact(2)
+                                            .map(|chunk| {
+                                                let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+                                                sample as f64 / 32768.0
+                                            })
+                                            .collect()
+                                    }
+                                    24 => {
+                                        // 24-bit PCM
+                                        data.chunks_exact(3)
+                                            .map(|chunk| {
+                                                let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], 0]) >> 8;
+                                                sample as f64 / 8388608.0
+                                            })
+                                            .collect()
+                                    }
+                                    32 => {
+                                        // 32-bit float
+                                        data.chunks_exact(4)
+                                            .map(|chunk| {
+                                                let sample = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                                                sample as f64
+                                            })
+                                            .collect()
+                                    }
+                                    _ => {
+                                        error!("WASAPI: Unsupported bit depth: {}", waveformat.get_bitspersample());
+                                        continue;
+                                    }
+                                };
+
+                                // Send to channel (non-blocking)
+                                let _ = tx.try_send(samples);
+                            }
+                            Err(e) => {
+                                error!("WASAPI: Failed to read from device: {:?}", e);
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        // No frames available, sleep briefly
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(e) => {
+                        error!("WASAPI: Failed to get frame count: {:?}", e);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+            }
+
+            // Stop stream
+            let _ = audio_client.stop_stream();
+            info!("WASAPI: Capture thread exiting");
+        });
+
+        Ok(stop_tx)
     }
 }
 

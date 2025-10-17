@@ -44,3 +44,6 @@ rand = "0.8"
 sha2 = "0.10"
 aes = "0.8"
 cbc = "0.1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = "0.13"

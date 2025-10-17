@@ -1,5 +1,6 @@
 use aaeq_ui_egui::AaeqApp;
 use anyhow::Result;
+use clap::Parser;
 use single_instance::SingleInstance;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,8 +10,30 @@ use tray_icon::{
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+/// AAEQ - Adaptive Audio Equalizer
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Show console window for logs (Windows only)
+    #[arg(long)]
+    console: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse command-line arguments
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    let args = Args::parse();
+
+    // On Windows, allocate console if --console flag is present
+    #[cfg(target_os = "windows")]
+    if args.console {
+        use windows::Win32::System::Console::AllocConsole;
+        unsafe {
+            let _ = AllocConsole();
+        }
+    }
+
     // Initialize logging
     tracing_subscriber::registry()
         .with(
@@ -148,8 +171,21 @@ async fn main() -> Result<()> {
                             id if id == show_id => {
                                 tracing::info!("Show window clicked");
                                 *window_visible_clone.lock().unwrap() = true;
+
+                                // On Windows, ensure window is not minimized before showing
+                                #[cfg(target_os = "windows")]
+                                {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                                }
+
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+
+                                // Additional Windows-specific fix: Request repaint to ensure window updates
+                                #[cfg(target_os = "windows")]
+                                {
+                                    ctx.request_repaint();
+                                }
                             }
                             id if id == hide_id => {
                                 tracing::info!("Hide window clicked");

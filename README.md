@@ -50,7 +50,7 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🪟 **Auto-Resize Window** - Window automatically adjusts to fit waveform and meters when enabled
 
 ### General
-- 👤 **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Car")
+- 👤 **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Living Room")
 - 🔄 **Profile Switching** - Instantly switch between profiles to apply different EQ settings for the same songs
 - 💾 **Local-First** - All data stored locally in SQLite, no cloud required
 - 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
@@ -211,7 +211,7 @@ AAEQ supports multiple EQ profiles, allowing you to maintain different EQ mappin
 ### Use Cases
 - **Headphones** - Bright EQ for detailed listening
 - **Speakers** - Balanced EQ for room acoustics
-- **Car** - Bass-heavy EQ for road noise
+- **Living Room** - Bass-heavy EQ for ambient noise
 - **Night** - Reduced dynamics for quiet listening
 
 ### Managing Profiles
@@ -228,7 +228,7 @@ AAEQ supports multiple EQ profiles, allowing you to maintain different EQ mappin
 
 3. **Each profile has its own mappings**
    - Same song can have different EQ in different profiles
-   - For example: "Song A" → "Bass Booster" in "Car" profile
+   - For example: "Song A" → "Bass Booster" in "Living Room" profile
    - But "Song A" → "Flat" in "Headphones" profile
 
 4. **Built-in profiles**
