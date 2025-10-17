@@ -1,9 +1,15 @@
-# AAEQ - Adaptive Audio Equalizer
+<p align="center">
+  <img src="docs/aaeq-logo-tranbg.png" alt="AAEQ - Adaptive Audio Equalizer" width="400"/>
+</p>
 
-[![Build Status](https://github.com/jaschadub/AAEQ/workflows/Build/badge.svg)](https://github.com/jaschadub/AAEQ/actions)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/jaschadub/AAEQ/actions"><img src="https://github.com/jaschadub/AAEQ/workflows/Build/badge.svg" alt="Build Status"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"/></a>
+</p>
 
-**Automatically apply per-song, album, or genre EQ presets to your network audio devices. Stream your computer's audio with real-time DSP processing.**
+<p align="center">
+  <strong>Automatically apply per-song, album, or genre EQ presets to your network audio devices. Stream your computer's audio with real-time DSP processing.</strong>
+</p>
 
 AAEQ is a cross-platform desktop application that intelligently manages EQ settings on your WiiM (LinkPlay) and DLNA devices based on what's currently playing. It also features a powerful DSP streaming mode that captures your computer's audio, applies real-time processing, and streams it to network devices. Set your favorite EQ preset once per song, album, or genre, and AAEQ will remember and apply it automatically.
 
