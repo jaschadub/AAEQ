@@ -1,6 +1,6 @@
 use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
 use aaeq_device_wiim::{WiimController, discover_devices_quick};
-use aaeq_persistence::{AppSettingsRepository, CustomEqPresetRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository};
+use aaeq_persistence::{AppSettingsRepository, CustomEqPresetRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository, ProfileRepository};
 use crate::views::*;
 use crate::album_art::AlbumArtCache;
 use anyhow::Result;
@@ -25,13 +25,21 @@ pub enum OperatingMode {
     DspProcessor,     // Use DSP mode for EQ processing
 }
 
+/// Profile dialog mode
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ProfileDialogMode {
+    Create,
+    Rename,
+    Delete,
+}
+
 /// Commands that can be sent from UI to async worker
 enum AppCommand {
     ConnectDevice(String),
     DiscoverDevices,
     RefreshPresets,
     ApplyPreset(String),
-    SaveMapping(Scope, TrackMeta, String),
+    SaveMapping(Scope, TrackMeta, String, i64), // (scope, track, preset, profile_id)
     UpdateGenre(String, String), // (track_key, genre)
     BackupDatabase(String), // (db_path)
     Poll,
@@ -40,6 +48,8 @@ enum AppCommand {
     LoadCustomPresets, // Load custom EQ presets from database
     SaveCustomPreset(aaeq_core::EqPreset), // Save custom EQ preset to database
     LoadPresetCurve(String), // Load EQ curve for a preset (for display)
+    ReloadProfiles, // Reload profiles from database
+    ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
@@ -78,6 +88,7 @@ enum AppResponse {
     CustomPresetsLoaded(Vec<String>),
     CustomPresetSaved(String),
     PresetCurveLoaded(Option<aaeq_core::EqPreset>), // EQ curve for display
+    ProfilesLoaded(Vec<aaeq_core::Profile>), // Reloaded profiles from database
     DspPresetChanged(String), // Preset changed during streaming
 }
 
@@ -108,6 +119,10 @@ pub struct AaeqApp {
     /// Mapping rules cache
     rules_index: Arc<RwLock<RulesIndex>>,
 
+    /// Active profile
+    active_profile_id: i64,
+    available_profiles: Vec<aaeq_core::Profile>,
+
     /// Polling state
     last_poll: Instant,
     poll_interval: Duration,
@@ -125,6 +140,11 @@ pub struct AaeqApp {
     show_discovery: bool,
     last_viz_state: bool, // Track previous visualization state for window resizing
     last_streaming_state: bool, // Track previous streaming state for window resizing
+    show_profile_dialog: bool,
+    profile_dialog_mode: ProfileDialogMode,
+    profile_name_input: String,
+    profile_to_rename: Option<i64>,
+    profile_to_delete: Option<i64>,
 
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
@@ -163,6 +183,8 @@ impl AaeqApp {
             current_preset_curve: None,
             available_presets: vec![],
             rules_index,
+            active_profile_id: 1, // Default profile
+            available_profiles: vec![],
             last_poll: Instant::now(),
             poll_interval: Duration::from_millis(1000),
             last_track_key: None,
@@ -176,6 +198,11 @@ impl AaeqApp {
             show_discovery: false,
             last_viz_state: false,
             last_streaming_state: false,
+            show_profile_dialog: false,
+            profile_dialog_mode: ProfileDialogMode::Create,
+            profile_name_input: String::new(),
+            profile_to_rename: None,
+            profile_to_delete: None,
             command_tx,
             response_rx,
             album_art_cache: Arc::new(AlbumArtCache::new()),
@@ -184,11 +211,22 @@ impl AaeqApp {
 
     /// Initialize the app (load mappings, connect to device)
     pub async fn initialize(&mut self) -> Result<()> {
-        // Load mappings from database
+        // Load profiles from database
+        let profile_repo = ProfileRepository::new(self.pool.clone());
+        self.available_profiles = profile_repo.list_all().await.unwrap_or_default();
+        tracing::info!("Loaded {} profiles", self.available_profiles.len());
+
+        // Load active profile from settings
+        let settings_repo = AppSettingsRepository::new(self.pool.clone());
+        if let Ok(Some(active_id)) = settings_repo.get_active_profile_id().await {
+            self.active_profile_id = active_id;
+            tracing::info!("Loaded active profile ID: {}", active_id);
+        }
+
+        // Load mappings from database for the active profile
         self.reload_mappings().await?;
 
         // Load last connected host from settings
-        let settings_repo = AppSettingsRepository::new(self.pool.clone());
         if let Ok(Some(last_host)) = settings_repo.get_last_connected_host().await {
             tracing::info!("Loading last connected host: {}", last_host);
             self.device_host = last_host.clone();
@@ -208,6 +246,10 @@ impl AaeqApp {
             self.dsp_view.selected_device = Some(last_output);
         }
 
+        // Trigger device discovery on startup for Local DAC (fast, populates device lists)
+        tracing::info!("Triggering automatic device discovery on startup");
+        let _ = self.command_tx.send(AppCommand::DspDiscoverDevices(SinkType::LocalDac, None));
+
         // Load custom EQ presets
         let _ = self.command_tx.send(AppCommand::LoadCustomPresets);
 
@@ -217,13 +259,13 @@ impl AaeqApp {
     /// Reload mapping rules from database
     async fn reload_mappings(&mut self) -> Result<()> {
         let repo = MappingRepository::new(self.pool.clone());
-        let mappings = repo.list_all().await?;
+        let mappings = repo.list_by_profile(self.active_profile_id).await?;
 
         let mut rules = self.rules_index.write().await;
         *rules = RulesIndex::from_mappings(mappings);
 
-        tracing::info!("Loaded {} song rules, {} album rules, {} genre rules",
-            rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len());
+        tracing::info!("Loaded {} song rules, {} album rules, {} genre rules for profile {}",
+            rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len(), self.active_profile_id);
 
         Ok(())
     }
@@ -332,6 +374,7 @@ impl AaeqApp {
             scope: scope.clone(),
             key_normalized,
             preset_name: preset.clone(),
+            profile_id: self.active_profile_id,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
         };
@@ -365,6 +408,7 @@ impl AaeqApp {
         let mut device: Option<Arc<dyn DeviceController>> = None;
         let device_id: Option<i64> = None;
         let mut last_track_key: Option<String> = None;
+        let mut last_track: Option<aaeq_core::TrackMeta> = None;
         let mut current_preset: Option<String> = None;
 
         // DSP state
@@ -378,6 +422,11 @@ impl AaeqApp {
         let mut discovered_dlna_devices: Vec<stream_server::sinks::dlna::DlnaDevice> = Vec::new();
 
         while let Some(cmd) = command_rx.recv().await {
+            // Log all commands for debugging profile switching
+            if matches!(cmd, AppCommand::ReapplyPresetForCurrentTrack) {
+                tracing::info!(">>> Received ReapplyPresetForCurrentTrack command in async worker");
+            }
+
             match cmd {
                 AppCommand::ConnectDevice(host) => {
                     let controller = WiimController::new("WiiM Device", host.clone());
@@ -459,7 +508,7 @@ impl AaeqApp {
                     }
                 }
 
-                AppCommand::SaveMapping(scope, track, preset) => {
+                AppCommand::SaveMapping(scope, track, preset, profile_id) => {
                     let key_normalized = match scope {
                         Scope::Song => Some(track.song_key()),
                         Scope::Album => Some(track.album_key()),
@@ -472,6 +521,7 @@ impl AaeqApp {
                         scope: scope.clone(),
                         key_normalized,
                         preset_name: preset.clone(),
+                        profile_id,
                         created_at: chrono::Utc::now().timestamp(),
                         updated_at: chrono::Utc::now().timestamp(),
                     };
@@ -479,13 +529,13 @@ impl AaeqApp {
                     let repo = MappingRepository::new(pool.clone());
                     match repo.upsert(&mapping).await {
                         Ok(_) => {
-                            // Reload rules index
-                            match repo.list_all().await {
+                            // Reload rules index for the active profile
+                            match repo.list_by_profile(profile_id).await {
                                 Ok(mappings) => {
                                     let mut rules = rules_index.write().await;
                                     *rules = RulesIndex::from_mappings(mappings);
-                                    tracing::info!("Reloaded rules: {} song rules, {} album rules, {} genre rules",
-                                        rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len());
+                                    tracing::info!("Reloaded rules for profile {}: {} song rules, {} album rules, {} genre rules",
+                                        profile_id, rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len());
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to reload mappings: {}", e);
@@ -630,6 +680,71 @@ impl AaeqApp {
                     let _ = response_tx.send(AppResponse::PresetCurveLoaded(curve));
                 }
 
+                AppCommand::ReloadProfiles => {
+                    let profile_repo = ProfileRepository::new(pool.clone());
+                    match profile_repo.list_all().await {
+                        Ok(profiles) => {
+                            let _ = response_tx.send(AppResponse::ProfilesLoaded(profiles));
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to reload profiles: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to reload profiles: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::ReapplyPresetForCurrentTrack => {
+                    // Re-resolve preset for the current track with the newly loaded rules
+                    if let Some(track) = &last_track {
+                        tracing::info!("Re-resolving preset for current track after profile switch: {} - {}", track.artist, track.title);
+                        tracing::info!("Current preset before switch: {:?}", current_preset);
+                        tracing::info!("DSP streaming: {}", dsp_is_streaming);
+
+                        // Resolve preset with the new rules (from the switched profile)
+                        let rules = rules_index.read().await;
+                        let desired_preset = resolve_preset(track, &rules, "Flat");
+                        drop(rules);
+
+                        tracing::info!("Profile switch resolved preset: {} (current: {:?})", desired_preset, current_preset);
+
+                        // Always apply the preset on profile switch (even if it's the same name,
+                        // it could be a different profile's mapping)
+                        tracing::info!("Applying preset after profile switch: {}", desired_preset);
+
+                        // If DSP is streaming, change preset there
+                        if dsp_is_streaming {
+                            if let Some(preset_tx) = &stream_preset_change_tx {
+                                tracing::info!("Sending preset change to DSP stream: {}", desired_preset);
+                                match preset_tx.send(desired_preset.clone()).await {
+                                    Ok(_) => {
+                                        current_preset = Some(desired_preset.clone());
+                                        let _ = response_tx.send(AppResponse::DspPresetChanged(desired_preset.clone()));
+                                        tracing::info!("Successfully sent preset change to DSP");
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Failed to send preset change to DSP: {}", e);
+                                    }
+                                }
+                            } else {
+                                tracing::warn!("DSP is streaming but no preset_tx available!");
+                            }
+                        } else if let Some(dev) = &device {
+                            // Use WiiM API
+                            tracing::info!("Applying preset via WiiM API: {}", desired_preset);
+                            if let Err(e) = dev.apply_preset(&desired_preset).await {
+                                tracing::error!("Failed to apply preset: {}", e);
+                            } else {
+                                current_preset = Some(desired_preset.clone());
+                                tracing::info!("Successfully applied preset via WiiM API");
+                            }
+                        } else {
+                            tracing::warn!("No DSP stream or device available to apply preset");
+                        }
+                    } else {
+                        tracing::warn!("No track available to re-apply preset for");
+                    }
+                }
+
                 AppCommand::Poll => {
                     // Poll from WiiM device if connected, otherwise try MPRIS for DSP mode
                     if let Some(dev) = &device {
@@ -656,19 +771,18 @@ impl AaeqApp {
 
                                 let track_key = track.track_key();
 
+                                // Store device genre before applying override (always do this on every poll)
+                                track.device_genre = track.genre.clone();
+
+                                // Load genre override if exists (check on every poll, not just on track change)
+                                let genre_repo = GenreOverrideRepository::new(pool.clone());
+                                if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
+                                    track.genre = genre_override;
+                                }
+
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
                                     tracing::info!("Track changed: {} - {}", track.artist, track.title);
-
-                                    // Store device genre before applying override
-                                    track.device_genre = track.genre.clone();
-
-                                    // Load genre override if exists
-                                    let genre_repo = GenreOverrideRepository::new(pool.clone());
-                                    if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
-                                        tracing::info!("Using genre override: {}", genre_override);
-                                        track.genre = genre_override;
-                                    }
 
                                     // Resolve preset
                                     let rules = rules_index.read().await;
@@ -708,8 +822,12 @@ impl AaeqApp {
                                         }
                                     }
 
-                                    last_track_key = Some(track_key);
+                                    last_track_key = Some(track_key.clone());
                                 }
+
+                                // Always update last_track, even if the track hasn't changed
+                                // This ensures we have track metadata available for profile switches
+                                last_track = Some(track.clone());
 
                                 let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone()));
                             }
@@ -731,19 +849,18 @@ impl AaeqApp {
                             Ok(mut track) => {
                                 let track_key = track.track_key();
 
+                                // Store device genre before applying override (always do this on every poll)
+                                track.device_genre = track.genre.clone();
+
+                                // Load genre override if exists (check on every poll, not just on track change)
+                                let genre_repo = GenreOverrideRepository::new(pool.clone());
+                                if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
+                                    track.genre = genre_override;
+                                }
+
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
                                     tracing::info!("Track changed (MPRIS): {} - {}", track.artist, track.title);
-
-                                    // Store device genre before applying override
-                                    track.device_genre = track.genre.clone();
-
-                                    // Load genre override if exists
-                                    let genre_repo = GenreOverrideRepository::new(pool.clone());
-                                    if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
-                                        tracing::info!("Using genre override: {}", genre_override);
-                                        track.genre = genre_override;
-                                    }
 
                                     // Resolve preset based on rules
                                     let rules = rules_index.read().await;
@@ -771,8 +888,12 @@ impl AaeqApp {
                                         tracing::info!("Preset for track (DSP mode): {}", desired_preset);
                                     }
 
-                                    last_track_key = Some(track_key);
+                                    last_track_key = Some(track_key.clone());
                                 }
+
+                                // Always update last_track, even if the track hasn't changed
+                                // This ensures we have track metadata available for profile switches
+                                last_track = Some(track.clone());
 
                                 let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone()));
                             }
@@ -1460,6 +1581,14 @@ impl eframe::App for AaeqApp {
                     self.current_preset_curve = curve;
                     self.now_playing_view.current_preset_curve = self.current_preset_curve.clone();
                 }
+                AppResponse::ProfilesLoaded(profiles) => {
+                    self.available_profiles = profiles;
+                    // Close the dialog and clear inputs
+                    self.show_profile_dialog = false;
+                    self.profile_name_input.clear();
+                    self.profile_to_rename = None;
+                    self.profile_to_delete = None;
+                }
                 AppResponse::DspPresetChanged(preset) => {
                     self.current_preset = Some(preset.clone());
                     self.now_playing_view.current_preset = Some(preset.clone());
@@ -1539,6 +1668,96 @@ impl eframe::App for AaeqApp {
                 } else {
                     ui.label("⚠ Disconnected");
                 }
+
+                ui.separator();
+
+                // Profile selector
+                ui.label("Profile:");
+                let current_profile_name = self.available_profiles
+                    .iter()
+                    .find(|p| p.id == Some(self.active_profile_id))
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Default");
+
+                egui::ComboBox::from_id_salt("profile_selector")
+                    .selected_text(current_profile_name)
+                    .show_ui(ui, |ui| {
+                        for profile in &self.available_profiles.clone() {
+                            if let Some(profile_id) = profile.id {
+                                let is_selected = profile_id == self.active_profile_id;
+
+                                ui.horizontal(|ui| {
+                                    if ui.selectable_label(is_selected, &profile.name).clicked() {
+                                        self.active_profile_id = profile_id;
+
+                                        // Save active profile to settings
+                                        let pool = self.pool.clone();
+                                        tokio::spawn(async move {
+                                            let settings_repo = AppSettingsRepository::new(pool);
+                                            let _ = settings_repo.set_active_profile_id(profile_id).await;
+                                        });
+
+                                        // Reload mappings for the new profile
+                                        tracing::info!("Profile switched in UI, reloading mappings for profile {}", self.active_profile_id);
+                                        let pool = self.pool.clone();
+                                        let rules_index = self.rules_index.clone();
+                                        let profile_id_for_reload = self.active_profile_id;
+                                        let command_tx = self.command_tx.clone();
+                                        tokio::spawn(async move {
+                                            tracing::info!("Starting async task to reload mappings for profile {}", profile_id_for_reload);
+                                            let repo = MappingRepository::new(pool);
+                                            match repo.list_by_profile(profile_id_for_reload).await {
+                                                Ok(mappings) => {
+                                                    tracing::info!("Loaded {} mappings for profile {}", mappings.len(), profile_id_for_reload);
+                                                    let mut rules = rules_index.write().await;
+                                                    *rules = RulesIndex::from_mappings(mappings);
+                                                    tracing::info!("Switched to profile {}, loaded {} song rules, {} album rules, {} genre rules",
+                                                        profile_id_for_reload, rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len());
+                                                    drop(rules); // Release lock before sending command
+
+                                                    // Trigger re-resolution of current track with new rules
+                                                    tracing::info!("Sending ReapplyPresetForCurrentTrack command...");
+                                                    match command_tx.send(AppCommand::ReapplyPresetForCurrentTrack) {
+                                                        Ok(_) => tracing::info!("Successfully sent ReapplyPresetForCurrentTrack command"),
+                                                        Err(e) => tracing::error!("Failed to send ReapplyPresetForCurrentTrack command: {}", e),
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to load mappings for profile {}: {}", profile_id_for_reload, e);
+                                                }
+                                            }
+                                        });
+
+                                        self.status_message = Some(format!("Switched to profile: {}", profile.name));
+                                    }
+
+                                    // Show rename/delete buttons for non-builtin profiles
+                                    if !profile.is_builtin {
+                                        if ui.small_button("✏").on_hover_text("Rename profile").clicked() {
+                                            self.show_profile_dialog = true;
+                                            self.profile_dialog_mode = ProfileDialogMode::Rename;
+                                            self.profile_name_input = profile.name.clone();
+                                            self.profile_to_rename = Some(profile_id);
+                                        }
+
+                                        if ui.small_button("🗑").on_hover_text("Delete profile").clicked() {
+                                            self.show_profile_dialog = true;
+                                            self.profile_dialog_mode = ProfileDialogMode::Delete;
+                                            self.profile_to_delete = Some(profile_id);
+                                            self.profile_name_input = profile.name.clone();
+                                        }
+                                    }
+                                });
+                            }
+                        }
+
+                        ui.separator();
+                        if ui.button("+ Add Profile").clicked() {
+                            self.show_profile_dialog = true;
+                            self.profile_dialog_mode = ProfileDialogMode::Create;
+                            self.profile_name_input.clear();
+                        }
+                    });
 
                 ui.separator();
 
@@ -1736,7 +1955,7 @@ impl eframe::App for AaeqApp {
                                 NowPlayingAction::SaveMapping(scope) => {
                                     // Pass track and preset to the async worker for saving
                                     if let (Some(track), Some(preset)) = (&self.current_track, &self.current_preset) {
-                                        let _ = self.command_tx.send(AppCommand::SaveMapping(scope, track.clone(), preset.clone()));
+                                        let _ = self.command_tx.send(AppCommand::SaveMapping(scope, track.clone(), preset.clone(), self.active_profile_id));
                                     } else {
                                         self.status_message = Some("No track or preset to save".to_string());
                                     }
@@ -1817,6 +2036,13 @@ impl eframe::App for AaeqApp {
 
                                 // Adjust format based on sink type
                                 match sink_type {
+                                    SinkType::LocalDac => {
+                                        // Local DAC only supports F32 and S16LE
+                                        if self.dsp_view.format == FormatOption::S24LE {
+                                            self.dsp_view.format = FormatOption::F32;
+                                            tracing::info!("Switched to F32 format for Local DAC compatibility");
+                                        }
+                                    }
                                     SinkType::Dlna => {
                                         // DLNA requires PCM format (S16LE or S24LE)
                                         if self.dsp_view.format == FormatOption::F32 {
@@ -1824,8 +2050,8 @@ impl eframe::App for AaeqApp {
                                             tracing::info!("Switched to S24LE format for DLNA compatibility");
                                         }
                                     }
-                                    SinkType::LocalDac | SinkType::AirPlay => {
-                                        // Other sinks support all formats
+                                    SinkType::AirPlay => {
+                                        // AirPlay supports all formats
                                     }
                                 }
 
@@ -2049,6 +2275,162 @@ impl eframe::App for AaeqApp {
             // Update tracking state
             self.last_viz_state = viz_enabled;
             self.last_streaming_state = is_streaming;
+        }
+
+        // Show profile management dialog
+        if self.show_profile_dialog {
+            egui::Window::new(match self.profile_dialog_mode {
+                ProfileDialogMode::Create => "Create Profile",
+                ProfileDialogMode::Rename => "Rename Profile",
+                ProfileDialogMode::Delete => "Delete Profile",
+            })
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                match self.profile_dialog_mode {
+                    ProfileDialogMode::Create | ProfileDialogMode::Rename => {
+                        ui.label("Profile name:");
+                        ui.text_edit_singleline(&mut self.profile_name_input);
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                self.show_profile_dialog = false;
+                                self.profile_name_input.clear();
+                            }
+
+                            let button_text = if self.profile_dialog_mode == ProfileDialogMode::Create {
+                                "Create"
+                            } else {
+                                "Rename"
+                            };
+
+                            if ui.button(button_text).clicked() && !self.profile_name_input.trim().is_empty() {
+                                let profile_name = self.profile_name_input.trim().to_string();
+
+                                if self.profile_dialog_mode == ProfileDialogMode::Create {
+                                    // Create new profile
+                                    let pool = self.pool.clone();
+                                    let profile_name_clone = profile_name.clone();
+                                    let command_tx = self.command_tx.clone();
+                                    tokio::spawn(async move {
+                                        let profile_repo = ProfileRepository::new(pool);
+                                        let profile = aaeq_core::Profile {
+                                            id: None,
+                                            name: profile_name_clone.clone(),
+                                            is_builtin: false,
+                                            created_at: chrono::Utc::now().timestamp(),
+                                            updated_at: chrono::Utc::now().timestamp(),
+                                        };
+                                        match profile_repo.create(&profile).await {
+                                            Ok(_) => {
+                                                tracing::info!("Created profile: {}", profile_name_clone);
+                                                let _ = command_tx.send(AppCommand::ReloadProfiles);
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to create profile: {}", e);
+                                            }
+                                        }
+                                    });
+
+                                    self.status_message = Some(format!("Creating profile: {}", profile_name));
+                                } else {
+                                    // Rename existing profile
+                                    if let Some(profile_id) = self.profile_to_rename {
+                                        let pool = self.pool.clone();
+                                        let profile_name_clone = profile_name.clone();
+                                        let command_tx = self.command_tx.clone();
+                                        tokio::spawn(async move {
+                                            let profile_repo = ProfileRepository::new(pool);
+                                            match profile_repo.update_name(profile_id, &profile_name_clone).await {
+                                                Ok(_) => {
+                                                    tracing::info!("Renamed profile to: {}", profile_name_clone);
+                                                    let _ = command_tx.send(AppCommand::ReloadProfiles);
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to rename profile: {}", e);
+                                                }
+                                            }
+                                        });
+
+                                        self.status_message = Some(format!("Renaming profile to: {}", profile_name));
+                                    }
+                                }
+
+                                // Don't clear dialog state here - will be cleared when ProfilesLoaded response arrives
+                            }
+                        });
+                    }
+                    ProfileDialogMode::Delete => {
+                        ui.label(format!("Are you sure you want to delete the profile '{}'?", self.profile_name_input));
+                        ui.label("All EQ mappings for this profile will be lost.");
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                self.show_profile_dialog = false;
+                                self.profile_to_delete = None;
+                            }
+
+                            if ui.button("Delete").clicked() {
+                                if let Some(profile_id) = self.profile_to_delete {
+                                    let pool = self.pool.clone();
+                                    let profile_name = self.profile_name_input.clone();
+                                    let profile_name_clone = profile_name.clone();
+                                    let command_tx = self.command_tx.clone();
+                                    let is_active = profile_id == self.active_profile_id;
+
+                                    tokio::spawn(async move {
+                                        // Switch to Default if deleting active profile
+                                        if is_active {
+                                            let settings_repo = AppSettingsRepository::new(pool.clone());
+                                            if let Err(e) = settings_repo.set_active_profile_id(1).await {
+                                                tracing::error!("Failed to switch to Default profile: {}", e);
+                                            }
+                                        }
+
+                                        // Delete profile
+                                        let profile_repo = ProfileRepository::new(pool);
+                                        match profile_repo.delete(profile_id).await {
+                                            Ok(_) => {
+                                                tracing::info!("Deleted profile: {}", profile_name_clone);
+                                                let _ = command_tx.send(AppCommand::ReloadProfiles);
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to delete profile: {}", e);
+                                            }
+                                        }
+                                    });
+
+                                    if is_active {
+                                        self.active_profile_id = 1; // Default profile
+
+                                        // Reload mappings for Default profile
+                                        let pool = self.pool.clone();
+                                        let rules_index = self.rules_index.clone();
+                                        tokio::spawn(async move {
+                                            let repo = MappingRepository::new(pool);
+                                            if let Ok(mappings) = repo.list_by_profile(1).await {
+                                                let mut rules = rules_index.write().await;
+                                                *rules = RulesIndex::from_mappings(mappings);
+                                                tracing::info!("Switched to Default profile, loaded {} song rules, {} album rules, {} genre rules",
+                                                    rules.song_rules.len(), rules.album_rules.len(), rules.genre_rules.len());
+                                            }
+                                        });
+                                    }
+
+                                    self.status_message = Some(format!("Deleting profile: {}", profile_name));
+                                }
+
+                                // Don't clear dialog state here - will be cleared when ProfilesLoaded response arrives
+                            }
+                        });
+                    }
+                }
+            });
         }
 
         // Request continuous repaint for polling

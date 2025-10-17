@@ -1,4 +1,4 @@
-use aaeq_core::{Device, Mapping, Scope};
+use aaeq_core::{Device, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use chrono::Utc;
@@ -128,11 +128,12 @@ impl MappingRepository {
         let scope_str = mapping.scope.as_str();
 
         let result = sqlx::query(
-            "INSERT INTO mapping (scope, key_normalized, preset_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO mapping (scope, key_normalized, preset_name, profile_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
         )
         .bind(scope_str)
         .bind(&mapping.key_normalized)
         .bind(&mapping.preset_name)
+        .bind(mapping.profile_id)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -146,15 +147,16 @@ impl MappingRepository {
         let scope_str = mapping.scope.as_str();
 
         let result = sqlx::query(
-            "INSERT INTO mapping (scope, key_normalized, preset_name, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(scope, key_normalized)
+            "INSERT INTO mapping (scope, key_normalized, preset_name, profile_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(profile_id, scope, key_normalized)
              DO UPDATE SET preset_name = excluded.preset_name, updated_at = excluded.updated_at
              RETURNING id"
         )
         .bind(scope_str)
         .bind(&mapping.key_normalized)
         .bind(&mapping.preset_name)
+        .bind(mapping.profile_id)
         .bind(now)
         .bind(now)
         .fetch_one(&self.pool)
@@ -165,7 +167,7 @@ impl MappingRepository {
 
     pub async fn list_all(&self) -> Result<Vec<Mapping>> {
         let rows = sqlx::query(
-            "SELECT id, scope, key_normalized, preset_name, created_at, updated_at FROM mapping ORDER BY scope, key_normalized"
+            "SELECT id, scope, key_normalized, preset_name, profile_id, created_at, updated_at FROM mapping ORDER BY profile_id, scope, key_normalized"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -179,8 +181,35 @@ impl MappingRepository {
                 scope,
                 key_normalized: row.get(2),
                 preset_name: row.get(3),
-                created_at: row.get(4),
-                updated_at: row.get(5),
+                profile_id: row.get(4),
+                created_at: row.get(5),
+                updated_at: row.get(6),
+            })
+        }).collect();
+
+        Ok(mappings)
+    }
+
+    pub async fn list_by_profile(&self, profile_id: i64) -> Result<Vec<Mapping>> {
+        let rows = sqlx::query(
+            "SELECT id, scope, key_normalized, preset_name, profile_id, created_at, updated_at FROM mapping WHERE profile_id = ? ORDER BY scope, key_normalized"
+        )
+        .bind(profile_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mappings = rows.iter().filter_map(|row| {
+            let scope_str: String = row.get(1);
+            let scope = Scope::from_str(&scope_str)?;
+
+            Some(Mapping {
+                id: Some(row.get(0)),
+                scope,
+                key_normalized: row.get(2),
+                preset_name: row.get(3),
+                profile_id: row.get(4),
+                created_at: row.get(5),
+                updated_at: row.get(6),
             })
         }).collect();
 
@@ -270,16 +299,27 @@ impl AppSettingsRepository {
     pub async fn set_last_connected_host(&self, host: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
-        // Use INSERT OR REPLACE to handle both initial insert and updates
-        sqlx::query(
-            "INSERT OR REPLACE INTO app_settings (id, last_connected_host, created_at, updated_at)
-             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET last_connected_host = ?, updated_at = ? WHERE id = 1"
         )
         .bind(host)
-        .bind(now)  // created_at if new row
-        .bind(now)  // updated_at always
+        .bind(now)
         .execute(&self.pool)
         .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, last_connected_host, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(host)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -297,16 +337,27 @@ impl AppSettingsRepository {
     pub async fn set_last_input_device(&self, device: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
-        // Use INSERT OR REPLACE to handle both initial insert and updates
-        sqlx::query(
-            "INSERT OR REPLACE INTO app_settings (id, last_input_device, created_at, updated_at)
-             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET last_input_device = ?, updated_at = ? WHERE id = 1"
         )
         .bind(device)
-        .bind(now)  // created_at if new row
-        .bind(now)  // updated_at always
+        .bind(now)
         .execute(&self.pool)
         .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, last_input_device, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(device)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -324,16 +375,65 @@ impl AppSettingsRepository {
     pub async fn set_last_output_device(&self, device: &str) -> Result<()> {
         let now = Utc::now().timestamp();
 
-        // Use INSERT OR REPLACE to handle both initial insert and updates
-        sqlx::query(
-            "INSERT OR REPLACE INTO app_settings (id, last_output_device, created_at, updated_at)
-             VALUES (1, ?, COALESCE((SELECT created_at FROM app_settings WHERE id = 1), ?), ?)"
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET last_output_device = ?, updated_at = ? WHERE id = 1"
         )
         .bind(device)
-        .bind(now)  // created_at if new row
-        .bind(now)  // updated_at always
+        .bind(now)
         .execute(&self.pool)
         .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, last_output_device, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(device)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_active_profile_id(&self) -> Result<Option<i64>> {
+        let row = sqlx::query(
+            "SELECT active_profile_id FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)))
+    }
+
+    pub async fn set_active_profile_id(&self, profile_id: i64) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET active_profile_id = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(profile_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, active_profile_id, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(profile_id)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
 
         Ok(())
     }
@@ -536,6 +636,125 @@ impl CustomEqPresetRepository {
     pub async fn delete(&self, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM custom_eq_preset WHERE name = ?")
             .bind(name)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+}
+
+/// Repository for profile operations
+pub struct ProfileRepository {
+    pool: SqlitePool,
+}
+
+impl ProfileRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new profile
+    pub async fn create(&self, profile: &Profile) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let is_builtin = if profile.is_builtin { 1 } else { 0 };
+
+        let result = sqlx::query(
+            "INSERT INTO profile (name, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?)"
+        )
+        .bind(&profile.name)
+        .bind(is_builtin)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get a profile by ID
+    pub async fn get_by_id(&self, id: i64) -> Result<Option<Profile>> {
+        let row = sqlx::query(
+            "SELECT id, name, is_builtin, created_at, updated_at FROM profile WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Profile {
+            id: Some(r.get(0)),
+            name: r.get(1),
+            is_builtin: {
+                let val: i64 = r.get(2);
+                val != 0
+            },
+            created_at: r.get(3),
+            updated_at: r.get(4),
+        }))
+    }
+
+    /// Get a profile by name
+    pub async fn get_by_name(&self, name: &str) -> Result<Option<Profile>> {
+        let row = sqlx::query(
+            "SELECT id, name, is_builtin, created_at, updated_at FROM profile WHERE name = ?"
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| Profile {
+            id: Some(r.get(0)),
+            name: r.get(1),
+            is_builtin: {
+                let val: i64 = r.get(2);
+                val != 0
+            },
+            created_at: r.get(3),
+            updated_at: r.get(4),
+        }))
+    }
+
+    /// List all profiles
+    pub async fn list_all(&self) -> Result<Vec<Profile>> {
+        let rows = sqlx::query(
+            "SELECT id, name, is_builtin, created_at, updated_at FROM profile ORDER BY is_builtin DESC, name"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let profiles = rows.iter().map(|r| Profile {
+            id: Some(r.get(0)),
+            name: r.get(1),
+            is_builtin: {
+                let val: i64 = r.get(2);
+                val != 0
+            },
+            created_at: r.get(3),
+            updated_at: r.get(4),
+        }).collect();
+
+        Ok(profiles)
+    }
+
+    /// Update a profile name (only for user-created profiles)
+    pub async fn update_name(&self, id: i64, name: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE profile SET name = ?, updated_at = ? WHERE id = ? AND is_builtin = 0"
+        )
+        .bind(name)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a profile (only for user-created profiles)
+    pub async fn delete(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM profile WHERE id = ? AND is_builtin = 0")
+            .bind(id)
             .execute(&self.pool)
             .await?;
 
