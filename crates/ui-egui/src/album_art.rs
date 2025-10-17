@@ -38,6 +38,7 @@ impl AlbumArtCache {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .danger_accept_invalid_certs(true)  // Accept self-signed certs (for WiiM devices)
             .build()
             .unwrap();
 
@@ -96,7 +97,15 @@ impl AlbumArtCache {
                     cache_write.insert(url.clone(), AlbumArtState::Loaded(Arc::new(color_image)));
                 }
                 Err(e) => {
-                    warn!("Failed to load album art from {}: {}", url, e);
+                    // Log full error chain for debugging
+                    let mut error_msg = format!("Failed to load album art from {}: {}", url, e);
+                    let mut source = std::error::Error::source(&*e);
+                    while let Some(err) = source {
+                        error_msg.push_str(&format!("\n  Caused by: {}", err));
+                        source = std::error::Error::source(err);
+                    }
+                    warn!("{}", error_msg);
+
                     let mut cache_write = cache.write().await;
                     cache_write.insert(url.clone(), AlbumArtState::Failed);
                 }
@@ -143,5 +152,63 @@ impl AlbumArtCache {
     pub async fn remove(&self, url: &str) {
         let mut cache = self.cache.write().await;
         cache.remove(url);
+    }
+
+    /// Mark a URL as loading (for external lookup scenarios)
+    pub fn mark_loading(&self, url: String) {
+        let cache = self.cache.clone();
+        tokio::spawn(async move {
+            let mut cache_write = cache.write().await;
+            cache_write.insert(url, AlbumArtState::Loading);
+        });
+    }
+
+    /// Mark a URL as failed (for external lookup scenarios)
+    pub fn mark_failed(&self, url: String) {
+        let cache = self.cache.clone();
+        tokio::spawn(async move {
+            let mut cache_write = cache.write().await;
+            cache_write.insert(url, AlbumArtState::Failed);
+        });
+    }
+
+    /// Load an image from a URL and cache it under a different key
+    /// This is useful for album art lookups where we want to cache the result
+    /// under the lookup key rather than the actual image URL
+    pub fn load_as(&self, url: String, cache_key: String) {
+        let cache = self.cache.clone();
+        let client = self.client.clone();
+
+        tokio::spawn(async move {
+            // Mark as loading
+            {
+                let mut cache_write = cache.write().await;
+                cache_write.insert(cache_key.clone(), AlbumArtState::Loading);
+            }
+
+            debug!("Loading album art from: {} (caching as: {})", url, cache_key);
+
+            // Fetch and decode image
+            match Self::fetch_and_decode(&client, &url).await {
+                Ok(color_image) => {
+                    debug!("Successfully loaded album art, caching under: {}", cache_key);
+                    let mut cache_write = cache.write().await;
+                    cache_write.insert(cache_key, AlbumArtState::Loaded(Arc::new(color_image)));
+                }
+                Err(e) => {
+                    // Log full error chain for debugging
+                    let mut error_msg = format!("Failed to load album art from {}: {}", url, e);
+                    let mut source = std::error::Error::source(&*e);
+                    while let Some(err) = source {
+                        error_msg.push_str(&format!("\n  Caused by: {}", err));
+                        source = std::error::Error::source(err);
+                    }
+                    warn!("{}", error_msg);
+
+                    let mut cache_write = cache.write().await;
+                    cache_write.insert(cache_key, AlbumArtState::Failed);
+                }
+            }
+        });
     }
 }

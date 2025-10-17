@@ -21,6 +21,10 @@ dirs = "5.0"
 tray-icon = "0.19"
 image = "0.25"
 single-instance = "0.3"
+clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }

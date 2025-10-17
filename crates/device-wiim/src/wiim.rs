@@ -152,12 +152,24 @@ impl DeviceController for WiimController {
             album_art_url: None,  // Will be set below if available
         };
 
-        // Try to get album art URL from the device
-        // WiiM devices serve album art at: http://{host}/Artwork
-        if !meta.title.is_empty() && status.status == "play" || status.status == "pause" {
-            // Album art is available while playing
-            let artwork_url = format!("http://{}/Artwork", self.host);
-            meta.album_art_url = Some(artwork_url);
+        // Album art for WiiM devices:
+        // The WiiM/LinkPlay HTTP API does not provide a direct endpoint for album artwork.
+        // The /Artwork endpoint returns 404 on tested devices.
+        //
+        // Instead, we'll look up album art from external services (iTunes API) using
+        // the track metadata (artist, album). This is done asynchronously in the UI layer
+        // to avoid blocking the metadata fetch.
+        //
+        // Set a special marker URL that the UI will recognize and replace with a lookup result.
+        if !meta.artist.is_empty() && !meta.album.is_empty()
+            && meta.artist != "Unknown" && meta.album != "Unknown"
+            && meta.artist != "Not playing" {
+            // Use a special URL scheme that signals the UI to perform album art lookup
+            meta.album_art_url = Some(format!("lookup://{}|{}", meta.artist, meta.album));
+            tracing::debug!("Will look up album art for: {} - {}", meta.artist, meta.album);
+        } else {
+            meta.album_art_url = None;
+            tracing::debug!("No album art lookup - invalid metadata (mode: {})", status.mode);
         }
 
         // If metadata is missing, try to extract from vendor field or use placeholder
