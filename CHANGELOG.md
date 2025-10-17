@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-10-17
+
+### Added
+
+#### Album Art Lookup 🎨
+- **External Album Art Lookup**: Integrated iTunes Search API for album artwork
+- **High-Resolution Images**: Album art displayed at 600x600 resolution
+- **Smart Caching**: New `load_as()` function prevents cache key collisions
+- **Async Loading**: Non-blocking album art fetches with loading state tracking
+- **Lookup URL Scheme**: Introduced `lookup://Artist|Album` for external lookups
+
+#### Windows Platform Improvements
+- **Console Control**: Added `--console` flag to show/hide console window
+- **Embedded Icons**: Album art fallback icon compiled into binary
+- **Audio Device Detection**: Improved Windows loopback device enumeration
+
+### Fixed
+
+#### Album Art Issues 🐛
+- **WiiM API Album Art**: Fixed album art loading in WiiM API mode
+  - WiiM devices don't provide `/Artwork` endpoint (returns 404)
+  - Implemented fallback to iTunes Search API lookup
+  - Graceful degradation to default icon on failures
+- **Cache Key Collisions**: Fixed images cached under wrong keys
+  - Separated lookup keys from actual image URLs
+  - Ensured proper state tracking during async loads
+- **Tray Window Visibility**: Fixed show/hide functionality on Windows
+
+### Changed
+
+#### UI/UX Improvements
+- **Profile Examples**: Updated README from "Car" to "Living Room" references
+- **Custom EQ Visibility**: Hidden custom presets in WiiM API mode (device limitation)
+- **Debug Logging**: Enhanced album art troubleshooting with comprehensive logs
+- **Loading States**: Better visual feedback during album art lookup
+
+### Technical Details
+
+#### New Modules
+- `crates/ui-egui/src/album_art_lookup.rs`: iTunes Search API integration
+- Enhanced `AlbumArtCache` with `load_as()`, `mark_loading()`, `mark_failed()`
+
+#### Dependencies
+- Added `urlencoding = "2.1"` for safe API queries
+
 ## [0.4.0] - 2025-10-16
 
 ### Added
@@ -129,7 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jaschadub/AAEQ/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jaschadub/AAEQ/compare/v0.1.4...v0.4.0
 [0.1.4]: https://github.com/jaschadub/AAEQ/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/jaschadub/AAEQ/releases/tag/v0.1.0
