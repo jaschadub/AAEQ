@@ -140,6 +140,7 @@ pub struct AaeqApp {
     show_discovery: bool,
     last_viz_state: bool, // Track previous visualization state for window resizing
     last_streaming_state: bool, // Track previous streaming state for window resizing
+    last_collapsed_state: bool, // Track previous collapsed state for window resizing
     show_profile_dialog: bool,
     profile_dialog_mode: ProfileDialogMode,
     profile_name_input: String,
@@ -198,6 +199,7 @@ impl AaeqApp {
             show_discovery: false,
             last_viz_state: false,
             last_streaming_state: false,
+            last_collapsed_state: false,
             show_profile_dialog: false,
             profile_dialog_mode: ProfileDialogMode::Create,
             profile_name_input: String::new(),
@@ -2249,27 +2251,33 @@ impl eframe::App for AaeqApp {
             }
         }
 
-        // Window resize logic for visualization elements
+        // Window resize logic for visualization elements and collapsed state
         let viz_enabled = self.dsp_view.audio_viz.enabled;
         let is_streaming = self.dsp_view.is_streaming;
+        let is_collapsed = self.dsp_view.audio_output_collapsed;
 
-        // Check if visualization or streaming state changed
-        if viz_enabled != self.last_viz_state || is_streaming != self.last_streaming_state {
-            tracing::info!("Window resize needed - viz: {} -> {}, streaming: {} -> {}",
-                self.last_viz_state, viz_enabled, self.last_streaming_state, is_streaming);
+        // Check if visualization, streaming, or collapsed state changed
+        if viz_enabled != self.last_viz_state || is_streaming != self.last_streaming_state || is_collapsed != self.last_collapsed_state {
+            tracing::info!("Window resize needed - viz: {} -> {}, streaming: {} -> {}, collapsed: {} -> {}",
+                self.last_viz_state, viz_enabled, self.last_streaming_state, is_streaming, self.last_collapsed_state, is_collapsed);
 
             // Calculate new window height based on visible elements
             let base_height = 600.0;
             let mut new_height = base_height;
+
+            // Subtract height when Audio Output section is collapsed (~400px for all hidden controls)
+            if is_collapsed {
+                new_height -= 400.0;
+            }
 
             // Add height for waveform visualization (~220px)
             if viz_enabled {
                 new_height += 220.0;
             }
 
-            // Add height for audio meters (~250px)
+            // Add height for audio meters (350px: includes all spacing, separator, labels, and 200px meters with padding)
             if is_streaming {
-                new_height += 250.0;
+                new_height += 350.0;
             }
 
             // Apply window resize
@@ -2278,11 +2286,15 @@ impl eframe::App for AaeqApp {
                 let new_size = egui::vec2(size.x, new_height);
                 tracing::info!("Resizing window from {}x{} to {}x{}", size.x, size.y, new_size.x, new_size.y);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
+
+                // Request another repaint to ensure layout is complete before resize takes full effect
+                ctx.request_repaint();
             }
 
             // Update tracking state
             self.last_viz_state = viz_enabled;
             self.last_streaming_state = is_streaming;
+            self.last_collapsed_state = is_collapsed;
         }
 
         // Show profile management dialog
