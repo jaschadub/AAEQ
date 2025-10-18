@@ -10,7 +10,7 @@ use crate::types::OutputConfig;
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // Windows-specific imports for WASAPI loopback
 // Temporarily disabled due to build issues with wasapi crate
@@ -244,7 +244,23 @@ impl LocalDacInput {
 
         // Get supported config
         let supported_configs = device.supported_input_configs()?;
-        let supported_config = supported_configs
+
+        // Log all supported sample rates for diagnostic purposes
+        // Note: We need to collect into Vec first since SupportedInputConfigs iterator consumes itself
+        let configs_vec: Vec<_> = supported_configs.collect();
+        let mut supported_rates = Vec::new();
+        for config in &configs_vec {
+            supported_rates.push(format!(
+                "{}-{} Hz ({:?}, {} ch)",
+                config.min_sample_rate().0,
+                config.max_sample_rate().0,
+                config.sample_format(),
+                config.channels()
+            ));
+        }
+        info!("Input device '{}' supported configs: {:?}", device_name, supported_rates);
+
+        let supported_config = configs_vec.into_iter()
             .filter(|c| c.channels() == cfg.channels)
             .find(|c| {
                 c.min_sample_rate().0 <= cfg.sample_rate
@@ -256,11 +272,29 @@ impl LocalDacInput {
         let sample_format = config.sample_format();
 
         info!(
-            "Input config: {:?} channels, {} Hz, {:?}",
+            "Input capture starting: {} channels, {} Hz (requested), {:?} format",
             config.channels(),
-            config.sample_rate().0,
+            cfg.sample_rate,
             sample_format
         );
+
+        // Check if the device's natural sample rate matches what we're requesting
+        if supported_config.min_sample_rate().0 != supported_config.max_sample_rate().0 {
+            info!(
+                "Device supports variable sample rate {}-{} Hz, will use {} Hz",
+                supported_config.min_sample_rate().0,
+                supported_config.max_sample_rate().0,
+                cfg.sample_rate
+            );
+        } else if supported_config.min_sample_rate().0 != cfg.sample_rate {
+            warn!(
+                "Device native rate is {} Hz but requesting {} Hz - CPAL/ALSA will resample, which may introduce artifacts!",
+                supported_config.min_sample_rate().0,
+                cfg.sample_rate
+            );
+        } else {
+            info!("Using device native sample rate: {} Hz (no resampling needed)", cfg.sample_rate);
+        }
 
         // Create stop channel
         let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);

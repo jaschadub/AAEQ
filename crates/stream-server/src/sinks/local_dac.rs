@@ -165,19 +165,36 @@ impl OutputSink for LocalDacSink {
         info!("Using audio device: {}", device_name);
 
         // Check what formats the device supports
-        let supported_configs = device.supported_output_configs()?;
+        // Note: We need to collect into Vec first since SupportedOutputConfigs iterator consumes itself
+        let supported_configs: Vec<_> = device.supported_output_configs()?.collect();
         let mut supports_f32 = false;
         let mut supports_i16 = false;
+        let mut min_sample_rate = u32::MAX;
+        let mut max_sample_rate = 0u32;
 
-        for config_range in supported_configs {
+        for config_range in &supported_configs {
             match config_range.sample_format() {
                 cpal::SampleFormat::F32 => supports_f32 = true,
                 cpal::SampleFormat::I16 => supports_i16 = true,
                 _ => {}
             }
+            min_sample_rate = min_sample_rate.min(config_range.min_sample_rate().0);
+            max_sample_rate = max_sample_rate.max(config_range.max_sample_rate().0);
         }
 
-        debug!("Device format support: F32={}, I16={}", supports_f32, supports_i16);
+        info!(
+            "Device '{}' format support: F32={}, I16={}, sample rate range: {}-{} Hz",
+            device_name, supports_f32, supports_i16, min_sample_rate, max_sample_rate
+        );
+        info!("Requested output sample rate: {} Hz", cfg.sample_rate);
+
+        // Warn if requested sample rate is outside device range
+        if cfg.sample_rate < min_sample_rate || cfg.sample_rate > max_sample_rate {
+            warn!(
+                "Requested sample rate {} Hz is outside device range {}-{} Hz. CPAL/ALSA will resample, which may cause audio artifacts!",
+                cfg.sample_rate, min_sample_rate, max_sample_rate
+            );
+        }
 
         // Determine actual format to use
         let actual_format = match cfg.format {
@@ -198,6 +215,11 @@ impl OutputSink for LocalDacSink {
         // Create buffer for audio data
         let buffer = self.buffer.clone();
 
+        // Track buffer underruns for debugging
+        let underrun_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let underrun_counter_f32 = underrun_counter.clone();
+        let underrun_counter_i16 = underrun_counter.clone();
+
         // Create audio stream based on actual format we'll use
         let stream = match actual_format {
             SampleFormat::F32 => {
@@ -217,8 +239,17 @@ impl OutputSink for LocalDacSink {
                         }
 
                         // Fill remainder with silence
-                        for i in (bytes_read / 4)..data.len() {
-                            data[i] = 0.0;
+                        let samples_from_buffer = bytes_read / 4;
+                        if samples_from_buffer < data.len() {
+                            // Buffer underrun detected
+                            let underruns = underrun_counter_f32.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if underruns < 10 || underruns % 100 == 0 {
+                                warn!("Buffer underrun #{}: only {} of {} samples available", underruns, samples_from_buffer, data.len());
+                            }
+
+                            for i in samples_from_buffer..data.len() {
+                                data[i] = 0.0;
+                            }
                         }
                     },
                     |err| error!("Stream error: {}", err),
@@ -242,8 +273,17 @@ impl OutputSink for LocalDacSink {
                         }
 
                         // Fill remainder with silence
-                        for i in (bytes_read / 2)..data.len() {
-                            data[i] = 0;
+                        let samples_from_buffer = bytes_read / 2;
+                        if samples_from_buffer < data.len() {
+                            // Buffer underrun detected
+                            let underruns = underrun_counter_i16.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if underruns < 10 || underruns % 100 == 0 {
+                                warn!("Buffer underrun #{}: only {} of {} samples available", underruns, samples_from_buffer, data.len());
+                            }
+
+                            for i in samples_from_buffer..data.len() {
+                                data[i] = 0;
+                            }
                         }
                     },
                     |err| error!("Stream error: {}", err),
@@ -257,6 +297,21 @@ impl OutputSink for LocalDacSink {
                 ));
             }
         };
+
+        // Pre-fill buffer with silence to prevent initial underruns
+        // This is crucial to avoid hissing when the stream starts before audio data arrives
+        let silence_duration_ms = 100; // 100ms of silence
+        let silence_frames = (cfg.sample_rate as u64 * silence_duration_ms / 1000) as usize;
+        let silence_samples = silence_frames * cfg.channels as usize;
+        let bytes_per_sample = actual_format.bytes_per_sample();
+        let silence_bytes = vec![0u8; silence_samples * bytes_per_sample];
+
+        {
+            let mut buffer_guard = self.buffer.lock().unwrap();
+            let written = buffer_guard.write(&silence_bytes);
+            info!("Pre-filled output buffer with {} ms ({} bytes) of silence to prevent startup underruns",
+                  silence_duration_ms, written);
+        }
 
         // Start the stream
         stream.play()?;

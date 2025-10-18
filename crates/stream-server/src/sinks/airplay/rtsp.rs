@@ -2,13 +2,16 @@ use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Simple RTSP client for AirPlay (RAOP)
 pub struct RtspClient {
     stream: Option<TcpStream>,
     cseq: u32,
     session: Option<String>,
+    client_instance: String,
+    dacp_id: String,
+    active_remote: String,
 }
 
 #[derive(Debug, Clone)]
@@ -21,10 +24,18 @@ pub struct RtspResponse {
 
 impl RtspClient {
     pub fn new() -> Self {
+        // Generate random client identifiers
+        let client_instance = format!("{:016X}", rand::random::<u64>());
+        let dacp_id = format!("{:016X}", rand::random::<u64>());
+        let active_remote = format!("{:016X}", rand::random::<u64>());
+
         Self {
             stream: None,
             cseq: 1,
             session: None,
+            client_instance,
+            dacp_id,
+            active_remote,
         }
     }
 
@@ -57,7 +68,11 @@ impl RtspClient {
             request.push_str(&format!("Session: {}\r\n", session));
         }
 
-        request.push_str("User-Agent: AAEQ/1.0\r\n");
+        // Add AirPlay-required headers
+        request.push_str("User-Agent: AirPlay/595.17.1\r\n"); // Mimic iTunes
+        request.push_str(&format!("Client-Instance: {}\r\n", self.client_instance));
+        request.push_str(&format!("DACP-ID: {}\r\n", self.dacp_id));
+        request.push_str(&format!("Active-Remote: {}\r\n", self.active_remote));
 
         for (key, value) in headers {
             request.push_str(&format!("{}: {}\r\n", key, value));
@@ -69,7 +84,7 @@ impl RtspClient {
 
         request.push_str("\r\n");
 
-        debug!("RTSP Request:\n{}", request);
+        info!("RTSP Request:\n{}", request);
 
         // Send request
         stream.write_all(request.as_bytes()).await?;
@@ -138,7 +153,7 @@ impl RtspClient {
             Vec::new()
         };
 
-        debug!("RTSP Response: {} {}", status_code, status_text);
+        info!("RTSP Response: {} {} (headers: {:?})", status_code, status_text, headers);
 
         Ok(RtspResponse {
             status_code,

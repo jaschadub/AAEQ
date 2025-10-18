@@ -334,14 +334,34 @@ Contributions are welcome! Please:
   - MPRIS integration (Now Playing detection) only works on Linux
 
 - **Device Compatibility**:
-  - DLNA streaming tested with WiiM devices and most UPnP renderers
-  - AirPlay support is experimental and may not work with all devices
+  - **DLNA streaming**: ✅ Tested and working with WiiM devices and most UPnP renderers
+  - **Local DAC output**: ✅ Fully supported with high-quality audio processing
+  - **AirPlay support**: ⚠️ **Limited compatibility**
+    - ❌ **Apple AirPlay 2 devices NOT supported** (HomePod, Apple TV, AirPort Express)
+      - These require MFi (Made for iPhone) hardware authentication chip
+      - Cannot be implemented in software without violating Apple's licensing terms
+      - Device verification is mandatory from tvOS 10.2+ and equivalent firmware
+    - ✅ **Third-party AirPlay 1 speakers MAY work** (Sonos, Bose, etc.)
+      - Many third-party speakers use AirPlay 1 protocol without MFi requirement
+      - Compatibility varies by manufacturer
+    - 💡 **Recommended alternatives**:
+      - Use DLNA output (most network speakers support both AirPlay and DLNA)
+      - Use Local DAC output for computer audio
+      - Many speakers list both AirPlay and DLNA in their specs
   - Some DLNA devices may have specific format requirements
 
 - **Performance**:
   - DSP processing is CPU-intensive; older systems may experience latency
   - Network streaming quality depends on WiFi strength
   - Buffer sizes are auto-tuned but may need manual adjustment for some devices
+
+- **Audio Quality (Local DAC)**:
+  - ✅ Buffer pre-fill prevents startup hissing/clicks
+  - ✅ Automatic sample rate detection with mismatch warnings
+  - ✅ Support for F32 (32-bit float) and S16LE (16-bit) output
+  - ✅ TPDF dithering for high-quality bit depth reduction
+  - ✅ Configurable sample rates (44.1kHz - 192kHz)
+  - ✅ Buffer underrun detection and logging
 
 ### General
 - **System Tray on XFCE**:

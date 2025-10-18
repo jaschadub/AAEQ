@@ -82,10 +82,48 @@ impl AirPlaySink {
         // Send OPTIONS
         let uri = format!("rtsp://{}:{}", ip, device.port);
         let options_resp = rtsp.options(&uri).await?;
-        debug!("OPTIONS response: {}", options_resp.status_code);
+        info!("OPTIONS response: {} {}", options_resp.status_code, options_resp.status_text);
+        info!("OPTIONS headers: {:?}", options_resp.headers);
 
-        // Generate encryption keys
-        self.auth.generate_encryption_keys();
+        // Check if this is an Apple device that requires MFi pairing
+        if options_resp.status_code == 403 {
+            if let Some(server) = options_resp.headers.get("Server") {
+                if server.contains("AirTunes") || server.contains("AirPlay") {
+                    return Err(anyhow!(
+                        "Apple AirPlay 2 device requires MFi authentication (device pairing). \
+                        This is not currently supported. \n\
+                        \n\
+                        Your device ({}) appears to be an Apple HomePod, Apple TV, or AirPort Express. \
+                        These devices require hardware-level authentication (MFi chip) that cannot be \
+                        implemented in software without violating Apple's terms.\n\
+                        \n\
+                        Supported alternatives:\n\
+                        1. Use a third-party AirPlay speaker (Sonos, Bose, etc.) that doesn't require pairing\n\
+                        2. Use DLNA output instead (many speakers support both)\n\
+                        3. Use Local DAC output to your computer's audio device\n\
+                        \n\
+                        Server: {}",
+                        device.name, server
+                    ));
+                }
+            }
+            return Err(anyhow!("OPTIONS request rejected with 403 Forbidden. Device may require authentication or pairing."));
+        }
+
+        // Check if receiver requires password authentication
+        if let Some(auth_header) = options_resp.headers.get("WWW-Authenticate") {
+            info!("Receiver requires password authentication: {}", auth_header);
+            return Err(anyhow!("Device requires password authentication, which is not yet implemented. Header: {}", auth_header));
+        }
+
+        // Check for Apple-Challenge (some receivers require this)
+        if let Some(challenge) = options_resp.headers.get("Apple-Challenge") {
+            info!("Receiver sent Apple-Challenge: {}", challenge);
+            return Err(anyhow!("Device requires Apple-Challenge/Response authentication, which is not yet implemented."));
+        }
+
+        // Generate encryption keys (but don't send them for now - may trigger FairPlay rejection)
+        // self.auth.generate_encryption_keys();
 
         // Create ALAC encoder
         let alac_config = AlacConfig {
@@ -98,22 +136,26 @@ impl AirPlaySink {
         let encoder = AlacEncoder::new(alac_config.clone());
         let fmtp = encoder.fmtp_string();
 
-        // Create SDP
-        let mut sdp = generate_sdp(cfg.sample_rate, cfg.channels, &fmtp);
+        // Create SDP (without encryption for now - Apple devices may reject encrypted streams
+        // from unauthorized clients due to FairPlay DRM)
+        let sdp = generate_sdp(cfg.sample_rate, cfg.channels, &fmtp);
 
-        // Add encryption info if available
-        if let (Some(key), Some(iv)) = (
-            self.auth.get_aes_key_base64(),
-            self.auth.get_aes_iv_base64(),
-        ) {
-            sdp.push_str(&format!("a=rsaaeskey:{}\r\n", key));
-            sdp.push_str(&format!("a=aesiv:{}\r\n", iv));
-        }
+        // Note: Encryption keys omitted - Apple AirPlay 2 devices reject encrypted streams
+        // from non-paired clients. Try unencrypted first to see if device accepts it.
+        info!("Attempting connection without audio encryption (Apple devices may require pairing for encrypted streams)");
 
         // Send ANNOUNCE
+        info!("Sending ANNOUNCE with SDP:\n{}", sdp);
         let announce_resp = rtsp.announce(&uri, &sdp).await?;
+        info!("ANNOUNCE response: {} {}", announce_resp.status_code, announce_resp.status_text);
+        info!("ANNOUNCE headers: {:?}", announce_resp.headers);
+
         if announce_resp.status_code != 200 {
-            return Err(anyhow!("ANNOUNCE failed: {}", announce_resp.status_text));
+            if let Some(auth_header) = announce_resp.headers.get("WWW-Authenticate") {
+                return Err(anyhow!("ANNOUNCE failed with authentication required: {} - Auth header: {}",
+                    announce_resp.status_text, auth_header));
+            }
+            return Err(anyhow!("ANNOUNCE failed: {} (status {})", announce_resp.status_text, announce_resp.status_code));
         }
 
         // Setup RTP streams
