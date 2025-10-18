@@ -423,8 +423,8 @@ impl LocalDacInput {
         Ok(final_stop_tx)
     }
 
-    /// Windows-specific: List WASAPI loopback devices (system audio capture)
-    /// Temporarily disabled due to build issues with wasapi crate
+    // Windows-specific: List WASAPI loopback devices (system audio capture)
+    // Temporarily disabled due to build issues with wasapi crate
     /*
     #[cfg(target_os = "windows")]
     fn list_windows_loopback_devices() -> Result<Vec<String>> {
