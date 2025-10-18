@@ -14,7 +14,7 @@ use tracing::{error, info};
 
 // Windows-specific imports for WASAPI loopback
 #[cfg(target_os = "windows")]
-use wasapi::{initialize_mta, DeviceEnumerator, Direction, ShareMode};
+use wasapi::*;
 
 /// Input source that captures from system audio (loopback/monitor device)
 pub struct LocalDacInput;
