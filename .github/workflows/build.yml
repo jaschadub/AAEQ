@@ -250,7 +250,7 @@ jobs:
         run: cargo install cargo-wix
 
       - name: Build MSI installer
-        run: cargo wix --package aaeq --nocapture --output target/wix/aaeq-windows-x64.msi
+        run: cargo wix --nocapture --output target/wix/aaeq-windows-x64.msi -p apps/desktop
 
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
