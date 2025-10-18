@@ -705,6 +705,7 @@ pub struct DspView {
     pub custom_presets: Vec<String>, // Custom EQ presets saved by user
     pub pre_eq_meter: crate::meter::MeterState, // Pre-EQ audio levels
     pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
+    pub audio_output_collapsed: bool, // Track collapse state of Audio Output section
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -775,6 +776,7 @@ impl Default for DspView {
             custom_presets: vec![],
             pre_eq_meter: crate::meter::MeterState::default(),
             post_eq_meter: crate::meter::MeterState::default(),
+            audio_output_collapsed: false, // Start expanded by default
         }
     }
 }
@@ -785,7 +787,51 @@ impl DspView {
 
         ScrollArea::vertical().show(ui, |ui| {
         ui.group(|ui| {
-            ui.heading("Audio Output (DSP)");
+            // Collapsible header with streaming controls
+            ui.horizontal(|ui| {
+                // Expand/collapse button - using text-based arrows for better Linux compatibility
+                let arrow = if self.audio_output_collapsed { "▶" } else { "▽" };
+                if ui.button(arrow).clicked() {
+                    self.audio_output_collapsed = !self.audio_output_collapsed;
+                    // Request window resize after collapse/expand
+                    ui.ctx().request_repaint();
+                }
+
+                ui.heading("Audio Output (DSP)");
+
+                ui.add_space(10.0);
+
+                // Start/Stop controls (always visible) - larger button
+                if !self.is_streaming {
+                    if ui.add_sized([180.0, 30.0], egui::Button::new("▶ Start Streaming")).clicked() {
+                        action = Some(DspAction::StartStreaming);
+                    }
+                } else {
+                    if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
+                        action = Some(DspAction::StopStreaming);
+                    }
+                }
+
+                // Status indicator with colored text (better Linux compatibility than emoji)
+                if self.is_streaming {
+                    ui.label(
+                        egui::RichText::new("● STREAMING")
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(50, 205, 50)) // Lime green
+                            .strong()
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("● STOPPED")
+                            .size(14.0)
+                            .color(egui::Color32::from_rgb(220, 20, 60)) // Crimson red
+                            .strong()
+                    );
+                }
+            });
+
+            // Only show details when not collapsed
+            if !self.audio_output_collapsed {
             ui.separator();
 
             // Sink type selector
@@ -1087,25 +1133,6 @@ impl DspView {
             ui.add_space(10.0);
             ui.separator();
 
-            // Start/Stop controls
-            ui.horizontal(|ui| {
-                if !self.is_streaming {
-                    if ui.button("▶ Start Streaming").clicked() {
-                        action = Some(DspAction::StartStreaming);
-                    }
-                } else {
-                    if ui.button("⏹ Stop Streaming").clicked() {
-                        action = Some(DspAction::StopStreaming);
-                    }
-                }
-
-                if self.is_streaming {
-                    ui.label("🔴 Streaming");
-                } else {
-                    ui.label("⚪ Stopped");
-                }
-            });
-
             // Stream status display
             if let Some(status) = &self.stream_status {
                 ui.add_space(10.0);
@@ -1133,6 +1160,15 @@ impl DspView {
                 });
             }
 
+            ui.add_space(5.0);
+
+            // Test controls
+            if ui.button("🔊 Test Tone").on_hover_text("Play a 1kHz test tone for 2 seconds").clicked() {
+                action = Some(DspAction::PlayTestTone);
+            }
+            } // End of !audio_output_collapsed conditional
+
+            // Audio visualization and meters are always visible (outside collapsed section)
             ui.add_space(5.0);
 
             // Audio visualization toggle
@@ -1194,13 +1230,6 @@ impl DspView {
                         }
                     });
                 });
-            }
-
-            ui.add_space(5.0);
-
-            // Test controls
-            if ui.button("🔊 Test Tone").on_hover_text("Play a 1kHz test tone for 2 seconds").clicked() {
-                action = Some(DspAction::PlayTestTone);
             }
         });
 

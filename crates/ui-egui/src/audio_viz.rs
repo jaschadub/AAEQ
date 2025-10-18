@@ -11,12 +11,20 @@ use egui::{
     lerp, pos2, remap, vec2,
 };
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct AudioVizState {
     pub enabled: bool,
     pub colored: bool,
-    pub audio_buffer: Vec<f32>, // Ring buffer for visualization
+    pub gradient_start: Color32, // Start color of gradient
+    pub gradient_end: Color32,   // End color of gradient
+    pub audio_buffer: Vec<f32>,  // Ring buffer for visualization
     pub buffer_pos: usize,
+}
+
+impl Default for AudioVizState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AudioVizState {
@@ -24,6 +32,8 @@ impl AudioVizState {
         Self {
             enabled: false,
             colored: true,
+            gradient_start: Color32::from_rgb(0, 201, 255),   // Cyan (#00C9FF)
+            gradient_end: Color32::from_rgb(146, 254, 157),   // Green (#92FE9D)
             audio_buffer: vec![0.0; 1024],
             buffer_pos: 0,
         }
@@ -51,7 +61,17 @@ impl AudioVizState {
 
         ui.horizontal(|ui| {
             ui.label("Audio Waveform:");
-            ui.checkbox(&mut self.colored, "Colored");
+            ui.checkbox(&mut self.colored, "Color");
+            if self.colored {
+                ui.label("Start:");
+                ui.color_edit_button_srgba(&mut self.gradient_start);
+                ui.label("End:");
+                ui.color_edit_button_srgba(&mut self.gradient_end);
+                if ui.small_button("↻").on_hover_text("Reset to default colors").clicked() {
+                    self.gradient_start = Color32::from_rgb(0, 201, 255);   // Cyan
+                    self.gradient_end = Color32::from_rgb(146, 254, 157);   // Green
+                }
+            }
         });
 
         Frame::canvas(ui.style()).show(ui, |ui| {
@@ -82,12 +102,10 @@ impl AudioVizState {
             shapes.push(epaint::Shape::line(
                 points,
                 if self.colored {
+                    let color1 = self.gradient_start;
+                    let color2 = self.gradient_end;
                     PathStroke::new_uv(thickness, move |rect, p| {
                         let t = remap(p.x, rect.x_range(), 0.0..=1.0);
-                        // Gradient from cyan to green
-                        let color1 = Color32::from_rgb(0, 201, 255); // Cyan (#00C9FF)
-                        let color2 = Color32::from_rgb(146, 254, 157); // Green (#92FE9D)
-
                         Color32::from_rgb(
                             lerp(color1.r() as f32..=color2.r() as f32, t) as u8,
                             lerp(color1.g() as f32..=color2.g() as f32, t) as u8,
