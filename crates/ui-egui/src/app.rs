@@ -421,6 +421,9 @@ impl AaeqApp {
         // DLNA device cache
         let mut discovered_dlna_devices: Vec<stream_server::sinks::dlna::DlnaDevice> = Vec::new();
 
+        // AirPlay device cache
+        let mut discovered_airplay_devices: Vec<stream_server::sinks::airplay::AirPlayDevice> = Vec::new();
+
         while let Some(cmd) = command_rx.recv().await {
             // Log all commands for debugging profile switching
             if matches!(cmd, AppCommand::ReapplyPresetForCurrentTrack) {
@@ -965,6 +968,10 @@ impl AaeqApp {
 
                             match AirPlaySink::discover(10).await { // 10 second timeout
                                 Ok(devices) => {
+                                    // Cache the discovered AirPlay devices for later use
+                                    discovered_airplay_devices = devices.clone();
+                                    tracing::info!("Cached {} AirPlay device(s)", discovered_airplay_devices.len());
+
                                     let device_names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
                                     tracing::info!("Found {} AirPlay devices", device_names.len());
                                     let _ = response_tx.send(AppResponse::DspDevicesDiscovered(device_names));
@@ -1032,17 +1039,18 @@ impl AaeqApp {
                         SinkType::AirPlay => {
                             use stream_server::AirPlaySink;
 
-                            // Find the AirPlay device by name
-                            let mut sink = AirPlaySink::new();
-                            match sink.set_device_by_name(&device_name, 10).await {
-                                Ok(_) => {
-                                    output_manager.register_sink(Box::new(sink));
-                                    output_manager.select_sink(0, config.clone()).await
-                                        .map_err(|e| format!("Failed to open AirPlay sink: {}", e))
-                                }
-                                Err(e) => {
-                                    Err(format!("Failed to find AirPlay device '{}': {}", device_name, e))
-                                }
+                            // Find the AirPlay device by name from cache
+                            if let Some(device) = discovered_airplay_devices.iter().find(|d| d.name == device_name) {
+                                let mut sink = AirPlaySink::new();
+                                sink.set_device(device.clone());
+                                output_manager.register_sink(Box::new(sink));
+                                output_manager.select_sink(0, config.clone()).await
+                                    .map_err(|e| format!("Failed to open AirPlay sink: {}", e))
+                            } else {
+                                tracing::error!("AirPlay device '{}' not found in cache. Available devices: {:?}",
+                                    device_name,
+                                    discovered_airplay_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
+                                Err(format!("AirPlay device '{}' not found in cache. Please run device discovery first.", device_name))
                             }
                         }
                     };

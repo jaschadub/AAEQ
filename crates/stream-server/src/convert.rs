@@ -109,6 +109,47 @@ pub fn calculate_peak_dbfs(block: AudioBlock<'_>) -> f64 {
     }
 }
 
+/// Check if an audio block is effectively silent (below noise floor threshold)
+/// Returns true if all samples are below the threshold
+pub fn is_silence(block: AudioBlock<'_>, threshold_dbfs: f64) -> bool {
+    let threshold_linear = 10.0_f64.powf(threshold_dbfs / 20.0);
+
+    // Check if all samples are below threshold
+    for &sample in block.frames {
+        if sample.abs() > threshold_linear {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Calculate noise floor of an audio block
+/// Returns the average level of the quietest 10% of samples (in dBFS)
+pub fn calculate_noise_floor_dbfs(block: AudioBlock<'_>) -> f64 {
+    if block.frames.is_empty() {
+        return -std::f64::INFINITY;
+    }
+
+    // Get absolute values and sort
+    let mut abs_samples: Vec<f64> = block.frames.iter().map(|&s| s.abs()).collect();
+    abs_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Take quietest 10% of samples
+    let samples_to_average = (abs_samples.len() / 10).max(1);
+    let noise_samples = &abs_samples[..samples_to_average];
+
+    // Calculate RMS of noise samples
+    let sum_squares: f64 = noise_samples.iter().map(|&s| s * s).sum();
+    let noise_rms = (sum_squares / noise_samples.len() as f64).sqrt();
+
+    if noise_rms > 0.0 {
+        20.0 * noise_rms.log10()
+    } else {
+        -std::f64::INFINITY
+    }
+}
+
 /// Apply a simple soft limiter to prevent clipping
 pub fn apply_soft_limiter(block: AudioBlock<'_>, threshold_db: f64, output: &mut Vec<f64>) {
     let threshold = 10.0_f64.powf(threshold_db / 20.0);
@@ -213,5 +254,40 @@ mod tests {
 
         // Quiet signals should be mostly unchanged
         assert_eq!(output.len(), 4);
+    }
+
+    #[test]
+    fn test_is_silence() {
+        // True silence
+        let frames = vec![0.0; 100];
+        let block = AudioBlock::new(&frames, 48000, 2);
+        assert!(is_silence(block, -60.0));
+
+        // Very quiet signal (below -60 dBFS)
+        let quiet_frames = vec![0.0001; 100]; // ~-80 dBFS
+        let quiet_block = AudioBlock::new(&quiet_frames, 48000, 2);
+        assert!(is_silence(quiet_block, -60.0));
+
+        // Audible signal
+        let audible_frames = vec![0.01; 100]; // ~-40 dBFS
+        let audible_block = AudioBlock::new(&audible_frames, 48000, 2);
+        assert!(!is_silence(audible_block, -60.0));
+    }
+
+    #[test]
+    fn test_calculate_noise_floor() {
+        // Pure silence should have -inf noise floor
+        let frames = vec![0.0; 100];
+        let block = AudioBlock::new(&frames, 48000, 2);
+        assert_eq!(calculate_noise_floor_dbfs(block), -std::f64::INFINITY);
+
+        // Signal with low noise floor
+        let mut noisy_frames = vec![0.0001; 100]; // Quiet noise
+        noisy_frames[50] = 0.5; // One loud sample
+        let noisy_block = AudioBlock::new(&noisy_frames, 48000, 2);
+        let noise_floor = calculate_noise_floor_dbfs(noisy_block);
+
+        // Noise floor should be around -80 dBFS (from the quiet samples)
+        assert!(noise_floor < -70.0 && noise_floor > -100.0);
     }
 }
