@@ -13,9 +13,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 // Windows-specific imports for WASAPI loopback
-// Temporarily disabled due to build issues with wasapi crate
-// #[cfg(target_os = "windows")]
-// use wasapi::*;
+#[cfg(target_os = "windows")]
+use wasapi::*;
 
 /// Input source that captures from system audio (loopback/monitor device)
 pub struct LocalDacInput;
@@ -42,13 +41,12 @@ impl LocalDacInput {
         }
 
         // On Windows, enumerate WASAPI loopback devices (system audio capture)
-        // Temporarily disabled due to build issues with wasapi crate
-        // #[cfg(target_os = "windows")]
-        // {
-        //     if let Ok(loopback_devices) = Self::list_windows_loopback_devices() {
-        //         devices.extend(loopback_devices);
-        //     }
-        // }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(loopback_devices) = Self::list_windows_loopback_devices() {
+                devices.extend(loopback_devices);
+            }
+        }
 
         // Add ALSA-configured capture devices
         // Check if aaeq_monitor or aaeq_capture exists (configured in .asoundrc)
@@ -165,16 +163,15 @@ impl LocalDacInput {
         );
 
         // On Windows, check if this is a loopback device
-        // Temporarily disabled due to build issues with wasapi crate
-        // #[cfg(target_os = "windows")]
-        // {
-        //     if let Some(ref name) = device_name {
-        //         if name.contains("(Loopback)") {
-        //             info!("Detected Windows WASAPI loopback device, using WASAPI directly");
-        //             return Self::start_wasapi_loopback_capture(name, cfg, tx);
-        //         }
-        //     }
-        // }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ref name) = device_name {
+                if name.contains("(Loopback)") {
+                    info!("Detected Windows WASAPI loopback device, using WASAPI directly");
+                    return Self::start_wasapi_loopback_capture(name, cfg, tx);
+                }
+            }
+        }
 
         let host = cpal::default_host();
 
@@ -458,8 +455,6 @@ impl LocalDacInput {
     }
 
     // Windows-specific: List WASAPI loopback devices (system audio capture)
-    // Temporarily disabled due to build issues with wasapi crate
-    /*
     #[cfg(target_os = "windows")]
     fn list_windows_loopback_devices() -> Result<Vec<String>> {
         let mut loopback_devices = Vec::new();
@@ -705,7 +700,6 @@ impl LocalDacInput {
 
         Ok(stop_tx)
     }
-    */
 }
 
 #[cfg(test)]

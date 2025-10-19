@@ -45,6 +45,6 @@ sha2 = "0.10"
 aes = "0.8"
 cbc = "0.1"
 
-# Windows WASAPI support temporarily disabled due to build issues
-# [target.'cfg(target_os = "windows")'.dependencies]
-# wasapi = "0.13"
+# Windows WASAPI support for loopback audio capture
+[target.'cfg(target_os = "windows")'.dependencies]
+wasapi = "0.13"

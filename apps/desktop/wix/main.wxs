@@ -123,6 +123,8 @@
         Value='LaunchApplication'>WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
     </UI>
 
+    <WixVariable Id='WixUILicenseRtf' Value='License.rtf' />
+
     <Property Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' Value='Launch AAEQ' />
     <Property Id='WixShellExecTarget' Value='[#AaeqEXE]' />
     <CustomAction Id='LaunchApplication'

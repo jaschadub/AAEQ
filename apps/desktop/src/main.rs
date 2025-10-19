@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use aaeq_ui_egui::AaeqApp;
 use anyhow::Result;
 use clap::Parser;
@@ -149,12 +151,19 @@ async fn main() -> Result<()> {
     let window_icon = load_window_icon();
 
     // Run UI
+    // Note: Window behavior across platforms:
+    // - Minimize button: window minimizes to taskbar/dock (normal system behavior)
+    // - Close button (X): window hides to tray (handled in app.rs close_requested)
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 700.0])
             .with_min_inner_size([800.0, 500.0])
             .with_title("AAEQ - Adaptive Audio Equalizer")
-            .with_icon(window_icon),
+            .with_icon(window_icon)
+            .with_taskbar(true)          // Show in taskbar/dock on all platforms
+            .with_decorations(true)      // Enable window controls (minimize, maximize, close)
+            .with_resizable(true)        // Allow window resizing
+            .with_maximized(false),      // Start not maximized
         ..Default::default()
     };
 
@@ -172,19 +181,36 @@ async fn main() -> Result<()> {
                                 tracing::info!("Show window clicked");
                                 *window_visible_clone.lock().unwrap() = true;
 
-                                // On Windows, ensure window is not minimized before showing
+                                // On Windows, we need to be more aggressive to restore the window
                                 #[cfg(target_os = "windows")]
                                 {
+                                    // First, ensure window is not minimized
                                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+
+                                    // Make sure window is visible
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+
+                                    // Bring window to front
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+
+                                    // Give Windows a moment to process the commands
+                                    std::thread::sleep(std::time::Duration::from_millis(10));
+
+                                    // Remove always-on-top so window behaves normally
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+
+                                    // Focus the window
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+
+                                    // Request repaint to ensure UI updates
+                                    ctx.request_repaint();
                                 }
 
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-
-                                // Additional Windows-specific fix: Request repaint to ensure window updates
-                                #[cfg(target_os = "windows")]
+                                // On other platforms, simpler approach works
+                                #[cfg(not(target_os = "windows"))]
                                 {
-                                    ctx.request_repaint();
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                                 }
                             }
                             id if id == hide_id => {
