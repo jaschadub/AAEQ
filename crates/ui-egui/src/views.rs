@@ -873,8 +873,10 @@ impl Default for DspView {
 }
 
 impl DspView {
-    pub fn show(&mut self, ui: &mut Ui) -> Option<DspAction> {
+    pub fn show(&mut self, ui: &mut Ui, theme: &crate::theme::Theme) -> Option<DspAction> {
         let mut action = None;
+        let meter_colors = theme.meter_colors();
+        let spectrum_colors = theme.spectrum_colors();
 
         ScrollArea::vertical().show(ui, |ui| {
         ui.group(|ui| {
@@ -1299,7 +1301,7 @@ impl DspView {
                 ui.separator();
                 match self.viz_mode {
                     VisualizationMode::Waveform => self.audio_viz.show(ui),
-                    VisualizationMode::Spectrum => self.spectrum_analyzer.show(ui),
+                    VisualizationMode::Spectrum => self.spectrum_analyzer.show(ui, &spectrum_colors),
                 }
             }
 
@@ -1337,7 +1339,7 @@ impl DspView {
                         );
                         if ui.is_rect_visible(meter_rect) {
                             let painter = ui.painter_at(meter_rect);
-                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.pre_eq_meter);
+                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.pre_eq_meter, &meter_colors);
                         }
                     });
 
@@ -1352,7 +1354,7 @@ impl DspView {
                         );
                         if ui.is_rect_visible(meter_rect) {
                             let painter = ui.painter_at(meter_rect);
-                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.post_eq_meter);
+                            crate::meter::draw_mc_style_meter(ui, meter_rect, &painter, &self.post_eq_meter, &meter_colors);
                         }
                     });
                 });

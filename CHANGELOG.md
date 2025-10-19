@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2025-10-19
+
+### Added
+
+#### UI/UX Improvements 🎨
+- **Spectrum Analyzer**: New real-time spectrum analyzer visualization mode
+  - FFT-based frequency analysis with customizable bar display
+  - Toggle between Waveform and Spectrum visualization modes
+  - Theme-aware colors for bars and frequency labels
+- **Theme System**: Multiple color themes for the entire application
+  - Dark, Light, Nord, Solarized Dark, Gruvbox, and Dracula themes
+  - Theme selection persisted in database
+  - Coordinated colors for meters, spectrum analyzer, and UI elements
+- **Settings Tab**: New Settings tab with enhanced functionality
+  - Theme selector with preview
+  - Database backup/restore management
+  - About section with version, author (with clickable links), license, and project URL
+- **Audio Level Meters**: Pre/Post-EQ audio meters with ballistics
+  - MC-style meters with peak hold and smooth decay
+  - Toggle visibility to save screen space
+  - Theme-aware color gradients
+
+#### Audio Processing
+- **Improved Audio Pipeline**: Enhanced DSP processing with better metrics
+  - Separate pre-EQ and post-EQ audio metering
+  - Better visualization of audio processing chain
+
+### Fixed
+
+#### Audio Quality 🐛
+- **Local DAC Hissing**: Fixed audio quality issues with local DAC output
+  - Resolved noise/hissing artifacts during playback
+- **AirPlay Compatibility**: Improved AirPlay device compatibility and stability
+
+### Changed
+
+#### UI Enhancements
+- **Collapsible Audio Output**: DSP Server audio controls can be collapsed
+  - Reduces clutter when not actively configuring
+  - Window automatically resizes based on visible elements
+- **Improved Spectrum Display**: Better frequency labeling and bar spacing
+- **Enhanced Visual Feedback**: Better loading states and status indicators
+
+### Technical Details
+
+#### New Modules
+- `crates/ui-egui/src/theme.rs`: Theme system with multiple color schemes
+- `crates/ui-egui/src/spectrum_analyzer.rs`: Real-time FFT spectrum analysis
+- `crates/ui-egui/src/meter.rs`: Professional audio level meters
+
+#### Dependencies
+- Enhanced audio visualization capabilities
+- Improved DSP processing pipeline
+
 ## [0.4.1] - 2025-10-17
 
 ### Added
@@ -174,7 +228,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jaschadub/AAEQ/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jaschadub/AAEQ/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jaschadub/AAEQ/compare/v0.1.4...v0.4.0
 [0.1.4]: https://github.com/jaschadub/AAEQ/compare/v0.1.0...v0.1.4

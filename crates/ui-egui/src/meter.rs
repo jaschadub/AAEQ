@@ -1,6 +1,7 @@
 /// Professional audio metering module with analog-style VU/dBFS displays
 use egui::{Color32, Painter, Pos2, Rect, Rounding, Stroke, Ui};
 use std::time::Instant;
+use crate::theme::MeterColors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MeterScale {
@@ -103,14 +104,14 @@ impl MeterState {
 }
 
 /// Draw MC-style analog meter with arc display
-pub fn draw_mc_style_meter(_ui: &mut Ui, rect: Rect, painter: &Painter, state: &MeterState) {
-    // Enhanced palette with richer colors
-    let background = Color32::from_rgb(15, 25, 35);
-    let border = Color32::from_rgb(50, 120, 180);
-    let needle = Color32::from_rgb(255, 220, 100);  // Brighter gold for needle
-    let peak_hold = Color32::from_rgb(255, 100, 100);  // Red for peak hold
-    let ticks = Color32::from_rgb(150, 180, 210);
-    let label_color = Color32::from_rgb(200, 220, 240);
+pub fn draw_mc_style_meter(_ui: &mut Ui, rect: Rect, painter: &Painter, state: &MeterState, colors: &MeterColors) {
+    // Use theme colors
+    let background = colors.background;
+    let border = colors.border;
+    let needle = colors.needle;
+    let peak_hold = colors.peak_hold;
+    let ticks = colors.ticks;
+    let label_color = colors.labels;
 
     // background with gradient effect
     painter.rect_filled(rect, Rounding::same(10.0), background);

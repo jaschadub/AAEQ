@@ -200,3 +200,111 @@ impl Default for Theme {
         Theme::Dark
     }
 }
+
+/// Color palette for meters (Pre/Post EQ level gauges)
+pub struct MeterColors {
+    pub background: Color32,
+    pub border: Color32,
+    pub needle: Color32,
+    pub peak_hold: Color32,
+    pub ticks: Color32,
+    pub labels: Color32,
+}
+
+/// Color palette for spectrum analyzer
+pub struct SpectrumColors {
+    pub background: Color32,
+    pub grid: Color32,
+    pub bars: Color32,
+    pub peak_caps: Color32,
+    pub text: Color32,
+}
+
+impl Theme {
+    /// Get meter colors for this theme
+    pub fn meter_colors(&self) -> MeterColors {
+        match self {
+            Theme::Dark => MeterColors {
+                background: Color32::from_rgb(15, 25, 35),
+                border: Color32::from_rgb(50, 120, 180),
+                needle: Color32::from_rgb(255, 220, 100),
+                peak_hold: Color32::from_rgb(255, 100, 100),
+                ticks: Color32::from_rgb(150, 180, 210),
+                labels: Color32::from_rgb(200, 220, 240),
+            },
+            Theme::Light => MeterColors {
+                background: Color32::from_rgb(245, 245, 250),
+                border: Color32::from_rgb(100, 130, 160),
+                needle: Color32::from_rgb(180, 120, 0),
+                peak_hold: Color32::from_rgb(220, 50, 50),
+                ticks: Color32::from_rgb(80, 100, 120),
+                labels: Color32::from_rgb(50, 50, 60),
+            },
+            Theme::WinAmp => MeterColors {
+                background: Color32::from_rgb(20, 20, 20),
+                border: Color32::from_rgb(0, 255, 0),
+                needle: Color32::from_rgb(0, 255, 255),
+                peak_hold: Color32::from_rgb(255, 255, 0),
+                ticks: Color32::from_rgb(0, 200, 0),
+                labels: Color32::from_rgb(0, 240, 0),
+            },
+            Theme::Vintage => MeterColors {
+                background: Color32::from_rgb(25, 20, 15),
+                border: Color32::from_rgb(218, 165, 32),
+                needle: Color32::from_rgb(255, 200, 100),
+                peak_hold: Color32::from_rgb(255, 100, 50),
+                ticks: Color32::from_rgb(200, 150, 100),
+                labels: Color32::from_rgb(245, 225, 195),
+            },
+            Theme::Studio => MeterColors {
+                background: Color32::from_rgb(15, 15, 18),
+                border: Color32::from_rgb(100, 150, 255),
+                needle: Color32::from_rgb(180, 220, 255),
+                peak_hold: Color32::from_rgb(255, 120, 120),
+                ticks: Color32::from_rgb(150, 180, 220),
+                labels: Color32::from_rgb(220, 220, 225),
+            },
+        }
+    }
+
+    /// Get spectrum analyzer colors for this theme
+    pub fn spectrum_colors(&self) -> SpectrumColors {
+        match self {
+            Theme::Dark => SpectrumColors {
+                background: Color32::from_rgb(15, 15, 20),
+                grid: Color32::from_gray(40),
+                bars: Color32::from_rgb(0, 200, 100),
+                peak_caps: Color32::from_rgb(255, 220, 0),
+                text: Color32::from_gray(180),
+            },
+            Theme::Light => SpectrumColors {
+                background: Color32::from_rgb(245, 245, 250),
+                grid: Color32::from_gray(200),
+                bars: Color32::from_rgb(0, 180, 90),
+                peak_caps: Color32::from_rgb(230, 180, 0),
+                text: Color32::from_gray(80),
+            },
+            Theme::WinAmp => SpectrumColors {
+                background: Color32::from_rgb(20, 20, 20),
+                grid: Color32::from_rgb(0, 80, 0),
+                bars: Color32::from_rgb(0, 255, 0),
+                peak_caps: Color32::from_rgb(0, 255, 255),
+                text: Color32::from_rgb(0, 240, 0),
+            },
+            Theme::Vintage => SpectrumColors {
+                background: Color32::from_rgb(25, 20, 15),
+                grid: Color32::from_rgb(80, 65, 50),
+                bars: Color32::from_rgb(255, 140, 60),
+                peak_caps: Color32::from_rgb(255, 200, 100),
+                text: Color32::from_rgb(245, 225, 195),
+            },
+            Theme::Studio => SpectrumColors {
+                background: Color32::from_rgb(15, 15, 18),
+                grid: Color32::from_rgb(45, 45, 50),
+                bars: Color32::from_rgb(100, 150, 255),
+                peak_caps: Color32::from_rgb(180, 220, 255),
+                text: Color32::from_rgb(220, 220, 225),
+            },
+        }
+    }
+}

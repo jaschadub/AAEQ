@@ -8,10 +8,10 @@
 
 use egui::{pos2, vec2, Color32, Rect, Ui};
 use rustfft::{FftPlanner, num_complex::Complex};
+use crate::theme::SpectrumColors;
 
-/// Frequency bands - more bands for fuller display (1/6-octave spacing)
+/// Frequency bands - starting at 63Hz where typical music content begins (1/6-octave spacing)
 const STANDARD_FREQS: &[f32] = &[
-    20.0, 22.4, 25.0, 28.0, 31.5, 35.5, 40.0, 45.0, 50.0, 56.0,
     63.0, 71.0, 80.0, 90.0, 100.0, 112.0, 125.0, 140.0, 160.0, 180.0,
     200.0, 224.0, 250.0, 280.0, 315.0, 355.0, 400.0, 450.0, 500.0, 560.0,
     630.0, 710.0, 800.0, 900.0, 1000.0, 1120.0, 1250.0, 1400.0, 1600.0, 1800.0,
@@ -145,9 +145,15 @@ impl SpectrumAnalyzerState {
 
             if count > 0 {
                 let avg_mag = sum_mag / count as f32;
+
+                // Apply window compensation (Hann window reduces amplitude by ~0.5)
+                // and scale appropriately for display
+                let normalized_mag = avg_mag * 2.0;
+
                 // Convert to dBFS (reference: 1.0 = 0 dBFS)
-                let db = if avg_mag > 1e-10 {
-                    20.0 * avg_mag.log10()
+                // Apply -3 dB offset to give headroom and prevent constant pegging
+                let db = if normalized_mag > 1e-10 {
+                    20.0 * normalized_mag.log10() - 3.0
                 } else {
                     self.db_floor
                 };
@@ -187,7 +193,7 @@ impl SpectrumAnalyzerState {
     }
 
     /// Render the spectrum analyzer
-    pub fn show(&mut self, ui: &mut Ui) {
+    pub fn show(&mut self, ui: &mut Ui, colors: &SpectrumColors) {
         if !self.enabled {
             return;
         }
@@ -203,38 +209,7 @@ impl SpectrumAnalyzerState {
             let desired_size = ui.available_width() * vec2(1.0, 0.35);
             let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
 
-            // Theme-aware colors
-            let bg = if ui.visuals().dark_mode {
-                Color32::from_rgb(15, 15, 20)
-            } else {
-                Color32::from_rgb(245, 245, 250)
-            };
-
-            let grid = if ui.visuals().dark_mode {
-                Color32::from_gray(40)
-            } else {
-                Color32::from_gray(200)
-            };
-
-            let fill = if ui.visuals().dark_mode {
-                Color32::from_rgb(0, 200, 100)  // Green
-            } else {
-                Color32::from_rgb(0, 180, 90)
-            };
-
-            let peak_color = if ui.visuals().dark_mode {
-                Color32::from_rgb(255, 220, 0)  // Yellow
-            } else {
-                Color32::from_rgb(230, 180, 0)
-            };
-
-            let text_color = if ui.visuals().dark_mode {
-                Color32::from_gray(180)
-            } else {
-                Color32::from_gray(80)
-            };
-
-            self.paint(ui, rect, bg, grid, fill, peak_color, text_color);
+            self.paint(ui, rect, colors.background, colors.grid, colors.bars, colors.peak_caps, colors.text);
         });
     }
 
@@ -250,9 +225,12 @@ impl SpectrumAnalyzerState {
             return;
         }
 
-        let w = rect.width();
+        // Add horizontal padding for labels (30px on each side for dB scale numbers)
+        let h_padding = 30.0;
+        let w = rect.width() - (h_padding * 2.0);
         let h = rect.height();
-        let left = rect.left();
+        let left = rect.left() + h_padding;
+        let right = rect.right() - h_padding;
         let bottom = rect.bottom();
 
         // Helper: map dB to y coordinate
@@ -262,31 +240,31 @@ impl SpectrumAnalyzerState {
         };
 
         // Pre-calculate log-scale frequency range for bar positioning
-        let log_min = self.freqs_hz.first().copied().unwrap_or(20.0).ln();
+        let log_min = self.freqs_hz.first().copied().unwrap_or(63.0).ln();
         let log_max = self.freqs_hz.last().copied().unwrap_or(20_000.0).ln();
 
         // Draw dB grid lines
         for db in ((self.db_floor as i32)..=(self.db_ceil as i32)).step_by(10) {
             let y = y_for_db(db as f32);
             painter.line_segment(
-                [pos2(left, y), pos2(rect.right(), y)],
+                [pos2(left, y), pos2(right, y)],
                 egui::Stroke::new(0.5, grid),
             );
 
-            // dB labels
+            // dB labels - centered on grid lines for better visibility
             let label = format!("{db}");
             painter.text(
-                pos2(rect.left() + 4.0, y - 8.0),
-                egui::Align2::LEFT_TOP,
+                pos2(rect.left() + 6.0, y),
+                egui::Align2::LEFT_CENTER,
                 &label,
-                egui::FontId::proportional(10.0),
+                egui::FontId::proportional(11.0),
                 text_color,
             );
             painter.text(
-                pos2(rect.right() - 4.0, y - 8.0),
-                egui::Align2::RIGHT_TOP,
+                pos2(rect.right() - 6.0, y),
+                egui::Align2::RIGHT_CENTER,
                 &label,
-                egui::FontId::proportional(10.0),
+                egui::FontId::proportional(11.0),
                 text_color,
             );
         }
@@ -312,7 +290,7 @@ impl SpectrumAnalyzerState {
             let x1 = if i < n - 1 {
                 (x_positions[i] + x_positions[i + 1]) / 2.0
             } else {
-                rect.right()  // Last bar extends to right edge
+                right  // Last bar extends to padded right edge
             };
 
             // Add tiny gap between bars for visual separation
@@ -341,8 +319,8 @@ impl SpectrumAnalyzerState {
             painter.rect_filled(cap_rect, 0.0, peak_color);
         }
 
-        // Frequency grid lines and labels
-        for &f in &[20.0_f32, 31.5, 50.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0,
+        // Frequency grid lines and labels (starting at 63Hz)
+        for &f in &[63.0_f32, 100.0, 160.0, 250.0, 400.0, 630.0,
                     1_000.0, 1_600.0, 2_500.0, 4_000.0, 6_300.0, 10_000.0, 16_000.0, 20_000.0] {
             let fx = f.ln();
             if !(log_min..=log_max).contains(&fx) {
@@ -359,10 +337,10 @@ impl SpectrumAnalyzerState {
 
             // Frequency label
             painter.text(
-                pos2(x, rect.bottom() - 2.0),
+                pos2(x, rect.bottom() - 4.0),
                 egui::Align2::CENTER_BOTTOM,
                 pretty_hz(f),
-                egui::FontId::proportional(9.0),
+                egui::FontId::proportional(10.0),
                 text_color,
             );
         }
