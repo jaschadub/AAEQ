@@ -6,14 +6,17 @@
 /// - Peak-hold bars
 /// - Theme-aware colors
 
-use egui::{pos2, vec2, Color32, Rect, Ui, epaint::{Mesh, Vertex, Shape}};
+use egui::{pos2, vec2, Color32, Rect, Ui};
 use rustfft::{FftPlanner, num_complex::Complex};
 
-/// Standard 1/3-octave center frequencies (Hz)
+/// Frequency bands - more bands for fuller display (1/6-octave spacing)
 const STANDARD_FREQS: &[f32] = &[
-    20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0,
-    200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0,
-    2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0
+    20.0, 22.4, 25.0, 28.0, 31.5, 35.5, 40.0, 45.0, 50.0, 56.0,
+    63.0, 71.0, 80.0, 90.0, 100.0, 112.0, 125.0, 140.0, 160.0, 180.0,
+    200.0, 224.0, 250.0, 280.0, 315.0, 355.0, 400.0, 450.0, 500.0, 560.0,
+    630.0, 710.0, 800.0, 900.0, 1000.0, 1120.0, 1250.0, 1400.0, 1600.0, 1800.0,
+    2000.0, 2240.0, 2500.0, 2800.0, 3150.0, 3550.0, 4000.0, 4500.0, 5000.0, 5600.0,
+    6300.0, 7100.0, 8000.0, 9000.0, 10000.0, 11200.0, 12500.0, 14000.0, 16000.0, 18000.0, 20000.0
 ];
 
 #[derive(Clone)]
@@ -25,6 +28,7 @@ pub struct SpectrumAnalyzerState {
     pub db_floor: f32,              // Bottom of dB scale (e.g., -50)
     pub db_ceil: f32,               // Top of dB scale (e.g., +10)
     pub peak_decay_db: f32,         // Peak hold decay rate (dB per frame)
+    pub band_decay_db: f32,         // Band level decay rate when no signal (dB per frame)
 
     // FFT state
     fft_buffer: Vec<Complex<f32>>,
@@ -32,6 +36,7 @@ pub struct SpectrumAnalyzerState {
     accumulator_pos: usize,          // Current write position in ring buffer
     window: Vec<f32>,                // Hann window
     sample_rate: u32,
+    last_sample_time: std::time::Instant, // Track when samples were last received
 }
 
 impl Default for SpectrumAnalyzerState {
@@ -65,11 +70,13 @@ impl SpectrumAnalyzerState {
             db_floor: -50.0,
             db_ceil: 10.0,
             peak_decay_db: 0.6,
+            band_decay_db: 1.5,  // Faster decay for band levels when no signal
             fft_buffer: vec![Complex::new(0.0, 0.0); fft_size],
             sample_accumulator: vec![0.0; fft_size],
             accumulator_pos: 0,
             window,
             sample_rate,
+            last_sample_time: std::time::Instant::now(),
         }
     }
 
@@ -82,6 +89,9 @@ impl SpectrumAnalyzerState {
         if samples.is_empty() {
             return;
         }
+
+        // Update last sample time
+        self.last_sample_time = std::time::Instant::now();
 
         let fft_size = self.sample_accumulator.len();
 
@@ -157,11 +167,33 @@ impl SpectrumAnalyzerState {
         }
     }
 
+    /// Update meter ballistics - decay bars when no signal
+    pub fn tick(&mut self) {
+        if !self.enabled {
+            return;
+        }
+
+        // Check if we haven't received samples recently (more than 100ms ago)
+        let time_since_samples = self.last_sample_time.elapsed();
+        if time_since_samples.as_millis() > 100 {
+            // Decay all bands towards floor
+            for band_idx in 0..self.bands_db.len() {
+                self.bands_db[band_idx] = (self.bands_db[band_idx] - self.band_decay_db).max(self.db_floor);
+
+                // Also decay peak holds
+                self.peak_db[band_idx] = (self.peak_db[band_idx] - self.peak_decay_db).max(self.db_floor);
+            }
+        }
+    }
+
     /// Render the spectrum analyzer
     pub fn show(&mut self, ui: &mut Ui) {
         if !self.enabled {
             return;
         }
+
+        // Update ballistics (decay when no signal)
+        self.tick();
 
         ui.label("Spectrum Analyzer:");
 
@@ -268,16 +300,7 @@ impl SpectrumAnalyzerState {
             })
             .collect();
 
-        // Debug: log first bar dimensions
-        if n > 0 {
-            tracing::debug!("Rect: left={}, right={}, bottom={}, top={}, width={}, height={}",
-                          rect.left(), rect.right(), rect.bottom(), rect.top(), rect.width(), rect.height());
-            tracing::debug!("First x_pos: {}, Second x_pos: {}", x_positions[0], x_positions.get(1).copied().unwrap_or(0.0));
-        }
-
-        // Bars as a single mesh (fast rendering)
-        let mut mesh = Mesh::default();
-
+        // Draw bars using painter.rect_filled (more reliable than mesh)
         for (i, (&db, &pdb)) in self.bands_db.iter().zip(self.peak_db.iter()).enumerate() {
             // Calculate bar edges as midpoints between adjacent bands
             let x0 = if i > 0 {
@@ -292,31 +315,31 @@ impl SpectrumAnalyzerState {
                 rect.right()  // Last bar extends to right edge
             };
 
-            // Add tiny gap between bars for visual separation (0.5px on each side)
+            // Add tiny gap between bars for visual separation
             let gap = 0.5;
             let bar_x0 = x0 + gap;
             let bar_x1 = x1 - gap;
 
             // RMS bar - always draw from bottom to current level
-            let bar_bottom = y_for_db(self.db_floor);  // This should be rect.bottom()
+            let bar_bottom = y_for_db(self.db_floor);
             let bar_top = y_for_db(db);
 
-            // Draw bar (bars go upward from bottom)
-            add_rect_to_mesh(&mut mesh, bar_x0, bar_top, bar_x1, bar_bottom, fill);
-
-            // Debug first few bars
-            if i < 3 {
-                tracing::debug!("Bar {}: x0={:.1}, x1={:.1}, width={:.1}, y_top={:.1}, y_bottom={:.1}, db={:.1}",
-                              i, bar_x0, bar_x1, bar_x1 - bar_x0, bar_top, bar_bottom, db);
-            }
+            // Draw filled bar rectangle
+            let bar_rect = Rect::from_min_max(
+                pos2(bar_x0, bar_top),
+                pos2(bar_x1, bar_bottom),
+            );
+            painter.rect_filled(bar_rect, 0.0, fill);
 
             // Peak-hold cap
             let py = y_for_db(pdb);
             let cap_h = (h * 0.01).max(2.0);
-            add_rect_to_mesh(&mut mesh, bar_x0, py - cap_h, bar_x1, py, peak_color);
+            let cap_rect = Rect::from_min_max(
+                pos2(bar_x0, py - cap_h),
+                pos2(bar_x1, py),
+            );
+            painter.rect_filled(cap_rect, 0.0, peak_color);
         }
-
-        painter.add(Shape::mesh(mesh));
 
         // Frequency grid lines and labels
         for &f in &[20.0_f32, 31.5, 50.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0,
@@ -344,17 +367,6 @@ impl SpectrumAnalyzerState {
             );
         }
     }
-}
-
-fn add_rect_to_mesh(mesh: &mut Mesh, x0: f32, y0: f32, x1: f32, y1: f32, col: Color32) {
-    let idx = mesh.vertices.len() as u32;
-    mesh.vertices.extend_from_slice(&[
-        Vertex { pos: pos2(x0, y0), uv: egui::pos2(0.0, 0.0), color: col },
-        Vertex { pos: pos2(x1, y0), uv: egui::pos2(1.0, 0.0), color: col },
-        Vertex { pos: pos2(x1, y1), uv: egui::pos2(1.0, 1.0), color: col },
-        Vertex { pos: pos2(x0, y1), uv: egui::pos2(0.0, 1.0), color: col },
-    ]);
-    mesh.indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
 }
 
 fn pretty_hz(f: f32) -> String {
