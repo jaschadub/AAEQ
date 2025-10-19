@@ -279,6 +279,28 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added theme column to app_settings");
     }
 
+    // Migration 009: Add auto_reconnect to app_settings
+    let auto_reconnect_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('app_settings') WHERE name = 'auto_reconnect'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !auto_reconnect_column_exists {
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN auto_reconnect INTEGER DEFAULT 1")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added auto_reconnect column to app_settings");
+
+        // Update existing rows to have auto_reconnect = 1 (enabled by default)
+        // The DEFAULT in ALTER TABLE only applies to new rows, not existing ones
+        sqlx::query("UPDATE app_settings SET auto_reconnect = 1 WHERE auto_reconnect IS NULL")
+            .execute(pool)
+            .await?;
+        tracing::info!("Set auto_reconnect = 1 for existing app_settings rows");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

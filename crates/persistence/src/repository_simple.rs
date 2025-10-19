@@ -475,6 +475,48 @@ impl AppSettingsRepository {
 
         Ok(())
     }
+
+    pub async fn get_auto_reconnect(&self) -> Result<Option<bool>> {
+        let row = sqlx::query(
+            "SELECT auto_reconnect FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let value: Option<i32> = r.get(0);
+            value.map(|v| v != 0)
+        }))
+    }
+
+    pub async fn set_auto_reconnect(&self, auto_reconnect: bool) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let value = if auto_reconnect { 1 } else { 0 };
+
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET auto_reconnect = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, auto_reconnect, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(value)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Repository for tracking last applied state

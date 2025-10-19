@@ -254,6 +254,10 @@ impl NowPlayingView {
             }
         }
 
+        // Wrap entire Now Playing section in a scroll area to prevent buttons from being cut off
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
         ui.group(|ui| {
             ui.heading("Now Playing");
 
@@ -618,6 +622,7 @@ impl NowPlayingView {
                 });
             }
         });
+        }); // End of ScrollArea
 
         action
     }
@@ -1299,6 +1304,24 @@ impl DspView {
             if self.audio_viz.enabled || self.spectrum_analyzer.enabled {
                 ui.add_space(5.0);
                 ui.separator();
+
+                // Show warning for network streaming modes (DLNA/AirPlay)
+                if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("ℹ").color(egui::Color32::from_rgb(100, 149, 237)));
+                        ui.label(
+                            egui::RichText::new("Visualization shows local processing - playback on network device has additional delay")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY)
+                        ).on_hover_text(
+                            "Network devices (DLNA/AirPlay) buffer audio for smooth playback.\n\
+                             The visualization shows what's being processed locally,\n\
+                             which may be ahead of what you hear on the device."
+                        );
+                    });
+                    ui.add_space(3.0);
+                }
+
                 match self.viz_mode {
                     VisualizationMode::Waveform => self.audio_viz.show(ui),
                     VisualizationMode::Spectrum => self.spectrum_analyzer.show(ui, &spectrum_colors),
@@ -1316,6 +1339,19 @@ impl DspView {
                 ui.add_space(10.0);
                 ui.separator();
                 ui.label("Audio Levels:");
+
+                // Show warning for network streaming modes (DLNA/AirPlay)
+                if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("ℹ").color(egui::Color32::from_rgb(100, 149, 237)));
+                        ui.label(
+                            egui::RichText::new("Meters show local processing - playback on network device has additional delay")
+                                .size(10.0)
+                                .color(egui::Color32::GRAY)
+                        );
+                    });
+                    ui.add_space(3.0);
+                }
 
                 // Update meter ballistics (only when streaming)
                 if self.is_streaming {

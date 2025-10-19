@@ -64,7 +64,7 @@ enum AppCommand {
 
 /// Responses from async worker to UI
 enum AppResponse {
-    Connected(String),
+    Connected(String, Arc<WiimController>), // (host, device)
     ConnectionFailed(String),
     Disconnected(String), // Device went offline during operation
     DevicesDiscovered(Vec<(String, String)>), // Vec<(name, host)>
@@ -245,12 +245,38 @@ impl AaeqApp {
         // Load mappings from database for the active profile
         self.reload_mappings().await?;
 
+        // Load auto-reconnect setting first (we need this before deciding to connect)
+        match settings_repo.get_auto_reconnect().await {
+            Ok(Some(auto_reconnect)) => {
+                tracing::info!("Loading saved auto-reconnect setting: {}", auto_reconnect);
+                self.auto_reconnect = auto_reconnect;
+            }
+            Ok(None) => {
+                // No setting saved yet, use default (true) and save it
+                tracing::info!("No auto-reconnect setting found, using default: true");
+                self.auto_reconnect = true;
+                if let Err(e) = settings_repo.set_auto_reconnect(true).await {
+                    tracing::error!("Failed to save default auto-reconnect setting: {}", e);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to load auto-reconnect setting: {}, using default: true", e);
+                self.auto_reconnect = true;
+            }
+        }
+
         // Load last connected host from settings
         if let Ok(Some(last_host)) = settings_repo.get_last_connected_host().await {
             tracing::info!("Loading last connected host: {}", last_host);
             self.device_host = last_host.clone();
-            // Try to connect to the last device
-            let _ = self.command_tx.send(AppCommand::ConnectDevice(last_host));
+
+            // Only try to connect if auto-reconnect is enabled
+            if self.auto_reconnect {
+                tracing::info!("Auto-reconnect enabled, connecting to last device: {}", last_host);
+                let _ = self.command_tx.send(AppCommand::ConnectDevice(last_host));
+            } else {
+                tracing::info!("Auto-reconnect disabled, not connecting to last device");
+            }
         }
 
         // Load last input device from settings
@@ -462,7 +488,8 @@ impl AaeqApp {
                     let controller = WiimController::new("WiiM Device", host.clone());
                     if controller.is_online().await {
                         tracing::info!("Connected to device at {}", host);
-                        device = Some(Arc::new(controller));
+                        let device_arc = Arc::new(controller);
+                        device = Some(device_arc.clone());
 
                         // Save the successful connection to settings
                         let settings_repo = AppSettingsRepository::new(pool.clone());
@@ -470,7 +497,7 @@ impl AaeqApp {
                             tracing::error!("Failed to save last connected host: {}", e);
                         }
 
-                        let _ = response_tx.send(AppResponse::Connected(host));
+                        let _ = response_tx.send(AppResponse::Connected(host, device_arc));
                     } else {
                         tracing::warn!("Device at {} is offline", host);
                         let _ = response_tx.send(AppResponse::ConnectionFailed(host));
@@ -1685,9 +1712,11 @@ impl eframe::App for AaeqApp {
         // Apply current theme
         ctx.set_visuals(self.current_theme.to_visuals());
 
-        // Handle window close event - minimize to tray instead of quitting
+        // Handle window close button (X) - hide to tray instead of quitting
+        // Note: This only intercepts the close button (X), not the minimize button.
+        // Minimize button works normally and sends window to taskbar/dock.
         if ctx.input(|i| i.viewport().close_requested()) {
-            tracing::info!("Close requested - minimizing to tray");
+            tracing::info!("Close button clicked - hiding to tray (minimize button still works normally)");
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
@@ -1695,7 +1724,8 @@ impl eframe::App for AaeqApp {
         // Process responses from async worker
         while let Ok(response) = self.response_rx.try_recv() {
             match response {
-                AppResponse::Connected(host) => {
+                AppResponse::Connected(host, device_arc) => {
+                    self.device = Some(device_arc);
                     self.status_message = Some(format!("Connected to {}", host));
                     self.connection_lost_time = None; // Clear reconnect timer
                     self.show_discovery = false; // Close discovery dialog
@@ -2047,6 +2077,18 @@ impl eframe::App for AaeqApp {
                         self.connection_lost_time = None;
                         tracing::info!("Auto-reconnect disabled");
                     }
+
+                    // Save auto-reconnect setting to database
+                    let pool = self.pool.clone();
+                    let auto_reconnect = self.auto_reconnect;
+                    tokio::spawn(async move {
+                        let settings_repo = AppSettingsRepository::new(pool);
+                        if let Err(e) = settings_repo.set_auto_reconnect(auto_reconnect).await {
+                            tracing::error!("Failed to save auto-reconnect setting: {}", e);
+                        } else {
+                            tracing::info!("Saved auto-reconnect setting: {}", auto_reconnect);
+                        }
+                    });
                 }
             });
         });
