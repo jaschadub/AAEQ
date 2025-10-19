@@ -435,7 +435,8 @@ impl OutputSink for DlnaSink {
     }
 
     fn latency_ms(&self) -> u32 {
-        // DLNA typically has higher latency due to network buffering
+        // DLNA typically has higher latency due to network buffering and device buffering
+        // Most DLNA devices buffer 2-4 seconds for network reliability
         if let Some(cfg) = &self.config {
             let buffer_size = {
                 let buffer = self.buffer.lock().unwrap();
@@ -444,8 +445,13 @@ impl OutputSink for DlnaSink {
 
             let bytes_per_sample = cfg.format.bytes_per_sample();
             let samples = buffer_size / (bytes_per_sample * cfg.channels as usize);
-            let ms = (samples as f64 / cfg.sample_rate as f64 * 1000.0) as u32;
-            ms + cfg.buffer_ms // Add configured network buffer
+            let buffer_latency_ms = (samples as f64 / cfg.sample_rate as f64 * 1000.0) as u32;
+
+            // Base DLNA device latency (4 seconds is typical for network devices like WiiM)
+            // DLNA devices buffer heavily for network reliability and multi-room sync
+            // + internal buffer latency + configured buffer
+            let base_dlna_latency = 4000;
+            base_dlna_latency + buffer_latency_ms + cfg.buffer_ms
         } else {
             0
         }

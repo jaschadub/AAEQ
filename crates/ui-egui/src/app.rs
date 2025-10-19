@@ -1468,6 +1468,25 @@ impl AaeqApp {
                                 }
                                 tracing::info!("Buffer pre-filled, starting playback");
 
+                                // Send initial status update immediately for auto-delay detection
+                                {
+                                    let mgr = manager.read().await;
+                                    let latency = mgr.active_sink_latency().unwrap_or(0);
+                                    let stats = mgr.active_sink_stats()
+                                        .cloned()
+                                        .unwrap_or(SinkStats::default());
+
+                                    let status = StreamStatus {
+                                        latency_ms: latency,
+                                        frames_written: frame_count,
+                                        underruns: stats.underruns,
+                                        buffer_fill: stats.buffer_fill,
+                                    };
+
+                                    tracing::info!("Sending initial stream status: latency={} ms", latency);
+                                    let _ = tx.send(AppResponse::DspStreamStatus(status));
+                                }
+
                                 loop {
                                     tokio::select! {
                                         _ = shutdown_rx.recv() => {
@@ -1834,24 +1853,38 @@ impl eframe::App for AaeqApp {
                 AppResponse::DspStreamingStopped => {
                     self.dsp_view.is_streaming = false;
                     self.dsp_view.stream_status = None;
+                    self.dsp_view.clear_buffers(); // Clear visualization buffers when stopping
+                    self.dsp_view.reset_auto_delay(); // Reset auto-detection for next session
                     self.status_message = Some("Streaming stopped".to_string());
                 }
                 AppResponse::DspStreamStatus(status) => {
+                    // Try automatic delay detection on first status update
+                    if self.dsp_view.try_auto_detect_delay(&status) {
+                        tracing::info!("Automatically set visualization delay to {} ms based on stream latency", self.dsp_view.viz_delay_ms);
+                        self.dsp_view.clear_buffers(); // Clear buffers when auto-setting delay
+                    }
                     self.dsp_view.stream_status = Some(status);
                 }
                 AppResponse::DspAudioSamples(samples) => {
-                    // Update visualization with audio samples
-                    self.dsp_view.audio_viz.push_samples(&samples);
-                    // Also process for spectrum analyzer
-                    self.dsp_view.spectrum_analyzer.process_samples(&samples);
+                    // Buffer samples for delayed visualization (for network streaming sync)
+                    self.dsp_view.buffer_samples(samples);
                 }
                 AppResponse::DspAudioMetrics {
                     pre_eq_rms_l, pre_eq_rms_r, pre_eq_peak_l, pre_eq_peak_r,
                     post_eq_rms_l, post_eq_rms_r, post_eq_peak_l, post_eq_peak_r
                 } => {
-                    // Update meter states with audio metrics
-                    self.dsp_view.pre_eq_meter.update_from_block(pre_eq_rms_l, pre_eq_rms_r, pre_eq_peak_l, pre_eq_peak_r);
-                    self.dsp_view.post_eq_meter.update_from_block(post_eq_rms_l, post_eq_rms_r, post_eq_peak_l, post_eq_peak_r);
+                    // Buffer metrics for delayed visualization (for network streaming sync)
+                    let metrics = crate::views::VizMetrics {
+                        pre_eq_rms_l,
+                        pre_eq_rms_r,
+                        pre_eq_peak_l,
+                        pre_eq_peak_r,
+                        post_eq_rms_l,
+                        post_eq_rms_r,
+                        post_eq_peak_l,
+                        post_eq_peak_r,
+                    };
+                    self.dsp_view.buffer_metrics(metrics);
                 }
                 AppResponse::CustomPresetsLoaded(presets) => {
                     self.dsp_view.custom_presets = presets.clone();
@@ -1904,6 +1937,9 @@ impl eframe::App for AaeqApp {
                 }
             }
         }
+
+        // Process buffered visualization data (for network streaming sync)
+        self.dsp_view.process_buffers();
 
         // Poll device periodically (both for WiiM API and DSP streaming)
         if self.last_poll.elapsed() >= self.poll_interval {
@@ -2393,6 +2429,15 @@ impl eframe::App for AaeqApp {
                                     SinkType::AirPlay => {
                                         // AirPlay supports all formats
                                     }
+                                }
+
+                                // Clear visualization buffers when switching sink types
+                                self.dsp_view.clear_buffers();
+                                self.dsp_view.reset_auto_delay(); // Reset auto-detection for new sink type
+
+                                // Reset delay to 0 when switching to Local DAC
+                                if matches!(sink_type, SinkType::LocalDac) {
+                                    self.dsp_view.viz_delay_ms = 0;
                                 }
 
                                 // Automatically discover devices for the new sink type
