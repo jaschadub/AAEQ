@@ -264,6 +264,21 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added profile support with Default and Headphones profiles");
     }
 
+    // Migration 008: Add theme to app_settings
+    let theme_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('app_settings') WHERE name = 'theme'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !theme_column_exists {
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN theme TEXT DEFAULT 'dark'")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added theme column to app_settings");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }
