@@ -15,6 +15,7 @@ use stream_server::{OutputConfig, SampleFormat, LocalDacSink, DlnaSink, OutputMa
 pub enum AppMode {
     EqManagement,
     DspServer,
+    Settings,
 }
 
 /// Operating mode selected at startup - determines how the app functions
@@ -42,6 +43,7 @@ enum AppCommand {
     SaveMapping(Scope, TrackMeta, String, i64), // (scope, track, preset, profile_id)
     UpdateGenre(String, String), // (track_key, genre)
     BackupDatabase(String), // (db_path)
+    RestoreDatabase(String, String), // (backup_zip_path, db_path)
     Poll,
     SaveInputDevice(String), // Save last input device to settings
     SaveOutputDevice(String), // Save last output device to settings
@@ -52,6 +54,7 @@ enum AppCommand {
     LoadPresetCurve(String), // Load EQ curve for a preset (for display)
     ReloadProfiles, // Reload profiles from database
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
+    SaveTheme(String), // Save theme preference to database
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
@@ -70,6 +73,7 @@ enum AppResponse {
     MappingSaved(String),
     TrackUpdated(TrackMeta, Option<String>),
     BackupCreated(String), // (backup_path)
+    DatabaseRestored(String), // (backup_path_used)
     Error(String),
     // DSP Responses
     DspDevicesDiscovered(Vec<String>),
@@ -94,6 +98,7 @@ enum AppResponse {
     PresetCurveLoaded(Option<aaeq_core::EqPreset>), // EQ curve for display
     ProfilesLoaded(Vec<aaeq_core::Profile>), // Reloaded profiles from database
     DspPresetChanged(String), // Preset changed during streaming
+    ThemeSaved, // Theme saved to database
 }
 
 /// Main application state
@@ -135,6 +140,7 @@ pub struct AaeqApp {
 
     /// UI state
     current_mode: AppMode,
+    current_theme: crate::theme::Theme,
     show_eq_editor: bool,
     show_delete_confirmation: bool, // Show delete preset confirmation dialog
     preset_to_delete: Option<String>, // Preset name pending deletion
@@ -196,6 +202,7 @@ impl AaeqApp {
             poll_interval: Duration::from_millis(1000),
             last_track_key: None,
             current_mode: AppMode::EqManagement,
+            current_theme: crate::theme::Theme::default(), // Will be loaded in initialize()
             show_eq_editor: false,
             show_delete_confirmation: false,
             preset_to_delete: None,
@@ -254,6 +261,14 @@ impl AaeqApp {
         if let Ok(Some(last_output)) = settings_repo.get_last_output_device().await {
             tracing::info!("Loading last output device: {}", last_output);
             self.dsp_view.selected_device = Some(last_output);
+        }
+
+        // Load theme from settings
+        if let Ok(Some(theme_str)) = settings_repo.get_theme().await {
+            if let Some(theme) = crate::theme::Theme::from_str(&theme_str) {
+                tracing::info!("Loading saved theme: {}", theme_str);
+                self.current_theme = theme;
+            }
         }
 
         // Trigger device discovery on startup for Local DAC (fast, populates device lists)
@@ -655,6 +670,17 @@ impl AaeqApp {
                     }
                 }
 
+                AppCommand::SaveTheme(theme_str) => {
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_theme(&theme_str).await {
+                        tracing::error!("Failed to save theme: {}", e);
+                        let _ = response_tx.send(AppResponse::Error(format!("Failed to save theme: {}", e)));
+                    } else {
+                        tracing::info!("Saved theme: {}", theme_str);
+                        let _ = response_tx.send(AppResponse::ThemeSaved);
+                    }
+                }
+
                 AppCommand::LoadCustomPresets => {
                     let custom_repo = CustomEqPresetRepository::new(pool.clone());
                     match custom_repo.list_names().await {
@@ -791,6 +817,110 @@ impl AaeqApp {
                         }
                     } else {
                         tracing::warn!("No track available to re-apply preset for");
+                    }
+                }
+
+                AppCommand::RestoreDatabase(backup_zip_path, db_path) => {
+                    use std::fs;
+                    use std::io::{Read, Write};
+
+                    // Step 1: Create a backup of the current database before restoring
+                    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                    let pre_restore_backup = format!("aaeq-pre-restore_{}.zip", timestamp);
+                    let backup_path = std::path::Path::new(&backup_zip_path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join(&pre_restore_backup);
+
+                    // Create pre-restore backup
+                    match fs::copy(&db_path, backup_path.with_extension("db.tmp")) {
+                        Ok(_) => {
+                            let zip_file = match fs::File::create(&backup_path) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to create pre-restore backup: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            let mut zip = zip::ZipWriter::new(zip_file);
+                            let options = zip::write::FileOptions::<()>::default()
+                                .compression_method(zip::CompressionMethod::Deflated)
+                                .compression_level(Some(6));
+
+                            if let Err(e) = zip.start_file("aaeq.db", options) {
+                                let _ = response_tx.send(AppResponse::Error(format!("Failed to start zip file: {}", e)));
+                                continue;
+                            }
+
+                            let db_content = match fs::read(backup_path.with_extension("db.tmp")) {
+                                Ok(content) => content,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to read database: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            if let Err(e) = zip.write_all(&db_content) {
+                                let _ = response_tx.send(AppResponse::Error(format!("Failed to write to zip: {}", e)));
+                                continue;
+                            }
+
+                            if let Err(e) = zip.finish() {
+                                let _ = response_tx.send(AppResponse::Error(format!("Failed to finalize zip: {}", e)));
+                                continue;
+                            }
+
+                            let _ = fs::remove_file(backup_path.with_extension("db.tmp"));
+                            tracing::info!("Pre-restore backup created: {}", backup_path.display());
+
+                            // Step 2: Extract and restore from the backup zip
+                            let backup_file = match fs::File::open(&backup_zip_path) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to open backup file: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            let mut zip_archive = match zip::ZipArchive::new(backup_file) {
+                                Ok(archive) => archive,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to read backup zip: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            // Find and extract the database file
+                            let mut db_file = match zip_archive.by_name("aaeq.db") {
+                                Ok(file) => file,
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Backup file doesn't contain aaeq.db: {}", e)));
+                                    continue;
+                                }
+                            };
+
+                            let mut db_content = Vec::new();
+                            if let Err(e) = db_file.read_to_end(&mut db_content) {
+                                let _ = response_tx.send(AppResponse::Error(format!("Failed to read database from backup: {}", e)));
+                                continue;
+                            }
+
+                            // Write the restored database
+                            match fs::write(&db_path, &db_content) {
+                                Ok(_) => {
+                                    tracing::info!("Database restored from: {}", backup_zip_path);
+                                    let _ = response_tx.send(AppResponse::DatabaseRestored(backup_zip_path.clone()));
+                                }
+                                Err(e) => {
+                                    let _ = response_tx.send(AppResponse::Error(format!("Failed to restore database: {}", e)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create pre-restore backup: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to create pre-restore backup: {}", e)));
+                        }
                     }
                 }
 
@@ -1490,6 +1620,9 @@ impl AaeqApp {
 
 impl eframe::App for AaeqApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply current theme
+        ctx.set_visuals(self.current_theme.to_visuals());
+
         // Handle window close event - minimize to tray instead of quitting
         if ctx.input(|i| i.viewport().close_requested()) {
             tracing::info!("Close requested - minimizing to tray");
@@ -1590,6 +1723,9 @@ impl eframe::App for AaeqApp {
                 AppResponse::BackupCreated(path) => {
                     self.status_message = Some(format!("Backup created: {}", path));
                 }
+                AppResponse::DatabaseRestored(path) => {
+                    self.status_message = Some(format!("Database restored from: {}", path));
+                }
                 AppResponse::Error(msg) => {
                     self.status_message = Some(format!("Error: {}", msg));
                 }
@@ -1668,6 +1804,9 @@ impl eframe::App for AaeqApp {
                     self.status_message = Some(format!("DSP preset changed: {}", preset));
                     // Load the EQ curve for display
                     let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
+                }
+                AppResponse::ThemeSaved => {
+                    self.status_message = Some("Theme saved".to_string());
                 }
             }
         }
@@ -1845,13 +1984,6 @@ impl eframe::App for AaeqApp {
                         tracing::info!("Auto-reconnect disabled");
                     }
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("📦 Backup Database").clicked() {
-                        let db_path = self.db_path.display().to_string();
-                        let _ = self.command_tx.send(AppCommand::BackupDatabase(db_path));
-                    }
-                });
             });
         });
 
@@ -1862,6 +1994,8 @@ impl eframe::App for AaeqApp {
                     .on_hover_text("Manage EQ presets and mappings for WiiM device");
                 ui.selectable_value(&mut self.current_mode, AppMode::DspServer, "DSP Server")
                     .on_hover_text("Stream audio with DSP processing to various outputs");
+                ui.selectable_value(&mut self.current_mode, AppMode::Settings, "Settings")
+                    .on_hover_text("Application settings and preferences");
             });
         });
 
@@ -2337,6 +2471,67 @@ impl eframe::App for AaeqApp {
                             }
                         }
                     }
+                });
+            }
+            AppMode::Settings => {
+                // Settings Mode: Show application settings
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.heading("Settings");
+                    ui.add_space(20.0);
+
+                    // Theme selection
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Theme").strong().size(16.0));
+                        ui.add_space(10.0);
+
+                        egui::ComboBox::new("theme_selector", "")
+                            .selected_text(self.current_theme.display_name())
+                            .show_ui(ui, |ui| {
+                                for theme in crate::theme::Theme::all() {
+                                    if ui.selectable_value(&mut self.current_theme, *theme, theme.display_name()).clicked() {
+                                        tracing::info!("Theme changed to: {:?}", theme);
+                                        // Save theme to database
+                                        let _ = self.command_tx.send(AppCommand::SaveTheme(theme.as_str().to_string()));
+                                    }
+                                }
+                            });
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Database management
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Database Management").strong().size(16.0));
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("📦 Backup Database").clicked() {
+                                let db_path = self.db_path.display().to_string();
+                                let _ = self.command_tx.send(AppCommand::BackupDatabase(db_path));
+                            }
+
+                            if ui.button("📥 Restore Database").clicked() {
+                                // Open file picker for .zip files
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("AAEQ Backup", &["zip"])
+                                    .pick_file()
+                                {
+                                    let backup_path = path.display().to_string();
+                                    let db_path = self.db_path.display().to_string();
+                                    let _ = self.command_tx.send(AppCommand::RestoreDatabase(backup_path, db_path));
+                                }
+                            }
+                        });
+
+                        ui.add_space(5.0);
+                        ui.label("Backup creates a timestamped .zip file.");
+                        ui.label("Restore automatically backs up current database before restoring.");
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Future settings can be added here
+                    ui.label("More settings will be added here in the future.");
                 });
             }
         }
