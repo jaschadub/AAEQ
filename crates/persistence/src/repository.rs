@@ -483,6 +483,28 @@ impl CustomEqPresetRepository {
 
         Ok(())
     }
+
+    /// Upsert a custom EQ preset (insert or update if exists)
+    pub async fn upsert(&self, preset: &aaeq_core::EqPreset) -> Result<i64> {
+        // Check if preset exists by name
+        let existing_id = sqlx::query_scalar!(
+            r#"
+            SELECT id FROM custom_eq_preset WHERE name = ?
+            "#,
+            preset.name
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some(preset_id) = existing_id {
+            // Update existing preset
+            self.update(preset, preset_id).await?;
+            Ok(preset_id)
+        } else {
+            // Create new preset
+            self.create(preset).await
+        }
+    }
 }
 
 /// Repository for profile operations

@@ -47,6 +47,8 @@ enum AppCommand {
     SaveOutputDevice(String), // Save last output device to settings
     LoadCustomPresets, // Load custom EQ presets from database
     SaveCustomPreset(aaeq_core::EqPreset), // Save custom EQ preset to database
+    EditCustomPreset(String), // Load existing custom preset for editing by name
+    DeleteCustomPreset(String), // Delete custom EQ preset by name
     LoadPresetCurve(String), // Load EQ curve for a preset (for display)
     ReloadProfiles, // Reload profiles from database
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
@@ -87,6 +89,8 @@ enum AppResponse {
     },
     CustomPresetsLoaded(Vec<String>),
     CustomPresetSaved(String),
+    CustomPresetLoaded(aaeq_core::EqPreset), // Loaded preset for editing
+    CustomPresetDeleted(String), // Preset name that was deleted
     PresetCurveLoaded(Option<aaeq_core::EqPreset>), // EQ curve for display
     ProfilesLoaded(Vec<aaeq_core::Profile>), // Reloaded profiles from database
     DspPresetChanged(String), // Preset changed during streaming
@@ -132,6 +136,8 @@ pub struct AaeqApp {
     /// UI state
     current_mode: AppMode,
     show_eq_editor: bool,
+    show_delete_confirmation: bool, // Show delete preset confirmation dialog
+    preset_to_delete: Option<String>, // Preset name pending deletion
     status_message: Option<String>,
     auto_reconnect: bool,
     connection_lost_time: Option<Instant>,
@@ -191,6 +197,8 @@ impl AaeqApp {
             last_track_key: None,
             current_mode: AppMode::EqManagement,
             show_eq_editor: false,
+            show_delete_confirmation: false,
+            preset_to_delete: None,
             status_message: None,
             auto_reconnect: true, // Enable by default
             connection_lost_time: None,
@@ -675,6 +683,42 @@ impl AaeqApp {
                         Err(e) => {
                             tracing::error!("Failed to save custom preset: {}", e);
                             let _ = response_tx.send(AppResponse::Error(format!("Failed to save custom preset: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::EditCustomPreset(preset_name) => {
+                    let custom_repo = CustomEqPresetRepository::new(pool.clone());
+                    match custom_repo.get_by_name(&preset_name).await {
+                        Ok(Some(preset)) => {
+                            tracing::info!("Loaded custom preset for editing: {}", preset_name);
+                            let _ = response_tx.send(AppResponse::CustomPresetLoaded(preset));
+                        }
+                        Ok(None) => {
+                            tracing::warn!("Custom preset not found: {}", preset_name);
+                            let _ = response_tx.send(AppResponse::Error(format!("Preset '{}' not found", preset_name)));
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load custom preset: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to load preset: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::DeleteCustomPreset(preset_name) => {
+                    let custom_repo = CustomEqPresetRepository::new(pool.clone());
+                    match custom_repo.delete(&preset_name).await {
+                        Ok(_) => {
+                            tracing::info!("Deleted custom preset: {}", preset_name);
+                            let _ = response_tx.send(AppResponse::CustomPresetDeleted(preset_name.clone()));
+                            // Reload custom presets list
+                            if let Ok(presets) = custom_repo.list_names().await {
+                                let _ = response_tx.send(AppResponse::CustomPresetsLoaded(presets));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to delete custom preset: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to delete preset: {}", e)));
                         }
                     }
                 }
@@ -1587,6 +1631,25 @@ impl eframe::App for AaeqApp {
                 AppResponse::CustomPresetSaved(preset_name) => {
                     self.status_message = Some(format!("Saved custom preset: {}", preset_name));
                 }
+                AppResponse::CustomPresetLoaded(preset) => {
+                    // Open EQ editor with loaded preset in edit mode
+                    let preset_name = preset.name.clone();
+                    let mut editor = EqEditorView::new_for_edit(preset);
+                    editor.existing_presets = self.dsp_view.custom_presets.clone();
+                    self.eq_editor_view = Some(editor);
+                    self.show_eq_editor = true;
+                    self.status_message = Some(format!("Editing preset: {}", preset_name));
+                }
+                AppResponse::CustomPresetDeleted(preset_name) => {
+                    self.status_message = Some(format!("Deleted preset: {}", preset_name));
+                    // If deleted preset was selected, clear selection
+                    if self.dsp_view.selected_preset.as_ref() == Some(&preset_name) {
+                        self.dsp_view.selected_preset = None;
+                    }
+                    if self.presets_view.selected_preset.as_ref() == Some(&preset_name) {
+                        self.presets_view.selected_preset = None;
+                    }
+                }
                 AppResponse::PresetCurveLoaded(curve) => {
                     self.current_preset_curve = curve;
                     self.now_playing_view.current_preset_curve = self.current_preset_curve.clone();
@@ -1894,6 +1957,13 @@ impl eframe::App for AaeqApp {
                                 EqEditorAction::Modified => {
                                     // Just redraw
                                 }
+                                EqEditorAction::LiveUpdate(preset) => {
+                                    // Apply EQ changes in real-time if streaming
+                                    if self.dsp_view.is_streaming {
+                                        tracing::debug!("Live preview: applying EQ changes");
+                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset.name.clone()));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1930,6 +2000,11 @@ impl eframe::App for AaeqApp {
                                 self.current_preset = Some(preset.clone());
                                 self.now_playing_view.current_preset = Some(preset.clone());
 
+                                // Clear the curve immediately to avoid showing stale data
+                                // It will be repopulated when LoadPresetCurve response arrives
+                                self.current_preset_curve = None;
+                                self.now_playing_view.current_preset_curve = None;
+
                                 // Load the EQ curve for display
                                 let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
                             } else if self.device.is_some() {
@@ -1940,6 +2015,11 @@ impl eframe::App for AaeqApp {
                                 // Immediately update UI state for instant feedback
                                 self.current_preset = Some(preset.clone());
                                 self.now_playing_view.current_preset = Some(preset.clone());
+
+                                // Clear the curve immediately to avoid showing stale data
+                                // It will be repopulated when LoadPresetCurve response arrives
+                                self.current_preset_curve = None;
+                                self.now_playing_view.current_preset_curve = None;
 
                                 // Load the EQ curve for display
                                 let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
@@ -1953,6 +2033,16 @@ impl eframe::App for AaeqApp {
                             editor.existing_presets = self.dsp_view.custom_presets.clone();
                             self.eq_editor_view = Some(editor);
                             self.show_eq_editor = true;
+                        }
+                        PresetAction::EditCustom(preset_name) => {
+                            tracing::info!("Loading preset for editing: {}", preset_name);
+                            let _ = self.command_tx.send(AppCommand::EditCustomPreset(preset_name));
+                        }
+                        PresetAction::DeleteCustom(preset_name) => {
+                            tracing::info!("Requesting delete confirmation for preset: {}", preset_name);
+                            // Show confirmation dialog
+                            self.show_delete_confirmation = true;
+                            self.preset_to_delete = Some(preset_name);
                         }
                     }
                 }
@@ -2295,6 +2385,40 @@ impl eframe::App for AaeqApp {
             self.last_viz_state = viz_enabled;
             self.last_streaming_state = is_streaming;
             self.last_collapsed_state = is_collapsed;
+        }
+
+        // Show delete preset confirmation dialog
+        if self.show_delete_confirmation {
+            egui::Window::new("Delete Preset")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    if let Some(preset_name) = &self.preset_to_delete {
+                        ui.label(format!("Delete preset '{}'?", preset_name));
+                        ui.add_space(5.0);
+                        ui.label(
+                            egui::RichText::new("This cannot be undone.")
+                                .color(egui::Color32::from_rgb(255, 100, 100))
+                                .italics()
+                        );
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Cancel").clicked() {
+                                self.show_delete_confirmation = false;
+                                self.preset_to_delete = None;
+                            }
+
+                            if ui.button("Delete").clicked() {
+                                if let Some(name) = self.preset_to_delete.take() {
+                                    let _ = self.command_tx.send(AppCommand::DeleteCustomPreset(name));
+                                }
+                                self.show_delete_confirmation = false;
+                            }
+                        });
+                    }
+                });
         }
 
         // Show profile management dialog

@@ -11,6 +11,8 @@ pub struct EqEditorView {
     pub preset_name: String,
     pub existing_presets: Vec<String>, // List of existing preset names for validation
     pub name_error: Option<String>,    // Error message if name is invalid
+    pub edit_mode: bool,               // True if editing existing preset, false if creating new
+    pub original_name: Option<String>, // Original preset name when editing (for validation)
 }
 
 impl Default for EqEditorView {
@@ -20,6 +22,8 @@ impl Default for EqEditorView {
             preset_name: "Custom".to_string(),
             existing_presets: vec![],
             name_error: None,
+            edit_mode: false,
+            original_name: None,
         }
     }
 }
@@ -31,10 +35,33 @@ impl EqEditorView {
             preset,
             existing_presets: vec![],
             name_error: None,
+            edit_mode: false,
+            original_name: None,
+        }
+    }
+
+    /// Create an editor for editing an existing preset
+    pub fn new_for_edit(preset: EqPreset) -> Self {
+        let original_name = preset.name.clone();
+        Self {
+            preset_name: preset.name.clone(),
+            preset,
+            existing_presets: vec![],
+            name_error: None,
+            edit_mode: true,
+            original_name: Some(original_name),
         }
     }
 
     fn check_name_conflict(&self) -> bool {
+        // In edit mode, allow keeping the original name
+        if self.edit_mode {
+            if let Some(ref original) = self.original_name {
+                if &self.preset_name == original {
+                    return false; // Same name as original is OK
+                }
+            }
+        }
         self.existing_presets.iter().any(|p| p == &self.preset_name)
     }
 
@@ -42,7 +69,13 @@ impl EqEditorView {
         let mut action = None;
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("EQ Editor");
+            // Show different heading based on mode
+            let heading = if self.edit_mode {
+                "Edit EQ Preset"
+            } else {
+                "Create EQ Preset"
+            };
+            ui.heading(heading);
             ui.separator();
 
             ui.horizontal(|ui| {
@@ -77,6 +110,7 @@ impl EqEditorView {
             // EQ sliders in a horizontal layout
             ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    let mut slider_changed = false;
                     for band in &mut self.preset.bands {
                         ui.vertical(|ui| {
                             let label = format_frequency(band.frequency);
@@ -85,9 +119,19 @@ impl EqEditorView {
                                 -12.0..=12.0,
                                 label,
                             );
-                            ui.add(slider);
+                            let response = ui.add(slider);
+                            if response.changed() {
+                                slider_changed = true;
+                            }
                         });
                         ui.add_space(5.0);
+                    }
+
+                    // Send live update when slider changes (for real-time preview)
+                    if slider_changed {
+                        let mut preview_preset = self.preset.clone();
+                        preview_preset.name = self.preset_name.clone();
+                        action = Some(EqEditorAction::LiveUpdate(preview_preset));
                     }
                 });
             });
@@ -131,6 +175,7 @@ impl EqEditorView {
 
 pub enum EqEditorAction {
     Modified,
+    LiveUpdate(EqPreset), // Real-time preview while editing (only when streaming)
     Save(EqPreset),
     Apply(EqPreset),
 }
@@ -394,10 +439,13 @@ impl NowPlayingView {
                         ui.strong(preset);
                     });
 
-                    // Visual EQ display - use cached curve if available
-                    if let Some(eq_preset) = &self.current_preset_curve {
-                        ui.add_space(5.0);
-                        ui.separator();
+                    // Always show EQ Curve section when there's a preset
+                    ui.add_space(5.0);
+                    ui.separator();
+
+                    // Reserve fixed height for entire EQ curve section to prevent jumping
+                    ui.vertical(|ui| {
+                        ui.set_min_height(155.0); // Fixed height for label + bars + spacing
 
                         // Show label with indicator for estimated curves
                         // Curves are exact (not estimated) if they are:
@@ -423,11 +471,13 @@ impl NowPlayingView {
                         }
                         ui.add_space(5.0);
 
-                        // Draw EQ bars
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
+                        // Visual EQ display - show spinner if loading, bars if available
+                        if let Some(eq_preset) = &self.current_preset_curve {
+                            // Draw EQ bars
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0;
 
-                            for band in &eq_preset.bands {
+                                for band in &eq_preset.bands {
                                 ui.vertical(|ui| {
                                     ui.set_width(35.0);
 
@@ -512,7 +562,19 @@ impl NowPlayingView {
                                 });
                             }
                         });
-                    }
+                        } else {
+                            // Show loading spinner while curve is being fetched
+                            ui.add_space(40.0); // Add space to center vertically
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Spinner::new());
+                                ui.label(
+                                    egui::RichText::new("Loading EQ curve...")
+                                        .color(egui::Color32::GRAY)
+                                        .italics()
+                                );
+                            });
+                        }
+                    }); // End of ui.vertical with min_height
                 }
 
                 ui.add_space(10.0);
@@ -636,11 +698,26 @@ impl PresetsView {
                     ui.label(egui::RichText::new("Custom Presets").strong().color(egui::Color32::from_rgb(255, 180, 100)));
                     ui.separator();
                     for preset in &self.custom_presets.clone() {
-                        let is_selected = self.selected_preset.as_deref() == Some(preset.as_str());
-                        if ui.selectable_label(is_selected, preset).clicked() {
-                            self.selected_preset = Some(preset.clone());
-                            action = Some(PresetAction::Select(preset.clone()));
-                        }
+                        ui.horizontal(|ui| {
+                            let is_selected = self.selected_preset.as_deref() == Some(preset.as_str());
+                            let response = ui.selectable_label(is_selected, preset);
+
+                            // Single click selects
+                            if response.clicked() {
+                                self.selected_preset = Some(preset.clone());
+                                action = Some(PresetAction::Select(preset.clone()));
+                            }
+
+                            // Double click edits
+                            if response.double_clicked() {
+                                action = Some(PresetAction::EditCustom(preset.clone()));
+                            }
+
+                            // Delete button
+                            if ui.small_button("🗑").on_hover_text("Delete this preset").clicked() {
+                                action = Some(PresetAction::DeleteCustom(preset.clone()));
+                            }
+                        });
                     }
                 }
             });
@@ -678,6 +755,8 @@ pub enum PresetAction {
     Select(String),
     Apply(String),
     CreateCustom,
+    EditCustom(String),   // Edit existing custom preset by name
+    DeleteCustom(String), // Delete custom preset by name
 }
 
 /// View for DSP/Stream Server output control

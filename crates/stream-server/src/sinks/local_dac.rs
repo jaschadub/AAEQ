@@ -298,9 +298,9 @@ impl OutputSink for LocalDacSink {
             }
         };
 
-        // Pre-fill buffer with silence to prevent initial underruns
-        // This is crucial to avoid hissing when the stream starts before audio data arrives
-        let silence_duration_ms = 100; // 100ms of silence
+        // Pre-fill buffer with minimal silence to prevent initial clicks/pops
+        // Reduced from 100ms to 20ms for faster startup while still preventing artifacts
+        let silence_duration_ms = 20; // 20ms of silence
         let silence_frames = (cfg.sample_rate as u64 * silence_duration_ms / 1000) as usize;
         let silence_samples = silence_frames * cfg.channels as usize;
         let bytes_per_sample = actual_format.bytes_per_sample();
