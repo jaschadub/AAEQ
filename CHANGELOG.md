@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Toggle between Waveform and Spectrum visualization modes
   - Theme-aware colors for bars and frequency labels
 - **Theme System**: Multiple color themes for the entire application
-  - Dark, Light, Nord, Solarized Dark, Gruvbox, and Dracula themes
+  - Dark, Light, WinAmp, Vintage, and Studio themes
   - Theme selection persisted in database
   - Coordinated colors for meters, spectrum analyzer, and UI elements
 - **Settings Tab**: New Settings tab with enhanced functionality
