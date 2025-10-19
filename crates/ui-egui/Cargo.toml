@@ -23,3 +23,4 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 reqwest = { workspace = true }
 serde = { workspace = true }
 urlencoding = "2.1"
+regex = "1"
