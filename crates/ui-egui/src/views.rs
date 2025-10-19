@@ -13,6 +13,7 @@ pub struct EqEditorView {
     pub name_error: Option<String>,    // Error message if name is invalid
     pub edit_mode: bool,               // True if editing existing preset, false if creating new
     pub original_name: Option<String>, // Original preset name when editing (for validation)
+    last_live_update: std::time::Instant, // Timestamp of last live update (for throttling)
 }
 
 impl Default for EqEditorView {
@@ -24,6 +25,7 @@ impl Default for EqEditorView {
             name_error: None,
             edit_mode: false,
             original_name: None,
+            last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
         }
     }
 }
@@ -37,6 +39,7 @@ impl EqEditorView {
             name_error: None,
             edit_mode: false,
             original_name: None,
+            last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
         }
     }
 
@@ -50,6 +53,38 @@ impl EqEditorView {
             name_error: None,
             edit_mode: true,
             original_name: Some(original_name),
+            last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
+        }
+    }
+
+    /// Find a unique name by appending a number if the base name already exists
+    fn find_unique_name(&self, base_name: &str) -> String {
+        if !self.existing_presets.iter().any(|p| p == base_name) {
+            return base_name.to_string();
+        }
+
+        // Try appending numbers until we find a unique name
+        for i in 2..=100 {
+            let candidate = format!("{} {}", base_name, i);
+            if !self.existing_presets.iter().any(|p| p == &candidate) {
+                return candidate;
+            }
+        }
+
+        // Fallback: append timestamp
+        format!("{} {}", base_name, chrono::Local::now().format("%Y%m%d%H%M%S"))
+    }
+
+    /// Set the list of existing presets and auto-fix name conflicts for new presets
+    pub fn set_existing_presets(&mut self, presets: Vec<String>) {
+        self.existing_presets = presets;
+
+        // Only auto-fix name conflicts when creating new presets (not in edit mode)
+        if !self.edit_mode && self.check_name_conflict() {
+            let unique_name = self.find_unique_name(&self.preset_name);
+            tracing::info!("Auto-renamed preset from '{}' to '{}' to avoid conflict", self.preset_name, unique_name);
+            self.preset_name = unique_name;
+            self.name_error = None;
         }
     }
 
@@ -94,14 +129,24 @@ impl EqEditorView {
                 }
             });
 
-            // Show error message if name is invalid
-            if let Some(error) = &self.name_error {
+            // Show error message if name is invalid with auto-fix button
+            if let Some(error) = &self.name_error.clone() {
+                let has_conflict = self.check_name_conflict();
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("⚠ {}", error))
                             .color(egui::Color32::from_rgb(255, 100, 100))
                             .strong()
                     );
+
+                    // Offer auto-fix button for name conflicts (not for empty names)
+                    if has_conflict {
+                        if ui.button("Auto-fix").on_hover_text("Automatically choose a unique name").clicked() {
+                            let unique_name = self.find_unique_name(&self.preset_name);
+                            self.preset_name = unique_name;
+                            self.name_error = None;
+                        }
+                    }
                 });
             }
 
@@ -128,10 +173,17 @@ impl EqEditorView {
                     }
 
                     // Send live update when slider changes (for real-time preview)
+                    // Throttle updates to prevent crackling (max 10 updates/sec)
                     if slider_changed {
-                        let mut preview_preset = self.preset.clone();
-                        preview_preset.name = self.preset_name.clone();
-                        action = Some(EqEditorAction::LiveUpdate(preview_preset));
+                        let now = std::time::Instant::now();
+                        let elapsed = now.duration_since(self.last_live_update);
+
+                        if elapsed >= std::time::Duration::from_millis(100) {
+                            self.last_live_update = now;
+                            let mut preview_preset = self.preset.clone();
+                            preview_preset.name = self.preset_name.clone();
+                            action = Some(EqEditorAction::LiveUpdate(preview_preset));
+                        }
                     }
                 });
             });
@@ -148,22 +200,19 @@ impl EqEditorView {
                     action = Some(EqEditorAction::Modified);
                 }
 
-                // Disable Save/Apply buttons if name is invalid
+                // Disable Save button if name is invalid
                 let can_save = self.name_error.is_none();
 
                 ui.add_enabled_ui(can_save, |ui| {
                     if ui.button("Save Preset").on_hover_text_at_pointer(
-                        if can_save { "Save preset to database" } else { "Fix name errors before saving" }
+                        if can_save {
+                            "Save preset to database (already applied via live preview)"
+                        } else {
+                            "Fix name errors before saving"
+                        }
                     ).clicked() {
                         self.preset.name = self.preset_name.clone();
                         action = Some(EqEditorAction::Save(self.preset.clone()));
-                    }
-
-                    if ui.button("Apply to Device").on_hover_text_at_pointer(
-                        if can_save { "Save and apply preset immediately" } else { "Fix name errors before applying" }
-                    ).clicked() {
-                        self.preset.name = self.preset_name.clone();
-                        action = Some(EqEditorAction::Apply(self.preset.clone()));
                     }
                 });
             });
@@ -176,8 +225,7 @@ impl EqEditorView {
 pub enum EqEditorAction {
     Modified,
     LiveUpdate(EqPreset), // Real-time preview while editing (only when streaming)
-    Save(EqPreset),
-    Apply(EqPreset),
+    Save(EqPreset),       // Save to database (preset already applied via live preview)
 }
 
 /// Format frequency for display (e.g., 1000 -> "1K", 125 -> "125")
@@ -400,10 +448,11 @@ impl NowPlayingView {
                 ui.horizontal(|ui| {
                     // Album art on the left - show album art if available, otherwise show default icon
                     if let Some(texture) = &self.album_art_texture {
-                        ui.add(egui::Image::new(texture).max_size(egui::vec2(150.0, 150.0)));
+                        // Display at larger size for better quality, but not full resolution
+                        ui.add(egui::Image::new(texture).max_size(egui::vec2(250.0, 250.0)));
                         ui.add_space(10.0);
                     } else if let Some(default_texture) = &self.default_icon_texture {
-                        // Show default icon when no album art is loaded
+                        // Show default icon when no album art is loaded (scaled to reasonable size)
                         ui.add(egui::Image::new(default_texture).max_size(egui::vec2(150.0, 150.0)));
                         ui.add_space(10.0);
                     }
@@ -779,6 +828,7 @@ pub struct DspView {
     pub format: FormatOption,
     pub buffer_ms: u32,
     pub is_streaming: bool,
+    pub is_starting: bool, // True while waiting for streaming to start (for loading spinner)
     pub stream_status: Option<StreamStatus>,
     pub show_device_discovery: bool,
     pub discovering: bool,
@@ -876,6 +926,7 @@ impl Default for DspView {
             format: FormatOption::F32, // Changed from S24LE - Local DAC only supports F32 and S16LE
             buffer_ms: 150,
             is_streaming: false,
+            is_starting: false,
             stream_status: None,
             show_device_discovery: false,
             discovering: false,
@@ -921,10 +972,20 @@ impl DspView {
                 ui.add_space(10.0);
 
                 // Start/Stop controls (always visible) - larger button
-                if !self.is_streaming {
+                if !self.is_streaming && !self.is_starting {
                     if ui.add_sized([180.0, 30.0], egui::Button::new("▶ Start Streaming")).clicked() {
                         action = Some(DspAction::StartStreaming);
                     }
+                } else if self.is_starting {
+                    // Show spinner while connecting
+                    ui.add_enabled_ui(false, |ui| {
+                        ui.add_sized([180.0, 30.0], |ui: &mut egui::Ui| {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Connecting...");
+                            }).response
+                        });
+                    });
                 } else {
                     if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
                         action = Some(DspAction::StopStreaming);

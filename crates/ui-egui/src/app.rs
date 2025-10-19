@@ -59,7 +59,8 @@ enum AppCommand {
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
     DspStopStreaming,
-    DspChangePreset(String), // Change EQ preset during active streaming
+    DspChangePreset(String), // Change EQ preset during active streaming (loads from library/database)
+    DspApplyPresetData(aaeq_core::EqPreset), // Apply preset data directly (for live preview)
 }
 
 /// Responses from async worker to UI
@@ -144,6 +145,7 @@ pub struct AaeqApp {
     show_eq_editor: bool,
     show_delete_confirmation: bool, // Show delete preset confirmation dialog
     preset_to_delete: Option<String>, // Preset name pending deletion
+    preset_before_editor: Option<String>, // Track preset before opening editor (for restoration on cancel)
     status_message: Option<String>,
     auto_reconnect: bool,
     connection_lost_time: Option<Instant>,
@@ -207,6 +209,7 @@ impl AaeqApp {
             show_eq_editor: false,
             show_delete_confirmation: false,
             preset_to_delete: None,
+            preset_before_editor: None,
             status_message: None,
             auto_reconnect: true, // Enable by default
             connection_lost_time: None,
@@ -469,6 +472,7 @@ impl AaeqApp {
         let mut streaming_task: Option<tokio::task::JoinHandle<()>> = None;
         let mut stream_shutdown_tx: Option<mpsc::Sender<()>> = None;
         let mut stream_preset_change_tx: Option<mpsc::Sender<String>> = None;
+        let mut stream_preset_data_tx: Option<mpsc::Sender<aaeq_core::EqPreset>> = None;
         let mut dsp_is_streaming = false;
 
         // DLNA device cache
@@ -1332,6 +1336,10 @@ impl AaeqApp {
                             let (preset_change_tx, mut preset_change_rx) = mpsc::channel::<String>(8);
                             stream_preset_change_tx = Some(preset_change_tx);
 
+                            // Create preset data channel for live preview (sends full preset, not just name)
+                            let (preset_data_tx, mut preset_data_rx) = mpsc::channel::<aaeq_core::EqPreset>(8);
+                            stream_preset_data_tx = Some(preset_data_tx);
+
                             // Setup audio capture if not using test tone
                             let audio_capture_for_task: Option<(mpsc::Receiver<Vec<f64>>, mpsc::Sender<()>)> =
                                 if !use_test_tone {
@@ -1501,6 +1509,11 @@ impl AaeqApp {
                                             } else {
                                                 tracing::warn!("Failed to load preset: {}", new_preset_name);
                                             }
+                                        }
+                                        Some(preset_data) = preset_data_rx.recv() => {
+                                            tracing::info!("Direct preset data received: {} ({} bands)", preset_data.name, preset_data.bands.len());
+                                            eq_processor.load_preset(&preset_data);
+                                            tracing::info!("Live EQ preview applied");
                                         }
                                         // Audio capture mode - wait for samples
                                         Some(mut captured_samples) = async {
@@ -1694,8 +1707,9 @@ impl AaeqApp {
                         tracing::warn!("Failed to close active sink: {}", e);
                     }
 
-                    // Clear preset change channel
+                    // Clear preset change channels
                     stream_preset_change_tx = None;
+                    stream_preset_data_tx = None;
                     dsp_is_streaming = false;
 
                     let _ = response_tx.send(AppResponse::DspStreamingStopped);
@@ -1719,6 +1733,23 @@ impl AaeqApp {
                     } else {
                         tracing::warn!("Cannot change preset - no active streaming session");
                         let _ = response_tx.send(AppResponse::Error("No active streaming session".to_string()));
+                    }
+                }
+
+                AppCommand::DspApplyPresetData(preset) => {
+                    tracing::info!("Applying live preset data: {} ({} bands)", preset.name, preset.bands.len());
+
+                    if let Some(preset_data_tx) = &stream_preset_data_tx {
+                        match preset_data_tx.send(preset.clone()).await {
+                            Ok(_) => {
+                                tracing::info!("Live preset data sent to streaming task");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send preset data to streaming task: {}", e);
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Cannot apply preset data - no active streaming session");
                     }
                 }
             }
@@ -1839,6 +1870,8 @@ impl eframe::App for AaeqApp {
                 }
                 AppResponse::Error(msg) => {
                     self.status_message = Some(format!("Error: {}", msg));
+                    // Clear any pending "starting" state on error
+                    self.dsp_view.is_starting = false;
                 }
                 // DSP Responses
                 AppResponse::DspDevicesDiscovered(devices) => {
@@ -1848,6 +1881,7 @@ impl eframe::App for AaeqApp {
                 }
                 AppResponse::DspStreamingStarted => {
                     self.dsp_view.is_streaming = true;
+                    self.dsp_view.is_starting = false; // Hide spinner, streaming is active
                     self.status_message = Some("Streaming started".to_string());
                 }
                 AppResponse::DspStreamingStopped => {
@@ -1898,13 +1932,41 @@ impl eframe::App for AaeqApp {
                     // Open EQ editor with loaded preset in edit mode
                     let preset_name = preset.name.clone();
                     let mut editor = EqEditorView::new_for_edit(preset);
-                    editor.existing_presets = self.dsp_view.custom_presets.clone();
+                    editor.set_existing_presets(self.dsp_view.custom_presets.clone());
                     self.eq_editor_view = Some(editor);
                     self.show_eq_editor = true;
                     self.status_message = Some(format!("Editing preset: {}", preset_name));
                 }
                 AppResponse::CustomPresetDeleted(preset_name) => {
                     self.status_message = Some(format!("Deleted preset: {}", preset_name));
+
+                    // If this preset is currently active, revert to Flat EQ
+                    let is_active = self.current_preset.as_ref() == Some(&preset_name);
+
+                    if is_active {
+                        // DSP mode: apply flat preset directly
+                        if self.dsp_view.is_streaming {
+                            tracing::info!("Deleted preset '{}' was active during DSP streaming - reverting to Flat EQ", preset_name);
+                            let flat_preset = aaeq_core::EqPreset::default();
+                            let _ = self.command_tx.send(AppCommand::DspApplyPresetData(flat_preset));
+                            self.current_preset = None;
+                            self.current_preset_curve = Some(aaeq_core::EqPreset::default());
+                            self.now_playing_view.current_preset = None;
+                            self.now_playing_view.current_preset_curve = Some(aaeq_core::EqPreset::default());
+                            self.status_message = Some(format!("Deleted preset '{}' - reverted to Flat EQ", preset_name));
+                        }
+                        // WiiM mode: apply Flat preset via device API
+                        else if self.device.is_some() {
+                            tracing::info!("Deleted preset '{}' was active on WiiM device - reverting to Flat", preset_name);
+                            let _ = self.command_tx.send(AppCommand::ApplyPreset("Flat".to_string()));
+                            self.current_preset = Some("Flat".to_string());
+                            self.now_playing_view.current_preset = Some("Flat".to_string());
+                            // Load Flat curve for display
+                            let _ = self.command_tx.send(AppCommand::LoadPresetCurve("Flat".to_string()));
+                            self.status_message = Some(format!("Deleted preset '{}' - reverted to Flat", preset_name));
+                        }
+                    }
+
                     // If deleted preset was selected, clear selection
                     if self.dsp_view.selected_preset.as_ref() == Some(&preset_name) {
                         self.dsp_view.selected_preset = None;
@@ -2202,33 +2264,17 @@ impl eframe::App for AaeqApp {
                                     let preset_name = preset.name.clone();
                                     let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset));
 
-                                    // If DSP is streaming, also apply it
+                                    // Preset is already applied via live preview, just update UI state
                                     if self.dsp_view.is_streaming {
-                                        tracing::info!("Applying saved custom preset to DSP: {}", preset_name);
-                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset_name.clone()));
+                                        tracing::info!("Preset '{}' saved (already applied via live preview)", preset_name);
                                         self.current_preset = Some(preset_name.clone());
                                         self.now_playing_view.current_preset = Some(preset_name.clone());
+                                        self.status_message = Some(format!("Saved preset: {}", preset_name));
                                         let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name));
                                     }
 
                                     self.show_eq_editor = false;
-                                }
-                                EqEditorAction::Apply(preset) => {
-                                    // Save and apply the preset
-                                    if self.dsp_view.is_streaming {
-                                        tracing::info!("Saving and applying custom preset: {}", preset.name);
-                                        let preset_name = preset.name.clone();
-                                        let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset.clone()));
-                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset_name.clone()));
-                                        self.status_message = Some(format!("Applied custom preset: {}", preset_name));
-                                        self.current_preset = Some(preset_name.clone());
-                                        self.now_playing_view.current_preset = Some(preset_name.clone());
-                                        let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name));
-                                        self.show_eq_editor = false;
-                                    } else {
-                                        tracing::warn!("Custom EQ not supported by WiiM API");
-                                        self.status_message = Some("Custom EQ not supported by WiiM device API. Start DSP streaming to use custom EQ.".to_string());
-                                    }
+                                    self.preset_before_editor = None; // Clear saved preset on successful save
                                 }
                                 EqEditorAction::Modified => {
                                     // Just redraw
@@ -2236,8 +2282,8 @@ impl eframe::App for AaeqApp {
                                 EqEditorAction::LiveUpdate(preset) => {
                                     // Apply EQ changes in real-time if streaming
                                     if self.dsp_view.is_streaming {
-                                        tracing::debug!("Live preview: applying EQ changes");
-                                        let _ = self.command_tx.send(AppCommand::DspChangePreset(preset.name.clone()));
+                                        tracing::debug!("Live preview: applying EQ changes for {}", preset.name);
+                                        let _ = self.command_tx.send(AppCommand::DspApplyPresetData(preset));
                                     }
                                 }
                             }
@@ -2248,6 +2294,16 @@ impl eframe::App for AaeqApp {
                     egui::TopBottomPanel::bottom("close_editor").show(ctx, |ui| {
                         if ui.button("Close Editor").clicked() {
                             self.show_eq_editor = false;
+
+                            // Restore previous preset if we were streaming and had one
+                            if self.dsp_view.is_streaming {
+                                if let Some(prev_preset) = self.preset_before_editor.take() {
+                                    tracing::info!("Closing EQ editor without saving - restoring previous preset: {}", prev_preset);
+                                    let _ = self.command_tx.send(AppCommand::DspChangePreset(prev_preset));
+                                } else {
+                                    tracing::info!("Closing EQ editor - no previous preset to restore");
+                                }
+                            }
                         }
                     });
                 } else {
@@ -2305,10 +2361,22 @@ impl eframe::App for AaeqApp {
                         }
                         PresetAction::CreateCustom => {
                             let mut editor = EqEditorView::default();
-                            // Populate existing presets list for validation
-                            editor.existing_presets = self.dsp_view.custom_presets.clone();
+                            // Populate existing presets list and auto-fix name conflicts
+                            editor.set_existing_presets(self.dsp_view.custom_presets.clone());
                             self.eq_editor_view = Some(editor);
                             self.show_eq_editor = true;
+
+                            // If streaming, save current preset and immediately apply Flat for accurate live preview
+                            // This ensures what you see (Flat sliders) matches what you hear
+                            if self.dsp_view.is_streaming {
+                                // Save current preset for restoration on cancel
+                                self.preset_before_editor = self.current_preset.clone();
+                                tracing::info!("Opening EQ editor - saving current preset '{}' and applying Flat for live preview",
+                                    self.preset_before_editor.as_deref().unwrap_or("none"));
+
+                                let flat_preset = aaeq_core::EqPreset::default();
+                                let _ = self.command_tx.send(AppCommand::DspApplyPresetData(flat_preset));
+                            }
                         }
                         PresetAction::EditCustom(preset_name) => {
                             tracing::info!("Loading preset for editing: {}", preset_name);
@@ -2491,6 +2559,7 @@ impl eframe::App for AaeqApp {
                                         self.dsp_view.selected_input_device.clone(),
                                         self.dsp_view.selected_preset.clone(),
                                     ));
+                                    self.dsp_view.is_starting = true; // Show spinner while connecting
                                 } else {
                                     self.status_message = Some("No device selected".to_string());
                                 }
