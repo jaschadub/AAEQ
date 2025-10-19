@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2025-10-19
+
+### Fixed
+
+#### DLNA Visualization Sync 🎵
+- **Automatic Delay Detection**: Visualization now automatically syncs with DLNA/UPnP device playback
+  - Auto-detects ~4 second device buffer latency
+  - Immediate status update on stream start for faster sync
+  - Visualization stays in sync when songs change
+- **Improved Latency Reporting**: DLNA sink now correctly reports end-to-end latency including device buffering
+  - Base DLNA latency increased from 150ms to 4000ms to match real-world behavior
+  - Accounts for network streaming and device buffer delays
+- **Extended Delay Controls**: Visualization delay slider extended to 0-5000ms range
+  - Manual adjustment available for fine-tuning sync
+  - Auto-detected delay can be overridden if needed
+- **Larger Visualization Buffers**: Increased buffer capacity to support longer delays
+  - Sample buffer: 5s → 10s capacity (120 → 240 items)
+  - Metrics buffer: doubled to handle extended delays (500 → 1000 items)
+  - Prevents buffer overflow causing flat visualization
+- **Debug Logging**: Added comprehensive logging for visualization sync troubleshooting
+  - Buffer status and processing metrics
+  - Auto-detection trigger events
+  - Delay adjustment tracking
+
 ## [0.5.0] - 2025-10-19
 
 ### Added

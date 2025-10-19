@@ -793,6 +793,23 @@ pub struct DspView {
     pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
     pub show_meters: bool, // Toggle to show/hide audio level meters
     pub audio_output_collapsed: bool, // Track collapse state of Audio Output section
+    pub viz_delay_ms: u32, // Visualization delay in milliseconds for network streaming sync
+    viz_delay_auto_set: bool, // Track if delay was auto-set for current streaming session
+    viz_sample_buffer: std::collections::VecDeque<(std::time::Instant, Vec<f64>)>, // Buffered samples with timestamps
+    viz_metrics_buffer: std::collections::VecDeque<(std::time::Instant, VizMetrics)>, // Buffered metrics with timestamps
+}
+
+/// Struct to hold visualization metrics for buffering
+#[derive(Clone)]
+pub struct VizMetrics {
+    pub pre_eq_rms_l: f32,
+    pub pre_eq_rms_r: f32,
+    pub pre_eq_peak_l: f32,
+    pub pre_eq_peak_r: f32,
+    pub post_eq_rms_l: f32,
+    pub post_eq_rms_r: f32,
+    pub post_eq_peak_l: f32,
+    pub post_eq_peak_r: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -873,6 +890,10 @@ impl Default for DspView {
             post_eq_meter: crate::meter::MeterState::default(),
             show_meters: false, // Start hidden by default
             audio_output_collapsed: false, // Start expanded by default
+            viz_delay_ms: 0, // No delay by default (for Local DAC)
+            viz_delay_auto_set: false, // Will auto-set on first stream status
+            viz_sample_buffer: std::collections::VecDeque::new(),
+            viz_metrics_buffer: std::collections::VecDeque::new(),
         }
     }
 }
@@ -949,6 +970,51 @@ impl DspView {
                     action = Some(DspAction::SinkTypeChanged(SinkType::AirPlay));
                 }
             });
+
+            // Visualization delay control (only for network streaming)
+            if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+                ui.add_space(5.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("Visualization Delay:");
+
+                    let prev_delay = self.viz_delay_ms;
+                    ui.add(egui::Slider::new(&mut self.viz_delay_ms, 0..=5000)
+                        .suffix(" ms")
+                        .text(""))
+                        .on_hover_text("Delay visualization to sync with network device playback.\nAuto-detected on first stream, or adjust manually.");
+
+                    // Clear buffers if delay changed
+                    if self.viz_delay_ms != prev_delay {
+                        self.clear_buffers();
+                        // Disable auto-detection once user manually adjusts
+                        self.viz_delay_auto_set = true;
+                    }
+
+                    // Auto button to manually trigger auto-detection
+                    if let Some(status) = &self.stream_status {
+                        if ui.button("Auto").on_hover_text("Re-detect delay from stream latency").clicked() {
+                            self.auto_set_delay_from_latency(status.latency_ms);
+                            self.clear_buffers();
+                            self.viz_delay_auto_set = true; // Mark as set
+                        }
+                    }
+                });
+
+                // Show current delay value with auto-detection indicator
+                if self.viz_delay_ms > 0 {
+                    let delay_text = if self.viz_delay_auto_set && self.stream_status.is_some() {
+                        format!("Current delay: {} ms (auto-detected)", self.viz_delay_ms)
+                    } else {
+                        format!("Current delay: {} ms", self.viz_delay_ms)
+                    };
+                    ui.label(
+                        egui::RichText::new(delay_text)
+                            .size(10.0)
+                            .color(egui::Color32::GRAY)
+                    );
+                }
+            }
 
             ui.add_space(5.0);
             ui.separator();
@@ -1305,23 +1371,6 @@ impl DspView {
                 ui.add_space(5.0);
                 ui.separator();
 
-                // Show warning for network streaming modes (DLNA/AirPlay)
-                if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("ℹ").color(egui::Color32::from_rgb(100, 149, 237)));
-                        ui.label(
-                            egui::RichText::new("Visualization shows local processing - playback on network device has additional delay")
-                                .size(10.0)
-                                .color(egui::Color32::GRAY)
-                        ).on_hover_text(
-                            "Network devices (DLNA/AirPlay) buffer audio for smooth playback.\n\
-                             The visualization shows what's being processed locally,\n\
-                             which may be ahead of what you hear on the device."
-                        );
-                    });
-                    ui.add_space(3.0);
-                }
-
                 match self.viz_mode {
                     VisualizationMode::Waveform => self.audio_viz.show(ui),
                     VisualizationMode::Spectrum => self.spectrum_analyzer.show(ui, &spectrum_colors),
@@ -1339,19 +1388,6 @@ impl DspView {
                 ui.add_space(10.0);
                 ui.separator();
                 ui.label("Audio Levels:");
-
-                // Show warning for network streaming modes (DLNA/AirPlay)
-                if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new("ℹ").color(egui::Color32::from_rgb(100, 149, 237)));
-                        ui.label(
-                            egui::RichText::new("Meters show local processing - playback on network device has additional delay")
-                                .size(10.0)
-                                .color(egui::Color32::GRAY)
-                        );
-                    });
-                    ui.add_space(3.0);
-                }
 
                 // Update meter ballistics (only when streaming)
                 if self.is_streaming {
@@ -1443,6 +1479,183 @@ impl DspView {
         }
 
         action
+    }
+
+    /// Buffer audio samples with current timestamp
+    pub fn buffer_samples(&mut self, samples: Vec<f64>) {
+        let now = std::time::Instant::now();
+        self.viz_sample_buffer.push_back((now, samples));
+
+        // Log occasionally for debugging (every 50 buffers)
+        if self.viz_sample_buffer.len() % 50 == 0 {
+            tracing::debug!("Sample buffer size: {} (delay: {} ms)", self.viz_sample_buffer.len(), self.viz_delay_ms);
+        }
+
+        // Limit buffer size to prevent memory issues (max 10 seconds worth of data)
+        // Assuming ~2048 samples per buffer at 48kHz = ~42ms per buffer
+        // 10 seconds = ~240 buffers (enough for 5 second delay + safety margin)
+        const MAX_BUFFER_SIZE: usize = 240;
+        while self.viz_sample_buffer.len() > MAX_BUFFER_SIZE {
+            tracing::warn!("Sample buffer overflow, dropping oldest sample (delay: {} ms, buffer: {} items)", self.viz_delay_ms, self.viz_sample_buffer.len());
+            self.viz_sample_buffer.pop_front();
+        }
+    }
+
+    /// Buffer visualization metrics with current timestamp
+    pub fn buffer_metrics(&mut self, metrics: VizMetrics) {
+        let now = std::time::Instant::now();
+        self.viz_metrics_buffer.push_back((now, metrics));
+
+        // Log occasionally for debugging (every 100 buffers)
+        if self.viz_metrics_buffer.len() % 100 == 0 {
+            tracing::debug!("Metrics buffer size: {} (delay: {} ms)", self.viz_metrics_buffer.len(), self.viz_delay_ms);
+        }
+
+        // Limit buffer size (metrics come more frequently than samples)
+        // Need to hold ~10 seconds worth for 5 second delays
+        const MAX_BUFFER_SIZE: usize = 1000;
+        while self.viz_metrics_buffer.len() > MAX_BUFFER_SIZE {
+            tracing::warn!("Metrics buffer overflow, dropping oldest metrics (delay: {} ms, buffer: {} items)", self.viz_delay_ms, self.viz_metrics_buffer.len());
+            self.viz_metrics_buffer.pop_front();
+        }
+    }
+
+    /// Process buffered data and release items older than viz_delay_ms
+    pub fn process_buffers(&mut self) {
+        let now = std::time::Instant::now();
+        let delay = std::time::Duration::from_millis(self.viz_delay_ms as u64);
+
+        let mut samples_released = 0;
+        let mut metrics_released = 0;
+
+        // Process samples
+        while let Some((timestamp, _)) = self.viz_sample_buffer.front() {
+            let age_ms = now.duration_since(*timestamp).as_millis();
+            if now.duration_since(*timestamp) >= delay {
+                if let Some((_, samples)) = self.viz_sample_buffer.pop_front() {
+                    self.audio_viz.push_samples(&samples);
+                    self.spectrum_analyzer.process_samples(&samples);
+                    samples_released += 1;
+                }
+            } else {
+                // Log if we're waiting on data (every ~60 frames = ~1 second)
+                static mut COUNTER: u32 = 0;
+                unsafe {
+                    COUNTER += 1;
+                    if COUNTER % 60 == 0 {
+                        tracing::debug!("Waiting for delay: oldest sample is {} ms old, need {} ms", age_ms, self.viz_delay_ms);
+                    }
+                }
+                break;
+            }
+        }
+
+        // Process metrics
+        while let Some((timestamp, _)) = self.viz_metrics_buffer.front() {
+            if now.duration_since(*timestamp) >= delay {
+                if let Some((_, metrics)) = self.viz_metrics_buffer.pop_front() {
+                    self.pre_eq_meter.update_from_block(
+                        metrics.pre_eq_rms_l,
+                        metrics.pre_eq_rms_r,
+                        metrics.pre_eq_peak_l,
+                        metrics.pre_eq_peak_r,
+                    );
+                    self.post_eq_meter.update_from_block(
+                        metrics.post_eq_rms_l,
+                        metrics.post_eq_rms_r,
+                        metrics.post_eq_peak_l,
+                        metrics.post_eq_peak_r,
+                    );
+                    metrics_released += 1;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Log when data is released (every ~60 frames)
+        static mut RELEASE_COUNTER: u32 = 0;
+        unsafe {
+            RELEASE_COUNTER += 1;
+            if RELEASE_COUNTER % 60 == 0 && (samples_released > 0 || metrics_released > 0) {
+                tracing::debug!(
+                    "Released {} samples, {} metrics (delay: {} ms, buffered: {} samples, {} metrics)",
+                    samples_released,
+                    metrics_released,
+                    self.viz_delay_ms,
+                    self.viz_sample_buffer.len(),
+                    self.viz_metrics_buffer.len()
+                );
+            }
+        }
+    }
+
+    /// Clear all buffered data
+    pub fn clear_buffers(&mut self) {
+        self.viz_sample_buffer.clear();
+        self.viz_metrics_buffer.clear();
+    }
+
+    /// Auto-set delay from stream latency
+    pub fn auto_set_delay_from_latency(&mut self, latency_ms: u32) {
+        // Use the latency as a starting point, but cap it reasonably
+        // Network devices like DLNA can have 2-5 seconds of buffering
+        let old_delay = self.viz_delay_ms;
+        self.viz_delay_ms = latency_ms.min(5000);
+        tracing::info!(
+            "Auto-set visualization delay: {} ms -> {} ms (from stream latency: {} ms)",
+            old_delay,
+            self.viz_delay_ms,
+            latency_ms
+        );
+    }
+
+    /// Attempt automatic delay detection for network streaming
+    /// Returns true if delay was auto-set
+    pub fn try_auto_detect_delay(&mut self, status: &StreamStatus) -> bool {
+        // Log all status updates for debugging
+        tracing::debug!(
+            "Stream status: latency={} ms, is_streaming={}, auto_set={}, sink={:?}",
+            status.latency_ms,
+            self.is_streaming,
+            self.viz_delay_auto_set,
+            self.selected_sink
+        );
+
+        // Only auto-detect for network streaming (DLNA/AirPlay)
+        if !matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+            tracing::debug!("Not auto-detecting: not a network sink");
+            return false;
+        }
+
+        // Only auto-set once per streaming session
+        if self.viz_delay_auto_set {
+            tracing::debug!("Not auto-detecting: already auto-set for this session");
+            return false;
+        }
+
+        // Only auto-set if we have valid latency and we're streaming
+        if !self.is_streaming {
+            tracing::debug!("Not auto-detecting: not streaming yet");
+            return false;
+        }
+
+        if status.latency_ms == 0 {
+            tracing::debug!("Not auto-detecting: latency is 0");
+            return false;
+        }
+
+        // Auto-set the delay
+        tracing::info!("🎯 Auto-detecting visualization delay from stream latency: {} ms", status.latency_ms);
+        self.auto_set_delay_from_latency(status.latency_ms);
+        self.viz_delay_auto_set = true;
+        tracing::info!("✓ Auto-detection complete, delay set to {} ms", self.viz_delay_ms);
+        true
+    }
+
+    /// Reset auto-detection flag (call when streaming stops or sink changes)
+    pub fn reset_auto_delay(&mut self) {
+        self.viz_delay_auto_set = false;
     }
 }
 
