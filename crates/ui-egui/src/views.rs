@@ -786,6 +786,7 @@ pub struct DspView {
     pub custom_presets: Vec<String>, // Custom EQ presets saved by user
     pub pre_eq_meter: crate::meter::MeterState, // Pre-EQ audio levels
     pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
+    pub show_meters: bool, // Toggle to show/hide audio level meters
     pub audio_output_collapsed: bool, // Track collapse state of Audio Output section
 }
 
@@ -865,6 +866,7 @@ impl Default for DspView {
             custom_presets: vec![],
             pre_eq_meter: crate::meter::MeterState::default(),
             post_eq_meter: crate::meter::MeterState::default(),
+            show_meters: false, // Start hidden by default
             audio_output_collapsed: false, // Start expanded by default
         }
     }
@@ -1301,15 +1303,23 @@ impl DspView {
                 }
             }
 
-            // Audio level meters (only show when streaming)
-            if self.is_streaming {
+            // Audio level meters toggle
+            ui.add_space(5.0);
+            if ui.checkbox(&mut self.show_meters, "Show Audio Meters").on_hover_text("Display pre/post EQ audio level meters").changed() {
+                action = Some(DspAction::ToggleMeters);
+            }
+
+            // Audio level meters
+            if self.show_meters {
                 ui.add_space(10.0);
                 ui.separator();
                 ui.label("Audio Levels:");
 
-                // Update meter ballistics
-                self.pre_eq_meter.tick();
-                self.post_eq_meter.tick();
+                // Update meter ballistics (only when streaming)
+                if self.is_streaming {
+                    self.pre_eq_meter.tick();
+                    self.post_eq_meter.tick();
+                }
 
                 // Display meters side by side, using available width like waveform
                 ui.horizontal(|ui| {
@@ -1409,6 +1419,7 @@ pub enum DspAction {
     StopStreaming,
     PlayTestTone,
     ToggleVisualization,
+    ToggleMeters,
     PresetSelected(Option<String>),
     SaveCustomPreset(EqPreset),
 }

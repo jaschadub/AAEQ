@@ -151,7 +151,8 @@ pub struct AaeqApp {
     discovered_devices: Vec<(String, String)>, // Vec<(name, host)>
     show_discovery: bool,
     last_viz_state: bool, // Track previous visualization state for window resizing
-    last_streaming_state: bool, // Track previous streaming state for window resizing
+    last_viz_mode: crate::views::VisualizationMode, // Track previous visualization mode for window resizing
+    last_meters_state: bool, // Track previous meters state for window resizing
     last_collapsed_state: bool, // Track previous collapsed state for window resizing
     show_profile_dialog: bool,
     profile_dialog_mode: ProfileDialogMode,
@@ -213,7 +214,8 @@ impl AaeqApp {
             discovered_devices: vec![],
             show_discovery: false,
             last_viz_state: false,
-            last_streaming_state: false,
+            last_viz_mode: crate::views::VisualizationMode::Waveform,
+            last_meters_state: false,
             last_collapsed_state: false,
             show_profile_dialog: false,
             profile_dialog_mode: ProfileDialogMode::Create,
@@ -2474,6 +2476,9 @@ impl eframe::App for AaeqApp {
                             DspAction::ToggleVisualization => {
                                 tracing::info!("Visualization toggled: {}", self.dsp_view.audio_viz.enabled);
                             }
+                            DspAction::ToggleMeters => {
+                                tracing::info!("Meters toggled: {}", self.dsp_view.show_meters);
+                            }
                             DspAction::PresetSelected(preset) => {
                                 if let Some(ref preset_name) = preset {
                                     tracing::info!("EQ preset selected: {}", preset_name);
@@ -2599,14 +2604,15 @@ impl eframe::App for AaeqApp {
         }
 
         // Window resize logic for visualization elements and collapsed state
-        let viz_enabled = self.dsp_view.audio_viz.enabled;
-        let is_streaming = self.dsp_view.is_streaming;
+        let viz_enabled = self.dsp_view.audio_viz.enabled || self.dsp_view.spectrum_analyzer.enabled;
+        let viz_mode = self.dsp_view.viz_mode;
+        let show_meters = self.dsp_view.show_meters;
         let is_collapsed = self.dsp_view.audio_output_collapsed;
 
-        // Check if visualization, streaming, or collapsed state changed
-        if viz_enabled != self.last_viz_state || is_streaming != self.last_streaming_state || is_collapsed != self.last_collapsed_state {
-            tracing::info!("Window resize needed - viz: {} -> {}, streaming: {} -> {}, collapsed: {} -> {}",
-                self.last_viz_state, viz_enabled, self.last_streaming_state, is_streaming, self.last_collapsed_state, is_collapsed);
+        // Check if visualization, meters, or collapsed state changed
+        if viz_enabled != self.last_viz_state || viz_mode != self.last_viz_mode || show_meters != self.last_meters_state || is_collapsed != self.last_collapsed_state {
+            tracing::info!("Window resize needed - viz: {} -> {}, mode: {:?} -> {:?}, meters: {} -> {}, collapsed: {} -> {}",
+                self.last_viz_state, viz_enabled, self.last_viz_mode, viz_mode, self.last_meters_state, show_meters, self.last_collapsed_state, is_collapsed);
 
             // Calculate new window height based on visible elements
             let base_height = 600.0;
@@ -2617,13 +2623,22 @@ impl eframe::App for AaeqApp {
                 new_height -= 400.0;
             }
 
-            // Add height for waveform visualization (~220px)
+            // Add height for visualization based on mode
             if viz_enabled {
-                new_height += 220.0;
+                match viz_mode {
+                    crate::views::VisualizationMode::Waveform => {
+                        // Waveform visualization (~220px)
+                        new_height += 220.0;
+                    }
+                    crate::views::VisualizationMode::Spectrum => {
+                        // Spectrum analyzer needs more space (~350px for display + labels + spacing)
+                        new_height += 350.0;
+                    }
+                }
             }
 
             // Add height for audio meters (350px: includes all spacing, separator, labels, and 200px meters with padding)
-            if is_streaming {
+            if show_meters {
                 new_height += 350.0;
             }
 
@@ -2640,7 +2655,8 @@ impl eframe::App for AaeqApp {
 
             // Update tracking state
             self.last_viz_state = viz_enabled;
-            self.last_streaming_state = is_streaming;
+            self.last_viz_mode = viz_mode;
+            self.last_meters_state = show_meters;
             self.last_collapsed_state = is_collapsed;
         }
 
