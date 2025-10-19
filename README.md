@@ -43,15 +43,17 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🎯 **10-Band Parametric EQ** - Precise control over frequency, gain, and Q factor per band
 - 📤 **Multi-Format Streaming** - Stream to DLNA devices (with album art), local DAC, or AirPlay (experimental)
 - 🎵 **Format Conversion** - Supports S16LE, S24LE, F32 with configurable sample rates (44.1kHz - 192kHz)
-- 📊 **Real-Time Visualization** - Live waveform display and dual audio level meters (pre/post EQ)
-- 📈 **Audio Meters** - Professional VU meters showing RMS and peak levels in dBFS
+- 📊 **Real-Time Visualization** - Live waveform or spectrum analyzer with FFT-based frequency analysis
+- 📈 **Audio Meters** - Professional VU-style meters with peak hold showing pre/post-EQ levels in dBFS
 - 🎙️ **MPRIS Integration** - Automatically detects what's playing on Linux media players
 - 🔄 **Device Persistence** - Remembers last used input/output devices between sessions
-- 🪟 **Auto-Resize Window** - Window automatically adjusts to fit waveform and meters when enabled
+- 🪟 **Auto-Resize Window** - Window automatically adjusts to fit visualization and meters when enabled
 
 ### General
 - 👤 **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Living Room")
 - 🔄 **Profile Switching** - Instantly switch between profiles to apply different EQ settings for the same songs
+- 🎨 **Theme System** - 5 color themes: Dark, Light, WinAmp, Vintage, and Studio
+- ⚙️ **Settings Tab** - Theme selection, database backup/restore, and about information
 - 💾 **Local-First** - All data stored locally in SQLite, no cloud required
 - 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
 - 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
