@@ -20,6 +20,7 @@ chrono = { workspace = true }
 async-trait = { workspace = true }
 zip = "2.2"
 rfd = "0.15"
+rustfft = "6.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 reqwest = { workspace = true }
 serde = { workspace = true }

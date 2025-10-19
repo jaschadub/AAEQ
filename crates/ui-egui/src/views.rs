@@ -779,12 +779,20 @@ pub struct DspView {
     pub discovering: bool,
     pub use_test_tone: bool, // Toggle between captured audio and test tone
     pub audio_viz: AudioVizState, // Audio waveform visualization
+    pub spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState, // Spectrum analyzer
+    pub viz_mode: VisualizationMode, // Current visualization mode
     pub selected_preset: Option<String>, // EQ preset for DSP processing
     pub wiim_presets: Vec<String>, // Presets loaded from WiiM device
     pub custom_presets: Vec<String>, // Custom EQ presets saved by user
     pub pre_eq_meter: crate::meter::MeterState, // Pre-EQ audio levels
     pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
     pub audio_output_collapsed: bool, // Track collapse state of Audio Output section
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisualizationMode {
+    Waveform,
+    Spectrum,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -850,6 +858,8 @@ impl Default for DspView {
             discovering: false,
             use_test_tone: false, // Default to captured audio
             audio_viz: AudioVizState::new(),
+            spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState::new(),
+            viz_mode: VisualizationMode::Waveform, // Default to waveform
             selected_preset: None, // No preset selected by default
             wiim_presets: vec![],
             custom_presets: vec![],
@@ -1251,17 +1261,44 @@ impl DspView {
             ui.add_space(5.0);
 
             // Audio visualization toggle
+            let viz_enabled = self.audio_viz.enabled || self.spectrum_analyzer.enabled;
+            let mut temp_enabled = viz_enabled;
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.audio_viz.enabled, "Show Waveform").on_hover_text("Display real-time audio waveform visualization").changed() {
+                if ui.checkbox(&mut temp_enabled, "Show Visualization").on_hover_text("Display real-time audio visualization").changed() {
+                    // Enable/disable current visualization mode
+                    match self.viz_mode {
+                        VisualizationMode::Waveform => self.audio_viz.enabled = temp_enabled,
+                        VisualizationMode::Spectrum => self.spectrum_analyzer.enabled = temp_enabled,
+                    }
                     action = Some(DspAction::ToggleVisualization);
+                }
+
+                // Mode selector (only show when visualization is enabled)
+                if temp_enabled {
+                    ui.label("Mode:");
+                    let prev_mode = self.viz_mode;
+                    ui.selectable_value(&mut self.viz_mode, VisualizationMode::Waveform, "Waveform");
+                    ui.selectable_value(&mut self.viz_mode, VisualizationMode::Spectrum, "Spectrum");
+
+                    // When mode changes, enable the selected mode and disable the other
+                    self.audio_viz.enabled = self.viz_mode == VisualizationMode::Waveform;
+                    self.spectrum_analyzer.enabled = self.viz_mode == VisualizationMode::Spectrum;
+
+                    if prev_mode != self.viz_mode {
+                        tracing::info!("Visualization mode changed to {:?}, spectrum enabled: {}, waveform enabled: {}",
+                                     self.viz_mode, self.spectrum_analyzer.enabled, self.audio_viz.enabled);
+                    }
                 }
             });
 
             // Show audio visualization if enabled
-            if self.audio_viz.enabled {
+            if self.audio_viz.enabled || self.spectrum_analyzer.enabled {
                 ui.add_space(5.0);
                 ui.separator();
-                self.audio_viz.show(ui);
+                match self.viz_mode {
+                    VisualizationMode::Waveform => self.audio_viz.show(ui),
+                    VisualizationMode::Spectrum => self.spectrum_analyzer.show(ui),
+                }
             }
 
             // Audio level meters (only show when streaming)
