@@ -81,6 +81,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rfd",
+ "rustfft",
  "serde",
  "sqlx",
  "stream-server",

@@ -516,8 +516,23 @@ impl AaeqApp {
                                 let _ = response_tx.send(AppResponse::PresetApplied(preset));
                             }
                             Err(e) => {
-                                tracing::error!("Failed to apply preset: {}", e);
-                                let _ = response_tx.send(AppResponse::Error(format!("Failed to apply preset: {}", e)));
+                                // Preset doesn't exist on WiiM device, try fallback to Flat
+                                tracing::warn!("Preset '{}' not available on device: {}. Falling back to 'Flat'", preset, e);
+
+                                match dev.apply_preset("Flat").await {
+                                    Ok(_) => {
+                                        current_preset = Some("Flat".to_string());
+                                        let _ = response_tx.send(AppResponse::Error(
+                                            format!("Preset '{}' not available in WiiM mode, using 'Flat'", preset)
+                                        ));
+                                    }
+                                    Err(e2) => {
+                                        tracing::error!("Failed to apply fallback 'Flat' preset: {}", e2);
+                                        let _ = response_tx.send(AppResponse::Error(
+                                            format!("Failed to apply preset: {}", e2)
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
@@ -806,11 +821,30 @@ impl AaeqApp {
                         } else if let Some(dev) = &device {
                             // Use WiiM API
                             tracing::info!("Applying preset via WiiM API: {}", desired_preset);
-                            if let Err(e) = dev.apply_preset(&desired_preset).await {
-                                tracing::error!("Failed to apply preset: {}", e);
-                            } else {
-                                current_preset = Some(desired_preset.clone());
-                                tracing::info!("Successfully applied preset via WiiM API");
+                            match dev.apply_preset(&desired_preset).await {
+                                Ok(_) => {
+                                    current_preset = Some(desired_preset.clone());
+                                    tracing::info!("Successfully applied preset via WiiM API");
+                                }
+                                Err(e) => {
+                                    // Preset doesn't exist on WiiM device, try fallback to Flat
+                                    tracing::warn!("Preset '{}' not available on device: {}. Falling back to 'Flat'", desired_preset, e);
+
+                                    match dev.apply_preset("Flat").await {
+                                        Ok(_) => {
+                                            current_preset = Some("Flat".to_string());
+                                            let _ = response_tx.send(AppResponse::Error(
+                                                format!("Preset '{}' not available in WiiM mode, using 'Flat'", desired_preset)
+                                            ));
+                                        }
+                                        Err(e2) => {
+                                            tracing::error!("Failed to apply fallback 'Flat' preset: {}", e2);
+                                            let _ = response_tx.send(AppResponse::Error(
+                                                format!("Failed to apply preset: {}", e2)
+                                            ));
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             tracing::warn!("No DSP stream or device available to apply preset");
@@ -987,15 +1021,41 @@ impl AaeqApp {
                                             }
                                         } else {
                                             // Use WiiM API
-                                            if let Err(e) = dev.apply_preset(&desired_preset).await {
-                                                tracing::error!("Failed to apply preset: {}", e);
-                                            } else {
-                                                current_preset = Some(desired_preset.clone());
+                                            match dev.apply_preset(&desired_preset).await {
+                                                Ok(_) => {
+                                                    current_preset = Some(desired_preset.clone());
 
-                                                // Save to database
-                                                if let Some(dev_id) = device_id {
-                                                    let repo = LastAppliedRepository::new(pool.clone());
-                                                    let _ = repo.update(dev_id, &track_key, &desired_preset).await;
+                                                    // Save to database
+                                                    if let Some(dev_id) = device_id {
+                                                        let repo = LastAppliedRepository::new(pool.clone());
+                                                        let _ = repo.update(dev_id, &track_key, &desired_preset).await;
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    // Preset doesn't exist on WiiM device, try fallback to Flat
+                                                    tracing::warn!("Preset '{}' not available on device: {}. Falling back to 'Flat'", desired_preset, e);
+
+                                                    match dev.apply_preset("Flat").await {
+                                                        Ok(_) => {
+                                                            current_preset = Some("Flat".to_string());
+
+                                                            // Save Flat to database
+                                                            if let Some(dev_id) = device_id {
+                                                                let repo = LastAppliedRepository::new(pool.clone());
+                                                                let _ = repo.update(dev_id, &track_key, "Flat").await;
+                                                            }
+
+                                                            let _ = response_tx.send(AppResponse::Error(
+                                                                format!("Preset '{}' not available in WiiM mode, using 'Flat'", desired_preset)
+                                                            ));
+                                                        }
+                                                        Err(e2) => {
+                                                            tracing::error!("Failed to apply fallback 'Flat' preset: {}", e2);
+                                                            let _ = response_tx.send(AppResponse::Error(
+                                                                format!("Failed to apply preset: {}", e2)
+                                                            ));
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1414,10 +1474,10 @@ impl AaeqApp {
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&captured_samples);
 
-                                            // Send samples for visualization
+                                            // Send samples for visualization (need 2048 for FFT)
                                             let viz_samples: Vec<f64> = captured_samples.iter()
                                                 .step_by(channels) // Take every Nth sample (left channel)
-                                                .take(256) // Limit visualization data
+                                                .take(2048) // Need enough samples for spectrum analyzer FFT
                                                 .copied()
                                                 .collect();
                                             let _ = tx.send(AppResponse::DspAudioSamples(viz_samples));
@@ -1488,10 +1548,10 @@ impl AaeqApp {
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&audio_data);
 
-                                            // Send samples for visualization
+                                            // Send samples for visualization (need 2048 for FFT)
                                             let viz_samples: Vec<f64> = audio_data.iter()
                                                 .step_by(channels)
-                                                .take(256)
+                                                .take(2048) // Need enough samples for spectrum analyzer FFT
                                                 .copied()
                                                 .collect();
                                             let _ = tx.send(AppResponse::DspAudioSamples(viz_samples));
@@ -1750,6 +1810,8 @@ impl eframe::App for AaeqApp {
                 AppResponse::DspAudioSamples(samples) => {
                     // Update visualization with audio samples
                     self.dsp_view.audio_viz.push_samples(&samples);
+                    // Also process for spectrum analyzer
+                    self.dsp_view.spectrum_analyzer.process_samples(&samples);
                 }
                 AppResponse::DspAudioMetrics {
                     pre_eq_rms_l, pre_eq_rms_r, pre_eq_peak_l, pre_eq_peak_r,
