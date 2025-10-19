@@ -2281,7 +2281,7 @@ impl eframe::App for AaeqApp {
             AppMode::DspServer => {
                 // DSP Server Mode: Show DSP controls in main area
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    if let Some(action) = self.dsp_view.show(ui) {
+                    if let Some(action) = self.dsp_view.show(ui, &self.current_theme) {
                         match action {
                             DspAction::SinkTypeChanged(sink_type) => {
                                 tracing::info!("DSP sink type changed: {:?}", sink_type);
@@ -2597,8 +2597,39 @@ impl eframe::App for AaeqApp {
 
                     ui.add_space(20.0);
 
-                    // Future settings can be added here
-                    ui.label("More settings will be added here in the future.");
+                    // About section
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("About").strong().size(16.0));
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Version:");
+                            ui.label(egui::RichText::new("0.5.0").strong());
+                        });
+
+                        ui.add_space(5.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Author:");
+                            ui.hyperlink_to("Jascha Wanger", "https://jascha.me");
+                            ui.label("/");
+                            ui.hyperlink_to("Tarnover, LLC", "https://tarnover.com");
+                        });
+
+                        ui.add_space(5.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("License:");
+                            ui.label("MIT");
+                        });
+
+                        ui.add_space(5.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Project:");
+                            ui.hyperlink_to("https://github.com/jaschadub/AAEQ", "https://github.com/jaschadub/AAEQ");
+                        });
+                    });
                 });
             }
         }
