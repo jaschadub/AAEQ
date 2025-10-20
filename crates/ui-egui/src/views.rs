@@ -115,7 +115,13 @@ impl EqEditorView {
 
             ui.horizontal(|ui| {
                 ui.label("Preset Name:");
-                let response = ui.text_edit_singleline(&mut self.preset_name);
+                let text_edit = egui::TextEdit::singleline(&mut self.preset_name);
+                let response = ui.add(text_edit);
+
+                // Auto-select text on first open for easy editing
+                if !self.edit_mode && (self.preset_name == "Custom" || self.preset_name.starts_with("Custom ")) {
+                    response.request_focus();
+                }
 
                 // Check for name conflict when text changes
                 if response.changed() {
@@ -128,6 +134,10 @@ impl EqEditorView {
                     }
                 }
             });
+
+            // Check if using generic auto-generated name
+            let is_generic_name = self.preset_name == "Custom" ||
+                                  self.preset_name.starts_with("Custom ");
 
             // Show error message if name is invalid with auto-fix button
             if let Some(error) = &self.name_error.clone() {
@@ -147,6 +157,15 @@ impl EqEditorView {
                             self.name_error = None;
                         }
                     }
+                });
+            } else if is_generic_name && !self.edit_mode {
+                // Friendly reminder to use descriptive names
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("💡 Tip: Use a descriptive name like 'Bass Boost', 'Vocal Clarity', 'Headphones', etc.")
+                            .color(egui::Color32::from_rgb(200, 200, 100))
+                            .italics()
+                    );
                 });
             }
 

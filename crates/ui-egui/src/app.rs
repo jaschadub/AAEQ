@@ -1938,12 +1938,17 @@ impl eframe::App for AaeqApp {
                     self.status_message = Some(format!("Editing preset: {}", preset_name));
                 }
                 AppResponse::CustomPresetDeleted(preset_name) => {
+                    tracing::info!("Preset '{}' deleted. Current preset: {:?}, DSP streaming: {}",
+                        preset_name, self.current_preset, self.dsp_view.is_streaming);
+
                     self.status_message = Some(format!("Deleted preset: {}", preset_name));
 
                     // If this preset is currently active, revert to Flat EQ
                     let is_active = self.current_preset.as_ref() == Some(&preset_name);
 
                     if is_active {
+                        tracing::info!("Deleted preset '{}' is currently active", preset_name);
+
                         // DSP mode: apply flat preset directly
                         if self.dsp_view.is_streaming {
                             tracing::info!("Deleted preset '{}' was active during DSP streaming - reverting to Flat EQ", preset_name);
@@ -1964,7 +1969,11 @@ impl eframe::App for AaeqApp {
                             // Load Flat curve for display
                             let _ = self.command_tx.send(AppCommand::LoadPresetCurve("Flat".to_string()));
                             self.status_message = Some(format!("Deleted preset '{}' - reverted to Flat", preset_name));
+                        } else {
+                            tracing::warn!("Deleted preset '{}' was active but neither DSP nor WiiM mode is active", preset_name);
                         }
+                    } else {
+                        tracing::info!("Deleted preset '{}' was not active, no need to revert", preset_name);
                     }
 
                     // If deleted preset was selected, clear selection
