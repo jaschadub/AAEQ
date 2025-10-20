@@ -20,8 +20,8 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
       <p align="center"><em>EQ Management Mode</em></p>
     </td>
     <td width="50%">
-      <img src="docs/screenshot2.png" alt="AAEQ DSP Streaming Mode" />
-      <p align="center"><em>DSP Streaming Mode</em></p>
+      <img src="docs/screenshot3.png" alt="AAEQ DSP Streaming Mode" />
+      <p align="center"><em>DSP Streaming Mode with Vintage Theme</em></p>
     </td>
   </tr>
 </table>
