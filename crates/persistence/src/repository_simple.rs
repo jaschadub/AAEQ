@@ -856,7 +856,10 @@ impl DspSettingsRepository {
     pub async fn get_by_profile(&self, profile_id: i64) -> Result<Option<DspSettings>> {
         let row = sqlx::query(
             r#"SELECT id, profile_id, sample_rate, buffer_ms, headroom_db,
-                      auto_compensate, clip_detection, created_at, updated_at
+                      auto_compensate, clip_detection,
+                      dither_enabled, dither_mode, noise_shaping, target_bits,
+                      resample_enabled, resample_quality, target_sample_rate,
+                      created_at, updated_at
                FROM dsp_profile_settings
                WHERE profile_id = ?"#
         )
@@ -872,8 +875,15 @@ impl DspSettingsRepository {
             headroom_db: r.get(4),
             auto_compensate: r.get::<i32, _>(5) != 0, // Convert SQLite integer to bool
             clip_detection: r.get::<i32, _>(6) != 0,   // Convert SQLite integer to bool
-            created_at: r.get(7),
-            updated_at: r.get(8),
+            dither_enabled: r.get::<i32, _>(7) != 0,   // Convert SQLite integer to bool
+            dither_mode: r.get(8),
+            noise_shaping: r.get(9),
+            target_bits: r.get::<i32, _>(10) as u8,    // Convert i32 to u8
+            resample_enabled: r.get::<i32, _>(11) != 0, // Convert SQLite integer to bool
+            resample_quality: r.get(12),
+            target_sample_rate: r.get(13),
+            created_at: r.get(14),
+            updated_at: r.get(15),
         }))
     }
 
@@ -884,14 +894,24 @@ impl DspSettingsRepository {
         sqlx::query(
             r#"INSERT INTO dsp_profile_settings
                (profile_id, sample_rate, buffer_ms, headroom_db,
-                auto_compensate, clip_detection, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                auto_compensate, clip_detection,
+                dither_enabled, dither_mode, noise_shaping, target_bits,
+                resample_enabled, resample_quality, target_sample_rate,
+                created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(profile_id) DO UPDATE SET
                    sample_rate = excluded.sample_rate,
                    buffer_ms = excluded.buffer_ms,
                    headroom_db = excluded.headroom_db,
                    auto_compensate = excluded.auto_compensate,
                    clip_detection = excluded.clip_detection,
+                   dither_enabled = excluded.dither_enabled,
+                   dither_mode = excluded.dither_mode,
+                   noise_shaping = excluded.noise_shaping,
+                   target_bits = excluded.target_bits,
+                   resample_enabled = excluded.resample_enabled,
+                   resample_quality = excluded.resample_quality,
+                   target_sample_rate = excluded.target_sample_rate,
                    updated_at = ?
             "#
         )
@@ -901,6 +921,13 @@ impl DspSettingsRepository {
         .bind(settings.headroom_db)
         .bind(if settings.auto_compensate { 1 } else { 0 }) // Convert bool to integer
         .bind(if settings.clip_detection { 1 } else { 0 })   // Convert bool to integer
+        .bind(if settings.dither_enabled { 1 } else { 0 })   // Convert bool to integer
+        .bind(&settings.dither_mode)
+        .bind(&settings.noise_shaping)
+        .bind(settings.target_bits as i32)                   // Convert u8 to i32 for SQLite
+        .bind(if settings.resample_enabled { 1 } else { 0 }) // Convert bool to integer
+        .bind(&settings.resample_quality)
+        .bind(settings.target_sample_rate)
         .bind(now)
         .bind(now)
         .bind(now) // For the UPDATE SET updated_at
@@ -924,7 +951,10 @@ impl DspSettingsRepository {
     pub async fn list_all(&self) -> Result<Vec<DspSettings>> {
         let rows = sqlx::query(
             r#"SELECT id, profile_id, sample_rate, buffer_ms, headroom_db,
-                      auto_compensate, clip_detection, created_at, updated_at
+                      auto_compensate, clip_detection,
+                      dither_enabled, dither_mode, noise_shaping, target_bits,
+                      resample_enabled, resample_quality, target_sample_rate,
+                      created_at, updated_at
                FROM dsp_profile_settings
                ORDER BY profile_id"#
         )
@@ -939,8 +969,15 @@ impl DspSettingsRepository {
             headroom_db: r.get(4),
             auto_compensate: r.get::<i32, _>(5) != 0,
             clip_detection: r.get::<i32, _>(6) != 0,
-            created_at: r.get(7),
-            updated_at: r.get(8),
+            dither_enabled: r.get::<i32, _>(7) != 0,
+            dither_mode: r.get(8),
+            noise_shaping: r.get(9),
+            target_bits: r.get::<i32, _>(10) as u8,
+            resample_enabled: r.get::<i32, _>(11) != 0,
+            resample_quality: r.get(12),
+            target_sample_rate: r.get(13),
+            created_at: r.get(14),
+            updated_at: r.get(15),
         }).collect())
     }
 }

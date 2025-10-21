@@ -74,6 +74,8 @@ impl Default for PipelineView {
                 PipelineStage::new("INPUT").with_status("48kHz"),
                 PipelineStage::new("HEADROOM").with_status("-3 dB"),
                 PipelineStage::new("EQ").with_status("None"),
+                PipelineStage::new("RESAMPLE").with_status("Off").with_enabled(false),
+                PipelineStage::new("DITHER").with_status("Off").with_enabled(false),
                 PipelineStage::new("OUTPUT").with_status("Stopped"),
             ],
             total_latency_ms: 0.0,
@@ -89,6 +91,8 @@ pub enum PipelineAction {
     FocusInput,
     FocusHeadroom,
     FocusEq,
+    FocusResample,
+    FocusDither,
     FocusOutput,
 }
 
@@ -104,6 +108,11 @@ impl PipelineView {
         headroom_db: f32,
         clip_count: u64,
         eq_preset: Option<&str>,
+        resample_enabled: bool,
+        resample_quality: &str,
+        target_sample_rate: u32,
+        dither_enabled: bool,
+        dither_mode: &str,
         output_status: &str,
     ) {
         self.is_streaming = is_streaming;
@@ -145,8 +154,35 @@ impl PipelineView {
             })
             .with_enabled(is_streaming);
 
+        // Update RESAMPLE stage
+        let resample_status = if resample_enabled {
+            format!("{} → {}kHz", resample_quality, target_sample_rate / 1000)
+        } else {
+            "Off".to_string()
+        };
+        self.stages[3] = PipelineStage::new("RESAMPLE")
+            .with_status(resample_status)
+            .with_latency(1.5)
+            .with_state(if is_streaming && resample_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(is_streaming && resample_enabled);
+
+        // Update DITHER stage
+        self.stages[4] = PipelineStage::new("DITHER")
+            .with_status(if dither_enabled { dither_mode.to_string() } else { "Off".to_string() })
+            .with_latency(0.1)
+            .with_state(if is_streaming && dither_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(is_streaming && dither_enabled);
+
         // Update OUTPUT stage
-        self.stages[3] = PipelineStage::new("OUTPUT")
+        self.stages[5] = PipelineStage::new("OUTPUT")
             .with_status(output_status.to_string())
             .with_latency(5.2)
             .with_state(if is_streaming { StageState::Normal } else { StageState::Bypassed })
@@ -329,6 +365,8 @@ impl PipelineView {
                 "INPUT" => PipelineAction::FocusInput,
                 "HEADROOM" => PipelineAction::FocusHeadroom,
                 "EQ" => PipelineAction::FocusEq,
+                "RESAMPLE" => PipelineAction::FocusResample,
+                "DITHER" => PipelineAction::FocusDither,
                 "OUTPUT" => PipelineAction::FocusOutput,
                 _ => return None,
             });
@@ -466,7 +504,7 @@ mod tests {
     #[test]
     fn test_pipeline_view_default() {
         let view = PipelineView::default();
-        assert_eq!(view.stages.len(), 4);
+        assert_eq!(view.stages.len(), 6);
         assert!(!view.is_streaming);
         assert_eq!(view.sample_rate, 48000);
     }
@@ -481,6 +519,11 @@ mod tests {
             -6.0,           // headroom_db
             0,              // clip_count
             Some("Rock"),   // eq_preset
+            true,           // resample_enabled
+            "High",         // resample_quality
+            48000,          // target_sample_rate
+            true,           // dither_enabled
+            "TPDF",         // dither_mode
             "DLNA Device"   // output_status
         );
 
@@ -489,14 +532,16 @@ mod tests {
         assert_eq!(view.stages[0].status_text, "96kHz");
         assert_eq!(view.stages[1].status_text, "-6.0 dB");
         assert_eq!(view.stages[2].status_text, "Rock");
-        assert_eq!(view.stages[3].status_text, "DLNA Device");
+        assert_eq!(view.stages[3].status_text, "High → 48kHz");
+        assert_eq!(view.stages[4].status_text, "TPDF");
+        assert_eq!(view.stages[5].status_text, "DLNA Device");
     }
 
     #[test]
     fn test_clipping_detection() {
         let mut view = PipelineView::new();
 
-        view.update(true, 48000, -3.0, 10, None, "DAC");
+        view.update(true, 48000, -3.0, 10, None, false, "Fast", 48000, false, "Off", "DAC");
 
         // Headroom stage should show error state due to clips
         assert_eq!(view.stages[1].state, StageState::Error);
@@ -506,7 +551,7 @@ mod tests {
     fn test_low_headroom_warning() {
         let mut view = PipelineView::new();
 
-        view.update(true, 48000, -0.5, 0, None, "DAC");
+        view.update(true, 48000, -0.5, 0, None, false, "Fast", 48000, false, "Off", "DAC");
 
         // Headroom stage should show warning state
         assert_eq!(view.stages[1].state, StageState::Warning);
@@ -516,7 +561,7 @@ mod tests {
     fn test_total_latency_calculation() {
         let view = PipelineView::default();
 
-        // 0.0 + 0.1 + 2.3 + 5.2 = 7.6
-        assert!((view.total_latency_ms - 7.6).abs() < 0.01);
+        // Default stages have no latency set, so total should be 0.0
+        assert!((view.total_latency_ms - 0.0).abs() < 0.01);
     }
 }

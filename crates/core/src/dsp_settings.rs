@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// DSP configuration settings for a profile
 ///
 /// Stores audio processing parameters like sample rate, buffer size,
-/// and headroom control settings. Each profile can have its own DSP configuration.
+/// headroom control, dithering, and resampling settings. Each profile can have its own DSP configuration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DspSettings {
     pub id: Option<i64>,
@@ -13,6 +13,13 @@ pub struct DspSettings {
     pub headroom_db: f32,
     pub auto_compensate: bool,
     pub clip_detection: bool,
+    pub dither_enabled: bool,
+    pub dither_mode: String, // DitherMode as string: "None", "Rectangular", "Triangular", "Gaussian"
+    pub noise_shaping: String, // NoiseShaping as string: "None", "FirstOrder", "SecondOrder", "Gesemann"
+    pub target_bits: u8,
+    pub resample_enabled: bool,
+    pub resample_quality: String, // ResamplerQuality as string: "Fast", "Balanced", "High", "Ultra"
+    pub target_sample_rate: u32,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -27,6 +34,13 @@ impl Default for DspSettings {
             headroom_db: -3.0,
             auto_compensate: false,
             clip_detection: true,
+            dither_enabled: false,
+            dither_mode: "Triangular".to_string(), // TPDF is industry standard
+            noise_shaping: "None".to_string(),
+            target_bits: 16,
+            resample_enabled: false,
+            resample_quality: "Balanced".to_string(), // Balanced is recommended
+            target_sample_rate: 48000, // 48 kHz is studio standard
             created_at: 0, // Will be set by persistence layer
             updated_at: 0, // Will be set by persistence layer
         }
@@ -57,6 +71,13 @@ impl DspSettings {
             headroom_db,
             auto_compensate: false,
             clip_detection: true,
+            dither_enabled: false,
+            dither_mode: "Triangular".to_string(),
+            noise_shaping: "None".to_string(),
+            target_bits: 16,
+            resample_enabled: false,
+            resample_quality: "Balanced".to_string(),
+            target_sample_rate: 48000,
             created_at: 0,  // Will be set by persistence layer
             updated_at: 0,  // Will be set by persistence layer
         }
@@ -76,6 +97,10 @@ mod tests {
         assert_eq!(settings.headroom_db, -3.0);
         assert!(!settings.auto_compensate);
         assert!(settings.clip_detection);
+        assert!(!settings.dither_enabled);
+        assert_eq!(settings.dither_mode, "Triangular");
+        assert_eq!(settings.noise_shaping, "None");
+        assert_eq!(settings.target_bits, 16);
     }
 
     #[test]
