@@ -509,7 +509,6 @@ impl LocalDacInput {
         _cfg: OutputConfig,
         tx: mpsc::Sender<Vec<f64>>,
     ) -> Result<mpsc::Sender<()>> {
-        use std::sync::atomic::{AtomicBool, Ordering};
 
         // Extract clean device name (remove emoji and "(Loopback)")
         let clean_name = device_name

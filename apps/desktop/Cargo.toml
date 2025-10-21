@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[package.metadata.wix]
+upgrade-guid = "3C8E6B8A-9C8D-4E9A-8A7D-6F5E4D3C2B1A"
+path-guid = "4D9F7C8B-8D7E-5F8B-9B8E-7F6E5D4C3B2A"
+license = false
+eula = false
+
 [[bin]]
 name = "aaeq"
 path = "src/main.rs"
