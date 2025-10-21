@@ -26,9 +26,9 @@ Transform AAEQ into a next-generation intelligent audio processing platform that
 | Advanced DSP Tab (Phase 1) | **HIGH** | Medium | High | Medium |
 | Dithering & Noise Shaping | MEDIUM | Medium | Medium | Low |
 | High-Rate Resampling | MEDIUM | High | Medium | Medium |
+| AAEQ Node Protocol (ANP) | MEDIUM | High | Medium | Medium |
 | Room Correction/Convolution | MEDIUM | High | High | High |
 | Filter Design Options | LOW | High | Medium | High |
-| NAA-like Protocol | LOW | Very High | Low | High |
 
 ---
 
@@ -166,10 +166,10 @@ CREATE TABLE dsp_profile_settings (
 
 ---
 
-### **Phase 2: DSP Quality Enhancements** (v0.8.0 - v0.9.0)
+### **Phase 2: DSP Quality Enhancements & Network Protocol** (v0.8.0 - v0.9.0)
 *Target: 3-4 months | Priority: MEDIUM | Risk: MEDIUM*
 
-Core DSP improvements that enhance audio quality.
+Core DSP improvements that enhance audio quality plus custom network audio protocol.
 
 #### 2.1 Dithering & Noise Shaping
 **Goal:** High-quality bit-depth reduction
@@ -343,6 +343,138 @@ impl HighQualityResampler {
 
 ---
 
+#### 2.3 AAEQ Node Protocol (ANP) v0.2
+**Goal:** High-fidelity, low-latency, bit-perfect network audio protocol for AAEQ Nodes
+
+**Vision:**
+Transform AAEQ into a distributed audio system where AAEQ Server handles DSP/EQ intelligence and AAEQ Nodes provide high-quality network endpoints. Targets < 2 ms jitter, < 10 ppm drift, bit-perfect delivery.
+
+**Protocol Design:**
+
+```rust
+// crates/aaeq-anp/src/protocol.rs (new crate)
+pub struct AnpSession {
+    version: String,  // "0.2"
+    sample_rate: u32,
+    bit_depth: BitDepth,
+    channels: u8,
+    features: Vec<AnpFeature>,
+    latency_comp: LatencyCompensation,
+}
+
+pub enum BitDepth {
+    S16,
+    S24,
+    F32,
+    DoP,      // DSD over PCM
+    DSD256,   // Native DSD
+}
+
+pub enum AnpFeature {
+    MicroPLL,        // Drift correction via resampling
+    RtHint,          // Real-time scheduling hints
+    LatencyCAL,      // Latency calibration
+    DSD,             // Native DSD support
+    CrcVerify,       // Bit-perfect verification
+}
+
+pub struct LatencyCompensation {
+    dac_ms: f64,
+    pipeline_ms: f64,
+    mode: CompMode,  // Off | Estimate | Exact
+}
+```
+
+**Key Features:**
+
+1. **Micro-PLL Drift Correction**
+   - Receiver reports drift in Health messages
+   - Sender adjusts pacing using fractional resampler
+   - Target: ≤ ±5 ppm drift error
+
+2. **Real-Time Scheduling**
+   - Optional RT priority hints (SCHED_FIFO on Linux)
+   - Advisory only, not enforced by protocol
+
+3. **Latency Calibration**
+   - Receiver advertises measured pipeline latency
+   - Sender aligns RTP timestamps for sample-accurate sync
+   - Enables gapless playback between tracks
+
+4. **DSD / DoP Support**
+   - Native 1-bit audio transport
+   - DoP mode for compatibility
+
+5. **Bit-Perfect Verification**
+   - CRC32 checksum every N frames
+   - Receiver reports mismatches in Health
+
+**Discovery (mDNS):**
+```
+_aaeq-anp._tcp.local.
+TXT: _ver=0.2
+     _sr=44100,48000,96000,192000
+     _bd=S16,S24,F32,DoP
+     _ch=2
+     _features=micro_pll,rt_hint,crc_verify
+     _ctrl=wss://10.0.0.10:7443
+```
+
+**Transport:**
+- RTP over UDP for audio
+- WebSocket (wss://) for control channel
+- Session negotiation with feature flags
+- Health telemetry every 100ms
+
+**Implementation:**
+```rust
+// crates/aaeq-anp (new crate structure)
+// ├── src/
+// │   ├── protocol.rs    - Protocol definitions
+// │   ├── server.rs      - ANP server (sender)
+// │   ├── client.rs      - ANP client (node receiver)
+// │   ├── discovery.rs   - mDNS discovery
+// │   ├── drift.rs       - Micro-PLL drift correction
+// │   └── lib.rs
+```
+
+**Rust Crates Required:**
+- `tokio` (already in project) - Async runtime
+- `rtp` or custom RTP implementation - RTP transport
+- `rubato = "0.15"` - Fractional resampling for drift correction
+- `crc32fast` - CRC verification
+- `mdns-sd` - mDNS discovery
+- `axum` + `tokio-tungstenite` (already in project) - WebSocket control
+
+**Integration Points:**
+- Add ANP as output sink option in DspView (alongside Local DAC, DLNA, AirPlay)
+- Stream server creates ANP server when ANP sink selected
+- Separate AAEQ Node application acts as ANP client
+
+**Performance Targets:**
+- End-to-end latency: ≤ 5 ms (LAN)
+- Jitter RMS: ≤ 250 µs
+- Drift error: ≤ ± 5 ppm
+- Dropout rate: < 1 / 10⁷ packets
+- CRC error rate: 0% (bit-perfect)
+
+**Future Extensions (v0.3+):**
+- Convolution IR negotiation for room correction
+- Hardware feedback channel (DAC temp, clipping)
+- Encrypted SRTP with AES-GCM
+- Hierarchical stream sync (PTP clock domain)
+- Adaptive packet sizing for Wi-Fi
+
+**UI Elements:**
+- "ANP Node" output type in DSP sink selector
+- Node discovery (show available ANP nodes on network)
+- Per-node latency and drift monitoring
+- Bit-perfect verification status indicator
+
+**Estimated Effort:** 6-8 weeks (protocol implementation + node application)
+
+---
+
 ### **Phase 3: Advanced Features** (v1.0.0+)
 *Target: 6+ months | Priority: LOW-MEDIUM | Risk: HIGH*
 
@@ -453,78 +585,24 @@ impl FilterDesigner {
 
 ---
 
-#### 3.3 AAEQ Network Audio Adapter (NAA) Protocol
-**Goal:** Custom low-latency Rust-to-Rust streaming
-
-**Implementation:**
-```rust
-// crates/aaeq-naa (new crate)
-pub struct AaeqNaaServer {
-    bind_addr: SocketAddr,
-    codec: AudioCodec,
-    buffer_ms: u32,
-}
-
-pub enum AudioCodec {
-    PCM { sample_rate: u32, bit_depth: u8 },
-    Flac { compression: u8 },
-}
-
-impl AaeqNaaServer {
-    pub async fn start(&mut self) -> Result<()> {
-        let listener = TcpListener::bind(self.bind_addr).await?;
-
-        loop {
-            let (stream, addr) = listener.accept().await?;
-            tracing::info!("NAA client connected: {}", addr);
-
-            tokio::spawn(self.handle_client(stream));
-        }
-    }
-
-    async fn handle_client(&self, mut stream: TcpStream) -> Result<()> {
-        // Custom protocol:
-        // 1. Handshake (capabilities negotiation)
-        // 2. Format setup (sample rate, channels, codec)
-        // 3. Streaming loop (minimal overhead)
-    }
-}
-```
-
-**Protocol Design:**
-```
-AAEQ NAA Protocol v1.0
-
-Handshake:
-  Client → Server: AAEQ_NAA\n<version>\n<capabilities>
-  Server → Client: OK\n<format>\n<buffer_size>
-
-Stream Frame:
-  [4 bytes] timestamp (ms)
-  [2 bytes] payload size
-  [N bytes] audio data (PCM/FLAC)
-```
-
-**Estimated Effort:** 8-12 weeks (full protocol design + implementation)
-
----
-
 ## 🛠️ Technical Dependencies
 
 ### New Rust Crates Required
 
 | Crate | Purpose | Priority | Version |
 |-------|---------|----------|---------|
-| `rubato` | High-quality resampling | Phase 2 | 0.15 |
+| `rubato` | High-quality resampling + ANP drift correction | Phase 2 | 0.15 |
+| `crc32fast` | ANP bit-perfect verification | Phase 2 | 1.3 |
+| `mdns-sd` | ANP node discovery | Phase 2 | 0.7 |
 | `hound` | WAV file I/O | Phase 3 | 3.5 |
 | `rand` | Dithering RNG | Phase 2 | 0.8 (already in) |
 | `fir` | FIR filter design | Phase 3 | 0.6 (optional) |
 
 ### Architecture Changes
 
-**Phase 1:** Minimal (add views, extend settings)
-**Phase 2:** Moderate (new DSP stages in pipeline)
-**Phase 3:** Major (new crates, protocol design)
+**Phase 1:** Minimal (add views, extend settings, new DSP stages)
+**Phase 2:** Moderate (advanced DSP, new `aaeq-anp` crate for protocol)
+**Phase 3:** Major (room correction, advanced filters)
 
 ---
 
@@ -628,14 +706,16 @@ Stream Frame:
 - Dithering & noise shaping
 - High-rate resampling
 - Quality modes
+- AAEQ Node Protocol (ANP) - foundation
 
-### v0.9.0 - "Advanced DSP"
-- Filter design options
+### v0.9.0 - "Network & Room Correction"
+- ANP - full implementation
 - Room correction (basic)
+- Filter design options
 
 ### v1.0.0 - "Mastering Suite"
 - Full convolution engine
-- AAEQ NAA protocol
+- Advanced room EQ
 - Complete HQPlayer feature parity (where relevant)
 
 ---

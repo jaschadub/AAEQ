@@ -301,6 +301,51 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Set auto_reconnect = 1 for existing app_settings rows");
     }
 
+    // Migration 010: DSP Profile Settings
+    let dsp_settings_table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='dsp_profile_settings'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !dsp_settings_table_exists {
+        sqlx::query(r#"
+            CREATE TABLE dsp_profile_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id INTEGER NOT NULL,
+                sample_rate INTEGER NOT NULL DEFAULT 48000,
+                buffer_ms INTEGER NOT NULL DEFAULT 150,
+                headroom_db REAL NOT NULL DEFAULT -3.0,
+                auto_compensate INTEGER NOT NULL DEFAULT 0,
+                clip_detection INTEGER NOT NULL DEFAULT 1,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (profile_id) REFERENCES profile(id) ON DELETE CASCADE,
+                UNIQUE(profile_id)
+            );
+
+            CREATE INDEX idx_dsp_profile_settings_profile ON dsp_profile_settings(profile_id);
+        "#)
+        .execute(pool)
+        .await?;
+
+        // Insert default DSP settings for existing profiles
+        sqlx::query(r#"
+            INSERT OR IGNORE INTO dsp_profile_settings (
+                profile_id, sample_rate, buffer_ms, headroom_db,
+                auto_compensate, clip_detection, created_at, updated_at
+            )
+            SELECT id, 48000, 150, -3.0, 0, 1,
+                   strftime('%s', 'now'), strftime('%s', 'now')
+            FROM profile
+        "#)
+        .execute(pool)
+        .await?;
+
+        tracing::info!("Added DSP profile settings table with defaults for existing profiles");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

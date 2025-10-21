@@ -1,4 +1,4 @@
-use aaeq_core::{Device, Mapping, Profile, Scope};
+use aaeq_core::{Device, DspSettings, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use chrono::Utc;
@@ -839,5 +839,108 @@ impl ProfileRepository {
             .await?;
 
         Ok(())
+    }
+}
+
+/// Repository for DSP settings operations
+pub struct DspSettingsRepository {
+    pool: SqlitePool,
+}
+
+impl DspSettingsRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Get DSP settings for a specific profile
+    pub async fn get_by_profile(&self, profile_id: i64) -> Result<Option<DspSettings>> {
+        let row = sqlx::query(
+            r#"SELECT id, profile_id, sample_rate, buffer_ms, headroom_db,
+                      auto_compensate, clip_detection, created_at, updated_at
+               FROM dsp_profile_settings
+               WHERE profile_id = ?"#
+        )
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| DspSettings {
+            id: Some(r.get(0)),
+            profile_id: r.get(1),
+            sample_rate: r.get(2),
+            buffer_ms: r.get(3),
+            headroom_db: r.get(4),
+            auto_compensate: r.get::<i32, _>(5) != 0, // Convert SQLite integer to bool
+            clip_detection: r.get::<i32, _>(6) != 0,   // Convert SQLite integer to bool
+            created_at: r.get(7),
+            updated_at: r.get(8),
+        }))
+    }
+
+    /// Create or update DSP settings for a profile
+    pub async fn upsert(&self, settings: &DspSettings) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            r#"INSERT INTO dsp_profile_settings
+               (profile_id, sample_rate, buffer_ms, headroom_db,
+                auto_compensate, clip_detection, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(profile_id) DO UPDATE SET
+                   sample_rate = excluded.sample_rate,
+                   buffer_ms = excluded.buffer_ms,
+                   headroom_db = excluded.headroom_db,
+                   auto_compensate = excluded.auto_compensate,
+                   clip_detection = excluded.clip_detection,
+                   updated_at = ?
+            "#
+        )
+        .bind(settings.profile_id)
+        .bind(settings.sample_rate)
+        .bind(settings.buffer_ms)
+        .bind(settings.headroom_db)
+        .bind(if settings.auto_compensate { 1 } else { 0 }) // Convert bool to integer
+        .bind(if settings.clip_detection { 1 } else { 0 })   // Convert bool to integer
+        .bind(now)
+        .bind(now)
+        .bind(now) // For the UPDATE SET updated_at
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete DSP settings for a profile
+    pub async fn delete(&self, profile_id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM dsp_profile_settings WHERE profile_id = ?")
+            .bind(profile_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Get all DSP settings (useful for debugging/admin)
+    pub async fn list_all(&self) -> Result<Vec<DspSettings>> {
+        let rows = sqlx::query(
+            r#"SELECT id, profile_id, sample_rate, buffer_ms, headroom_db,
+                      auto_compensate, clip_detection, created_at, updated_at
+               FROM dsp_profile_settings
+               ORDER BY profile_id"#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| DspSettings {
+            id: Some(r.get(0)),
+            profile_id: r.get(1),
+            sample_rate: r.get(2),
+            buffer_ms: r.get(3),
+            headroom_db: r.get(4),
+            auto_compensate: r.get::<i32, _>(5) != 0,
+            clip_detection: r.get::<i32, _>(6) != 0,
+            created_at: r.get(7),
+            updated_at: r.get(8),
+        }).collect())
     }
 }
