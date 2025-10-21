@@ -346,6 +346,64 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added DSP profile settings table with defaults for existing profiles");
     }
 
+    // Migration 011: Add dithering settings to DSP profile settings
+    // Check if dither_enabled column exists
+    let dither_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('dsp_profile_settings') WHERE name='dither_enabled'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !dither_column_exists {
+        tracing::info!("Adding dithering columns to dsp_profile_settings table");
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN dither_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN dither_mode TEXT NOT NULL DEFAULT 'Triangular'")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN noise_shaping TEXT NOT NULL DEFAULT 'None'")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN target_bits INTEGER NOT NULL DEFAULT 16")
+            .execute(pool)
+            .await?;
+
+        tracing::info!("Added dithering settings columns to dsp_profile_settings table");
+    }
+
+    // Migration 012: Add resampling settings to DSP profile settings
+    // Check if resample_enabled column exists
+    let resample_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('dsp_profile_settings') WHERE name='resample_enabled'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !resample_column_exists {
+        tracing::info!("Adding resampling columns to dsp_profile_settings table");
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN resample_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN resample_quality TEXT NOT NULL DEFAULT 'Balanced'")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN target_sample_rate INTEGER NOT NULL DEFAULT 48000")
+            .execute(pool)
+            .await?;
+
+        tracing::info!("Added resampling settings columns to dsp_profile_settings table");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

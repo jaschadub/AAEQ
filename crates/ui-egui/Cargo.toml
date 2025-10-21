@@ -8,6 +8,7 @@ license.workspace = true
 aaeq-core = { path = "../core" }
 aaeq-persistence = { path = "../persistence" }
 aaeq-device-wiim = { path = "../device-wiim" }
+aaeq-media-session = { path = "../media-session" }
 stream-server = { path = "../stream-server" }
 eframe = { workspace = true }
 egui = { workspace = true }

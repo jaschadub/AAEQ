@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use stream_server::{OutputConfig, SampleFormat, LocalDacSink, DlnaSink, OutputManager, AudioBlock, SinkStats, EqProcessor};
+use stream_server::dsp::{Dither, DitherMode, NoiseShaping, Resampler, ResamplerQuality};
 
 /// Application mode tabs
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,6 +33,18 @@ enum ProfileDialogMode {
     Create,
     Rename,
     Delete,
+}
+
+/// DSP runtime configuration
+#[derive(Clone, Debug)]
+struct DspRuntimeConfig {
+    dither_enabled: bool,
+    dither_mode: DitherMode,
+    noise_shaping: NoiseShaping,
+    target_bits: u8,
+    resample_enabled: bool,
+    resample_quality: ResamplerQuality,
+    target_sample_rate: u32,
 }
 
 /// Commands that can be sent from UI to async worker
@@ -59,7 +72,7 @@ enum AppCommand {
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
-    DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
+    DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>, DspRuntimeConfig), // (sink_type, output_device, config, use_test_tone, input_device, preset_name, dsp_config)
     DspStopStreaming,
     DspChangePreset(String), // Change EQ preset during active streaming (loads from library/database)
     DspApplyPresetData(aaeq_core::EqPreset), // Apply preset data directly (for live preview)
@@ -79,7 +92,7 @@ enum AppResponse {
     DatabaseRestored(String), // (backup_path_used)
     Error(String),
     // DSP Responses
-    DspDevicesDiscovered(Vec<String>),
+    DspDevicesDiscovered(SinkType, Vec<String>),
     DspStreamingStarted,
     DspStreamingStopped,
     DspStreamStatus(StreamStatus),
@@ -260,6 +273,44 @@ impl AaeqApp {
                 self.dsp_view.headroom_db = settings.headroom_db;
                 self.dsp_view.auto_compensate = settings.auto_compensate;
                 self.dsp_view.clip_detection = settings.clip_detection;
+
+                // Load dithering settings
+                self.dsp_view.dither_enabled = settings.dither_enabled;
+                self.dsp_view.target_bits = settings.target_bits;
+
+                // Parse dither mode from string
+                use stream_server::dsp::DitherMode;
+                self.dsp_view.dither_mode = match settings.dither_mode.as_str() {
+                    "None" => DitherMode::None,
+                    "Rectangular" => DitherMode::Rectangular,
+                    "Triangular" => DitherMode::Triangular,
+                    "Gaussian" => DitherMode::Gaussian,
+                    _ => DitherMode::Triangular, // Default to TPDF if unknown
+                };
+
+                // Parse noise shaping from string
+                use stream_server::dsp::NoiseShaping;
+                self.dsp_view.noise_shaping = match settings.noise_shaping.as_str() {
+                    "None" => NoiseShaping::None,
+                    "FirstOrder" => NoiseShaping::FirstOrder,
+                    "SecondOrder" => NoiseShaping::SecondOrder,
+                    "Gesemann" => NoiseShaping::Gesemann,
+                    _ => NoiseShaping::None, // Default to None if unknown
+                };
+
+                // Load resampling settings
+                self.dsp_view.resample_enabled = settings.resample_enabled;
+                self.dsp_view.target_sample_rate = settings.target_sample_rate;
+
+                // Parse resample quality from string
+                use stream_server::dsp::ResamplerQuality;
+                self.dsp_view.resample_quality = match settings.resample_quality.as_str() {
+                    "Fast" => ResamplerQuality::Fast,
+                    "Balanced" => ResamplerQuality::Balanced,
+                    "High" => ResamplerQuality::High,
+                    "Ultra" => ResamplerQuality::Ultra,
+                    _ => ResamplerQuality::Balanced, // Default to Balanced if unknown
+                };
             }
             Ok(None) => {
                 tracing::info!("No DSP settings found for active profile, using defaults");
@@ -777,14 +828,19 @@ impl AaeqApp {
                 }
 
                 AppCommand::SaveDspSettings(settings) => {
+                    tracing::info!("📥 Received SaveDspSettings command for profile {}: dither_enabled={}, mode={}, shaping={}, bits={}",
+                        settings.profile_id, settings.dither_enabled, settings.dither_mode, settings.noise_shaping, settings.target_bits);
                     use aaeq_persistence::DspSettingsRepository;
                     let dsp_repo = DspSettingsRepository::new(pool.clone());
-                    if let Err(e) = dsp_repo.upsert(&settings).await {
-                        tracing::error!("Failed to save DSP settings: {}", e);
-                        let _ = response_tx.send(AppResponse::Error(format!("Failed to save DSP settings: {}", e)));
-                    } else {
-                        tracing::info!("Saved DSP settings for profile {}", settings.profile_id);
-                        let _ = response_tx.send(AppResponse::DspSettingsSaved);
+                    match dsp_repo.upsert(&settings).await {
+                        Ok(_) => {
+                            tracing::info!("✅ Successfully saved DSP settings to database for profile {}", settings.profile_id);
+                            let _ = response_tx.send(AppResponse::DspSettingsSaved);
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to save DSP settings: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to save DSP settings: {}", e)));
+                        }
                     }
                 }
 
@@ -1060,15 +1116,15 @@ impl AaeqApp {
                                 let is_dsp_stream = track.title == "AAEQ Stream" || track.title == "414145512053747265616D";
 
                                 if is_dsp_stream {
-                                    // This is our DSP stream, get real metadata from MPRIS
-                                    tracing::debug!("Detected DSP stream, checking MPRIS for real track info");
-                                    match crate::mpris::get_now_playing_mpris() {
-                                        Ok(mpris_track) => {
-                                            track = mpris_track;
-                                            tracing::debug!("Using MPRIS track: {} - {}", track.artist, track.title);
+                                    // This is our DSP stream, get real metadata from media session
+                                    tracing::debug!("Detected DSP stream, checking media session for real track info");
+                                    match crate::media::get_now_playing() {
+                                        Ok(media_track) => {
+                                            track = media_track;
+                                            tracing::debug!("Using media session track: {} - {}", track.artist, track.title);
                                         }
                                         Err(e) => {
-                                            tracing::debug!("MPRIS not available: {}", e);
+                                            tracing::debug!("Media session not available: {}", e);
                                             // Keep the WiiM track (will show "AAEQ Stream")
                                         }
                                     }
@@ -1175,8 +1231,8 @@ impl AaeqApp {
                             }
                         }
                     } else {
-                        // No WiiM device connected, try MPRIS for DSP mode
-                        match crate::mpris::get_now_playing_mpris() {
+                        // No WiiM device connected, try media session for DSP mode
+                        match crate::media::get_now_playing() {
                             Ok(mut track) => {
                                 let track_key = track.track_key();
 
@@ -1246,7 +1302,7 @@ impl AaeqApp {
                             match LocalDacSink::list_devices() {
                                 Ok(devices) => {
                                     tracing::info!("Found {} local DAC devices", devices.len());
-                                    let _ = response_tx.send(AppResponse::DspDevicesDiscovered(devices));
+                                    let _ = response_tx.send(AppResponse::DspDevicesDiscovered(SinkType::LocalDac, devices));
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to list DAC devices: {}", e);
@@ -1288,7 +1344,7 @@ impl AaeqApp {
 
                             let device_names: Vec<String> = discovered_devices.iter().map(|d| d.name.clone()).collect();
                             tracing::info!("Found {} DLNA device(s) total", device_names.len());
-                            let _ = response_tx.send(AppResponse::DspDevicesDiscovered(device_names));
+                            let _ = response_tx.send(AppResponse::DspDevicesDiscovered(SinkType::Dlna, device_names));
                         }
                         SinkType::AirPlay => {
                             // Discover AirPlay devices
@@ -1302,7 +1358,7 @@ impl AaeqApp {
 
                                     let device_names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
                                     tracing::info!("Found {} AirPlay devices", device_names.len());
-                                    let _ = response_tx.send(AppResponse::DspDevicesDiscovered(device_names));
+                                    let _ = response_tx.send(AppResponse::DspDevicesDiscovered(SinkType::AirPlay, device_names));
                                 }
                                 Err(e) => {
                                     tracing::error!("Failed to discover AirPlay devices: {}", e);
@@ -1313,9 +1369,9 @@ impl AaeqApp {
                     }
                 }
 
-                AppCommand::DspStartStreaming(sink_type, device_name, config, use_test_tone, input_device, preset_name) => {
-                    tracing::info!("Starting DSP streaming: {:?} to device '{}' (test_tone: {}, input: {:?}, preset: {:?})",
-                        sink_type, device_name, use_test_tone, input_device, preset_name);
+                AppCommand::DspStartStreaming(sink_type, device_name, config, use_test_tone, input_device, preset_name, dsp_config) => {
+                    tracing::info!("Starting DSP streaming: {:?} to device '{}' (test_tone: {}, input: {:?}, preset: {:?}, dither: {})",
+                        sink_type, device_name, use_test_tone, input_device, preset_name, dsp_config.dither_enabled);
 
                     // Stop any existing stream first
                     if let Some(task) = streaming_task.take() {
@@ -1361,7 +1417,7 @@ impl AaeqApp {
                                 tracing::error!("DLNA device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_dlna_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("DLNA device '{}' not found in cache. Please run device discovery first.", device_name))
+                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
                             }
                         }
                         SinkType::AirPlay => {
@@ -1378,7 +1434,7 @@ impl AaeqApp {
                                 tracing::error!("AirPlay device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_airplay_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("AirPlay device '{}' not found in cache. Please run device discovery first.", device_name))
+                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
                             }
                         }
                     };
@@ -1507,6 +1563,25 @@ impl AaeqApp {
                                     }
                                 }
 
+                                // Initialize Dither processor
+                                let mut dither = Dither::new(
+                                    dsp_config.dither_mode,
+                                    dsp_config.noise_shaping,
+                                    dsp_config.target_bits,
+                                );
+                                tracing::info!("Dither initialized: enabled={}, mode={:?}, shaping={:?}, bits={}",
+                                    dsp_config.dither_enabled, dsp_config.dither_mode, dsp_config.noise_shaping, dsp_config.target_bits);
+
+                                // Initialize Resampler processor
+                                let mut resampler = Resampler::new(
+                                    dsp_config.resample_quality,
+                                    sample_rate,
+                                    dsp_config.target_sample_rate,
+                                    channels,
+                                ).expect("Failed to create resampler");
+                                tracing::info!("Resampler initialized: enabled={}, quality={:?}, {} Hz -> {} Hz",
+                                    dsp_config.resample_enabled, dsp_config.resample_quality, sample_rate, dsp_config.target_sample_rate);
+
                                 // Calculate precise interval for audio blocks
                                 let block_duration_ms = (frames_per_block as f64 / sample_rate as f64 * 1000.0) as u64;
                                 let mut interval = tokio::time::interval(Duration::from_millis(block_duration_ms));
@@ -1591,6 +1666,17 @@ impl AaeqApp {
                                             // Apply EQ processing
                                             eq_processor.process(&mut captured_samples);
 
+                                            // Apply resampling (after EQ, before dither)
+                                            if dsp_config.resample_enabled {
+                                                captured_samples = resampler.process(&captured_samples)
+                                                    .expect("Failed to resample audio");
+                                            }
+
+                                            // Apply dithering (after EQ & resample, before output)
+                                            if dsp_config.dither_enabled {
+                                                dither.process(&mut captured_samples);
+                                            }
+
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&captured_samples);
 
@@ -1603,7 +1689,13 @@ impl AaeqApp {
                                             let _ = tx.send(AppResponse::DspAudioSamples(viz_samples));
 
                                             // Create audio block from captured samples
-                                            let block = AudioBlock::new(&captured_samples, sample_rate, channels as u16);
+                                            // Use target sample rate if resampling is enabled, otherwise use original rate
+                                            let output_sample_rate = if dsp_config.resample_enabled {
+                                                dsp_config.target_sample_rate
+                                            } else {
+                                                sample_rate
+                                            };
+                                            let block = AudioBlock::new(&captured_samples, output_sample_rate, channels as u16);
 
                                             // Write to sink
                                             let mut mgr = manager.write().await;
@@ -1665,6 +1757,17 @@ impl AaeqApp {
                                             // Apply EQ processing
                                             eq_processor.process(&mut audio_data);
 
+                                            // Apply resampling (after EQ, before dither)
+                                            if dsp_config.resample_enabled {
+                                                audio_data = resampler.process(&audio_data)
+                                                    .expect("Failed to resample audio");
+                                            }
+
+                                            // Apply dithering (after EQ & resample, before output)
+                                            if dsp_config.dither_enabled {
+                                                dither.process(&mut audio_data);
+                                            }
+
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&audio_data);
 
@@ -1676,7 +1779,13 @@ impl AaeqApp {
                                                 .collect();
                                             let _ = tx.send(AppResponse::DspAudioSamples(viz_samples));
 
-                                            let block = AudioBlock::new(&audio_data, sample_rate, channels as u16);
+                                            // Use target sample rate if resampling is enabled, otherwise use original rate
+                                            let output_sample_rate = if dsp_config.resample_enabled {
+                                                dsp_config.target_sample_rate
+                                            } else {
+                                                sample_rate
+                                            };
+                                            let block = AudioBlock::new(&audio_data, output_sample_rate, channels as u16);
 
                                             // Write to sink
                                             let mut mgr = manager.write().await;
@@ -1814,6 +1923,33 @@ impl AaeqApp {
             }
         }
     }
+
+    /// Auto-save DSP settings to database when user changes them
+    fn auto_save_dsp_settings(&self) {
+        let settings = aaeq_core::DspSettings {
+            id: None,
+            profile_id: self.active_profile_id,
+            sample_rate: self.dsp_view.sample_rate,
+            buffer_ms: self.dsp_view.buffer_ms,
+            headroom_db: self.dsp_view.headroom_db,
+            auto_compensate: self.dsp_view.auto_compensate,
+            clip_detection: self.dsp_view.clip_detection,
+            dither_enabled: self.dsp_view.dither_enabled,
+            dither_mode: self.dsp_view.dither_mode.as_str().to_string(),
+            noise_shaping: self.dsp_view.noise_shaping.as_str().to_string(),
+            target_bits: self.dsp_view.target_bits,
+            resample_enabled: self.dsp_view.resample_enabled,
+            resample_quality: self.dsp_view.resample_quality.as_str().to_string(),
+            target_sample_rate: self.dsp_view.target_sample_rate,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        tracing::debug!("Auto-saving DSP settings: dither={}, resample={}, target_rate={}",
+            settings.dither_enabled, settings.resample_enabled, settings.target_sample_rate);
+
+        let _ = self.command_tx.send(AppCommand::SaveDspSettings(settings));
+    }
 }
 
 impl eframe::App for AaeqApp {
@@ -1934,10 +2070,23 @@ impl eframe::App for AaeqApp {
                     self.dsp_view.is_starting = false;
                 }
                 // DSP Responses
-                AppResponse::DspDevicesDiscovered(devices) => {
-                    self.dsp_view.available_devices = devices;
+                AppResponse::DspDevicesDiscovered(sink_type, devices) => {
+                    // Store devices in the appropriate list based on sink type
+                    match sink_type {
+                        SinkType::LocalDac => {
+                            self.dsp_view.available_local_devices = devices.clone();
+                        }
+                        SinkType::Dlna => {
+                            self.dsp_view.available_dlna_devices = devices.clone();
+                        }
+                        SinkType::AirPlay => {
+                            self.dsp_view.available_airplay_devices = devices.clone();
+                        }
+                    }
+                    // Also update legacy list for backwards compatibility
+                    self.dsp_view.available_devices = devices.clone();
                     self.dsp_view.discovering = false;
-                    self.status_message = Some(format!("Found {} device(s)", self.dsp_view.available_devices.len()));
+                    self.status_message = Some(format!("Found {} device(s)", devices.len()));
                 }
                 AppResponse::DspStreamingStarted => {
                     self.dsp_view.is_streaming = true;
@@ -2073,6 +2222,45 @@ impl eframe::App for AaeqApp {
                     self.dsp_view.headroom_db = settings.headroom_db;
                     self.dsp_view.auto_compensate = settings.auto_compensate;
                     self.dsp_view.clip_detection = settings.clip_detection;
+
+                    // Load dithering settings
+                    self.dsp_view.dither_enabled = settings.dither_enabled;
+                    self.dsp_view.target_bits = settings.target_bits;
+
+                    // Parse dither mode from string
+                    use stream_server::dsp::DitherMode;
+                    self.dsp_view.dither_mode = match settings.dither_mode.as_str() {
+                        "None" => DitherMode::None,
+                        "Rectangular" => DitherMode::Rectangular,
+                        "Triangular" => DitherMode::Triangular,
+                        "Gaussian" => DitherMode::Gaussian,
+                        _ => DitherMode::Triangular, // Default to TPDF if unknown
+                    };
+
+                    // Parse noise shaping from string
+                    use stream_server::dsp::NoiseShaping;
+                    self.dsp_view.noise_shaping = match settings.noise_shaping.as_str() {
+                        "None" => NoiseShaping::None,
+                        "FirstOrder" => NoiseShaping::FirstOrder,
+                        "SecondOrder" => NoiseShaping::SecondOrder,
+                        "Gesemann" => NoiseShaping::Gesemann,
+                        _ => NoiseShaping::None, // Default to None if unknown
+                    };
+
+                    // Load resampling settings
+                    self.dsp_view.resample_enabled = settings.resample_enabled;
+                    self.dsp_view.target_sample_rate = settings.target_sample_rate;
+
+                    // Parse resample quality from string
+                    use stream_server::dsp::ResamplerQuality;
+                    self.dsp_view.resample_quality = match settings.resample_quality.as_str() {
+                        "Fast" => ResamplerQuality::Fast,
+                        "Balanced" => ResamplerQuality::Balanced,
+                        "High" => ResamplerQuality::High,
+                        "Ultra" => ResamplerQuality::Ultra,
+                        _ => ResamplerQuality::Balanced, // Default to Balanced if unknown
+                    };
+
                     self.status_message = Some(format!("Loaded DSP settings for profile {}", settings.profile_id));
                 }
                 AppResponse::DspSettingsSaved => {
@@ -2635,6 +2823,15 @@ impl eframe::App for AaeqApp {
                                 };
 
                                 if let Some(device) = &self.dsp_view.selected_device {
+                                    let dsp_config = DspRuntimeConfig {
+                                        dither_enabled: self.dsp_view.dither_enabled,
+                                        dither_mode: self.dsp_view.dither_mode,
+                                        noise_shaping: self.dsp_view.noise_shaping,
+                                        target_bits: self.dsp_view.target_bits,
+                                        resample_enabled: self.dsp_view.resample_enabled,
+                                        resample_quality: self.dsp_view.resample_quality,
+                                        target_sample_rate: self.dsp_view.target_sample_rate,
+                                    };
                                     let _ = self.command_tx.send(AppCommand::DspStartStreaming(
                                         self.dsp_view.selected_sink,
                                         device.clone(),
@@ -2642,6 +2839,7 @@ impl eframe::App for AaeqApp {
                                         self.dsp_view.use_test_tone,
                                         self.dsp_view.selected_input_device.clone(),
                                         None, // No manual preset override - use EQ Management
+                                        dsp_config,
                                     ));
                                     self.dsp_view.is_starting = true; // Show spinner while connecting
                                 } else {
@@ -2670,6 +2868,15 @@ impl eframe::App for AaeqApp {
                                     };
 
                                     if let Some(device) = &self.dsp_view.selected_device {
+                                        let dsp_config = DspRuntimeConfig {
+                                            dither_enabled: self.dsp_view.dither_enabled,
+                                            dither_mode: self.dsp_view.dither_mode,
+                                            noise_shaping: self.dsp_view.noise_shaping,
+                                            target_bits: self.dsp_view.target_bits,
+                                            resample_enabled: self.dsp_view.resample_enabled,
+                                            resample_quality: self.dsp_view.resample_quality,
+                                            target_sample_rate: self.dsp_view.target_sample_rate,
+                                        };
                                         let _ = self.command_tx.send(AppCommand::DspStartStreaming(
                                             self.dsp_view.selected_sink,
                                             device.clone(),
@@ -2677,6 +2884,7 @@ impl eframe::App for AaeqApp {
                                             true, // use_test_tone
                                             None, // input_device
                                             None, // No manual preset override - use EQ Management // Use selected EQ preset
+                                            dsp_config,
                                         ));
                                         self.status_message = Some("Starting test tone...".to_string());
                                     } else {
@@ -2739,6 +2947,41 @@ impl eframe::App for AaeqApp {
                                 // TODO: Also reset the counter in the actual HeadroomControl instance
                                 // This will be implemented when integrating with the DSP pipeline
                             }
+                            DspAction::DitherToggled => {
+                                tracing::info!("Dithering toggled: {} - auto-saving", self.dsp_view.dither_enabled);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::DitherModeChanged => {
+                                tracing::info!("Dither mode changed to: {:?} - auto-saving", self.dsp_view.dither_mode);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::NoiseShapingChanged => {
+                                tracing::info!("Noise shaping changed to: {:?} - auto-saving", self.dsp_view.noise_shaping);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::TargetBitsChanged => {
+                                tracing::info!("Target bit depth changed to: {} bits - auto-saving", self.dsp_view.target_bits);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::ResampleToggled => {
+                                tracing::info!("Resampling toggled: {} - auto-saving", self.dsp_view.resample_enabled);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::ResampleQualityChanged => {
+                                tracing::info!("Resample quality changed to: {:?} - auto-saving", self.dsp_view.resample_quality);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
+                            DspAction::TargetSampleRateChanged => {
+                                tracing::info!("Target sample rate changed to: {} Hz - auto-saving", self.dsp_view.target_sample_rate);
+                                // Auto-save DSP settings
+                                self.auto_save_dsp_settings();
+                            }
                         }
                     }
                 });
@@ -2746,6 +2989,7 @@ impl eframe::App for AaeqApp {
             AppMode::Settings => {
                 // Settings Mode: Show application settings
                 egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Settings");
                     ui.add_space(20.0);
 
@@ -2845,7 +3089,6 @@ impl eframe::App for AaeqApp {
 
                         // Save button
                         if ui.button("💾 Save DSP Settings for This Profile").clicked() {
-                            tracing::info!("Saving DSP settings for profile {}", self.active_profile_id);
                             let settings = aaeq_core::DspSettings {
                                 id: None,
                                 profile_id: self.active_profile_id,
@@ -2854,11 +3097,20 @@ impl eframe::App for AaeqApp {
                                 headroom_db: self.dsp_view.headroom_db,
                                 auto_compensate: self.dsp_view.auto_compensate,
                                 clip_detection: self.dsp_view.clip_detection,
+                                dither_enabled: self.dsp_view.dither_enabled,
+                                dither_mode: self.dsp_view.dither_mode.as_str().to_string(),
+                                noise_shaping: self.dsp_view.noise_shaping.as_str().to_string(),
+                                target_bits: self.dsp_view.target_bits,
+                                resample_enabled: self.dsp_view.resample_enabled,
+                                resample_quality: self.dsp_view.resample_quality.as_str().to_string(),
+                                target_sample_rate: self.dsp_view.target_sample_rate,
                                 created_at: 0,
                                 updated_at: 0,
                             };
+                            tracing::info!("💾 SAVING DSP settings for profile {}: dither={}, resample={}, target_rate={}",
+                                self.active_profile_id, settings.dither_enabled, settings.resample_enabled, settings.target_sample_rate);
                             let _ = self.command_tx.send(AppCommand::SaveDspSettings(settings));
-                            self.status_message = Some("DSP settings saved for profile".to_string());
+                            self.status_message = Some("Saving DSP settings...".to_string());
                         }
 
                         ui.add_space(5.0);
@@ -2910,7 +3162,7 @@ impl eframe::App for AaeqApp {
 
                         ui.horizontal(|ui| {
                             ui.label("Version:");
-                            ui.label(egui::RichText::new("0.5.0").strong());
+                            ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).strong());
                         });
 
                         ui.add_space(5.0);
@@ -2936,6 +3188,7 @@ impl eframe::App for AaeqApp {
                             ui.hyperlink_to("https://github.com/jaschadub/AAEQ", "https://github.com/jaschadub/AAEQ");
                         });
                     });
+                    }); // End of ScrollArea
                 });
             }
         }

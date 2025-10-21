@@ -1,0 +1,25 @@
+[package]
+name = "aaeq-media-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# Common dependencies
+anyhow.workspace = true
+tracing.workspace = true
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Media_Control",
+    "Storage_Streams",
+    "Foundation",
+    "implement",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# For now using shell commands (AppleScript), no additional dependencies needed

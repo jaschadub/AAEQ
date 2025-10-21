@@ -5,6 +5,9 @@ use crate::album_art::{AlbumArtCache, AlbumArtState};
 use egui::{Context, ScrollArea, Ui};
 use std::sync::Arc;
 
+// Import dithering and resampling types from stream-server
+pub use stream_server::dsp::{DitherMode, NoiseShaping, ResamplerQuality};
+
 /// View for creating/editing EQ presets with vertical sliders
 pub struct EqEditorView {
     pub preset: EqPreset,
@@ -835,7 +838,10 @@ pub enum PresetAction {
 /// View for DSP/Stream Server output control
 pub struct DspView {
     pub selected_sink: SinkType,
-    pub available_devices: Vec<String>,
+    pub available_devices: Vec<String>, // Legacy - kept for compatibility
+    pub available_local_devices: Vec<String>, // Local DAC devices
+    pub available_dlna_devices: Vec<String>, // DLNA/UPnP devices
+    pub available_airplay_devices: Vec<String>, // AirPlay devices
     pub selected_device: Option<String>,
     // Store last selected device per sink type
     pub last_local_dac_device: Option<String>,
@@ -869,6 +875,15 @@ pub struct DspView {
     pub auto_compensate: bool, // Apply makeup gain (future feature)
     pub clip_detection: bool, // Enable clip detection
     pub clip_count: u64, // Number of detected clips
+    // Dithering settings
+    pub dither_enabled: bool, // Enable dithering
+    pub dither_mode: DitherMode, // Dithering algorithm
+    pub noise_shaping: NoiseShaping, // Noise shaping curve
+    pub target_bits: u8, // Target bit depth (16/24/32)
+    // Resampling settings
+    pub resample_enabled: bool, // Enable resampling
+    pub resample_quality: ResamplerQuality, // Resampling quality preset
+    pub target_sample_rate: u32, // Target sample rate (Hz)
     // Pipeline visualization
     pub pipeline_view: crate::pipeline_view::PipelineView,
 }
@@ -940,6 +955,9 @@ impl Default for DspView {
         Self {
             selected_sink: SinkType::LocalDac,
             available_devices: vec![],
+            available_local_devices: vec![],
+            available_dlna_devices: vec![],
+            available_airplay_devices: vec![],
             selected_device: None,
             last_local_dac_device: None,
             last_dlna_device: None,
@@ -972,6 +990,15 @@ impl Default for DspView {
             auto_compensate: false, // Disabled by default
             clip_detection: true, // Enabled by default
             clip_count: 0, // No clips initially
+            // Dithering defaults
+            dither_enabled: false, // Disabled by default
+            dither_mode: DitherMode::Triangular, // TPDF is industry standard
+            noise_shaping: NoiseShaping::None, // No shaping by default
+            target_bits: 16, // Target 16-bit output (CD quality)
+            // Resampling defaults
+            resample_enabled: false, // Disabled by default
+            resample_quality: ResamplerQuality::Balanced, // Balanced quality
+            target_sample_rate: 48000, // Target 48 kHz (studio standard)
             // Pipeline visualization
             pipeline_view: crate::pipeline_view::PipelineView::new(),
         }
@@ -996,9 +1023,45 @@ impl DspView {
         ui.group(|ui| {
             // Collapsible header with streaming controls
             ui.horizontal(|ui| {
-                // Expand/collapse button - using text-based arrows for better Linux compatibility
-                let arrow = if self.audio_output_collapsed { "▶" } else { "▽" };
-                if ui.button(arrow).clicked() {
+                // Expand/collapse button with drawn arrow (like pipeline icons)
+                let tooltip = if self.audio_output_collapsed {
+                    "Expand Audio Output section"
+                } else {
+                    "Collapse Audio Output section"
+                };
+
+                let button_size = egui::Vec2::new(28.0, 28.0);
+                let (button_rect, response) = ui.allocate_exact_size(button_size, egui::Sense::click());
+
+                // Draw button background
+                if ui.is_rect_visible(button_rect) {
+                    let visuals = ui.style().interact(&response);
+                    ui.painter().rect_filled(button_rect, 3.0, visuals.bg_fill);
+                    ui.painter().rect_stroke(button_rect, 3.0, visuals.bg_stroke);
+
+                    // Draw arrow using painter
+                    let center = button_rect.center();
+                    let arrow_color = visuals.text_color();
+                    let stroke = egui::Stroke::new(2.0, arrow_color);
+
+                    if self.audio_output_collapsed {
+                        // Right-pointing arrow (►)
+                        let tip = center + egui::Vec2::new(6.0, 0.0);
+                        let top = center + egui::Vec2::new(-4.0, -5.0);
+                        let bottom = center + egui::Vec2::new(-4.0, 5.0);
+                        ui.painter().line_segment([top, tip], stroke);
+                        ui.painter().line_segment([bottom, tip], stroke);
+                    } else {
+                        // Down-pointing arrow (▼)
+                        let tip = center + egui::Vec2::new(0.0, 6.0);
+                        let left = center + egui::Vec2::new(-5.0, -4.0);
+                        let right = center + egui::Vec2::new(5.0, -4.0);
+                        ui.painter().line_segment([left, tip], stroke);
+                        ui.painter().line_segment([right, tip], stroke);
+                    }
+                }
+
+                if response.on_hover_text(tooltip).clicked() {
                     self.audio_output_collapsed = !self.audio_output_collapsed;
                     // Request window resize after collapse/expand
                     ui.ctx().request_repaint();
@@ -1304,16 +1367,23 @@ impl DspView {
             ui.horizontal(|ui| {
                 ui.label("Output Device:");
 
+                // Filter devices based on selected sink type
+                let devices_to_show = match self.selected_sink {
+                    SinkType::LocalDac => &self.available_local_devices,
+                    SinkType::Dlna => &self.available_dlna_devices,
+                    SinkType::AirPlay => &self.available_airplay_devices,
+                };
+
                 egui::ComboBox::from_id_salt("device_selector")
                     .selected_text(self.selected_device.as_deref().unwrap_or("(none)"))
                     .show_ui(ui, |ui| {
-                        for device in &self.available_devices.clone() {
+                        for device in devices_to_show.clone() {
                             if ui.selectable_label(
-                                self.selected_device.as_ref() == Some(device),
-                                device
+                                self.selected_device.as_ref() == Some(&device),
+                                &device
                             ).clicked() {
                                 self.selected_device = Some(device.clone());
-                                action = Some(DspAction::DeviceSelected(device.clone()));
+                                action = Some(DspAction::DeviceSelected(device));
                             }
                         }
                     });
@@ -1324,6 +1394,39 @@ impl DspView {
                     action = Some(DspAction::DiscoverDevices);
                 }
             });
+
+            // Show helpful message if device is selected but cache is empty (e.g., after restart)
+            if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+                let devices_list = match self.selected_sink {
+                    SinkType::Dlna => &self.available_dlna_devices,
+                    SinkType::AirPlay => &self.available_airplay_devices,
+                    _ => &Vec::new(),
+                };
+
+                if self.selected_device.is_some() && devices_list.is_empty() {
+                    ui.add_space(5.0);
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("⚠")
+                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                            );
+                            ui.label(
+                                egui::RichText::new("Device cache is empty")
+                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                                    .strong()
+                            );
+                        });
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new("  Click '🔍 Discover' to find devices on your network before streaming")
+                                .color(egui::Color32::LIGHT_GRAY)
+                                .italics()
+                                .size(10.0)
+                        );
+                    });
+                }
+            }
 
             ui.add_space(5.0);
             ui.separator();
@@ -1463,6 +1566,197 @@ impl DspView {
                     .color(egui::Color32::GRAY)
                     .italics()
             );
+
+            ui.add_space(10.0);
+            ui.separator();
+
+            // Dithering & Noise Shaping section
+            ui.label(egui::RichText::new("Dithering & Noise Shaping").strong().size(14.0));
+
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.dither_enabled, "Enable Dithering")
+                    .on_hover_text("Add dither noise to reduce quantization distortion when reducing bit depth")
+                    .changed()
+                {
+                    action = Some(DspAction::DitherToggled);
+                }
+            });
+
+            if self.dither_enabled {
+                ui.add_space(5.0);
+
+                // Dither mode selection
+                ui.horizontal(|ui| {
+                    ui.label("Dither Mode:");
+                    let prev_mode = self.dither_mode;
+
+                    // Display user-friendly name
+                    let display_name = match self.dither_mode {
+                        DitherMode::None => "None",
+                        DitherMode::Rectangular => "Rectangular",
+                        DitherMode::Triangular => "Triangular (TPDF)",
+                        DitherMode::Gaussian => "Gaussian",
+                    };
+
+                    egui::ComboBox::from_id_salt("dither_mode")
+                        .selected_text(display_name)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.dither_mode, DitherMode::None, "None");
+                            ui.selectable_value(&mut self.dither_mode, DitherMode::Rectangular, "Rectangular");
+                            ui.selectable_value(&mut self.dither_mode, DitherMode::Triangular, "Triangular (TPDF)");
+                            ui.selectable_value(&mut self.dither_mode, DitherMode::Gaussian, "Gaussian");
+                        });
+
+                    if self.dither_mode != prev_mode {
+                        action = Some(DspAction::DitherModeChanged);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("TPDF (Triangular) is the industry standard - eliminates harmonic distortion")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+
+                ui.add_space(5.0);
+
+                // Noise shaping selection
+                ui.horizontal(|ui| {
+                    ui.label("Noise Shaping:");
+                    let prev_shaping = self.noise_shaping;
+
+                    // Display user-friendly name
+                    let display_name = match self.noise_shaping {
+                        NoiseShaping::None => "None",
+                        NoiseShaping::FirstOrder => "First Order",
+                        NoiseShaping::SecondOrder => "Second Order",
+                        NoiseShaping::Gesemann => "Gesemann",
+                    };
+
+                    egui::ComboBox::from_id_salt("noise_shaping")
+                        .selected_text(display_name)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::None, "None");
+                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::FirstOrder, "First Order");
+                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::SecondOrder, "Second Order");
+                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::Gesemann, "Gesemann");
+                        });
+
+                    if self.noise_shaping != prev_shaping {
+                        action = Some(DspAction::NoiseShapingChanged);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Shapes dither noise spectrum to move it out of audible range")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+
+                ui.add_space(5.0);
+
+                // Target bit depth selection
+                ui.horizontal(|ui| {
+                    ui.label("Target Bit Depth:");
+                    let prev_bits = self.target_bits;
+                    egui::ComboBox::from_id_salt("target_bits")
+                        .selected_text(format!("{} bits", self.target_bits))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.target_bits, 16, "16 bits (CD quality)");
+                            ui.selectable_value(&mut self.target_bits, 24, "24 bits (HD audio)");
+                            ui.selectable_value(&mut self.target_bits, 32, "32 bits (studio)");
+                        });
+
+                    if self.target_bits != prev_bits {
+                        action = Some(DspAction::TargetBitsChanged);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Use 16-bit for CD output, 24-bit for most DACs")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+            }
+
+            ui.add_space(10.0);
+            ui.separator();
+
+            // Resampling section
+            ui.label(egui::RichText::new("High-Quality Resampling").strong().size(14.0));
+
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.resample_enabled, "Enable Resampling")
+                    .on_hover_text("Convert sample rate using high-quality sinc interpolation")
+                    .changed()
+                {
+                    action = Some(DspAction::ResampleToggled);
+                }
+            });
+
+            if self.resample_enabled {
+                ui.add_space(5.0);
+
+                // Quality preset selection
+                ui.horizontal(|ui| {
+                    ui.label("Quality:");
+                    let prev_quality = self.resample_quality;
+
+                    // Display user-friendly name
+                    let display_name = match self.resample_quality {
+                        ResamplerQuality::Fast => "Fast",
+                        ResamplerQuality::Balanced => "Balanced",
+                        ResamplerQuality::High => "High",
+                        ResamplerQuality::Ultra => "Ultra",
+                    };
+
+                    egui::ComboBox::from_id_salt("resample_quality")
+                        .selected_text(display_name)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Fast, "Fast");
+                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Balanced, "Balanced");
+                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::High, "High");
+                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Ultra, "Ultra");
+                        });
+
+                    if self.resample_quality != prev_quality {
+                        action = Some(DspAction::ResampleQualityChanged);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Balanced recommended for most use cases")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+
+                ui.add_space(5.0);
+
+                // Target sample rate selection
+                ui.horizontal(|ui| {
+                    ui.label("Target Sample Rate:");
+                    let prev_rate = self.target_sample_rate;
+                    egui::ComboBox::from_id_salt("target_sample_rate")
+                        .selected_text(format!("{} Hz", self.target_sample_rate))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.target_sample_rate, 44100, "44100 Hz (CD standard)");
+                            ui.selectable_value(&mut self.target_sample_rate, 48000, "48000 Hz (studio standard)");
+                            ui.selectable_value(&mut self.target_sample_rate, 88200, "88200 Hz (2x CD)");
+                            ui.selectable_value(&mut self.target_sample_rate, 96000, "96000 Hz (HD audio)");
+                            ui.selectable_value(&mut self.target_sample_rate, 192000, "192000 Hz (ultra HD)");
+                        });
+
+                    if self.target_sample_rate != prev_rate {
+                        action = Some(DspAction::TargetSampleRateChanged);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("Match your DAC's native sample rate for best quality")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+            }
 
             ui.add_space(10.0);
             ui.separator();
@@ -1607,25 +1901,32 @@ impl DspView {
 
         // Device discovery dialog
         if self.show_device_discovery {
+            // Filter devices based on selected sink type
+            let devices_to_show = match self.selected_sink {
+                SinkType::LocalDac => &self.available_local_devices,
+                SinkType::Dlna => &self.available_dlna_devices,
+                SinkType::AirPlay => &self.available_airplay_devices,
+            };
+
             egui::Window::new("Discover Devices")
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ui.ctx(), |ui| {
-                    if self.discovering && self.available_devices.is_empty() {
+                    if self.discovering && devices_to_show.is_empty() {
                         ui.label("Scanning for devices...");
                         ui.spinner();
-                    } else if self.available_devices.is_empty() {
+                    } else if devices_to_show.is_empty() {
                         ui.label("No devices found");
                     } else {
-                        ui.label(format!("Found {} device(s):", self.available_devices.len()));
+                        ui.label(format!("Found {} device(s):", devices_to_show.len()));
                         ui.separator();
 
                         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                            for device in &self.available_devices.clone() {
-                                if ui.button(device).clicked() {
+                            for device in devices_to_show.clone() {
+                                if ui.button(&device).clicked() {
                                     self.selected_device = Some(device.clone());
-                                    action = Some(DspAction::DeviceSelected(device.clone()));
+                                    action = Some(DspAction::DeviceSelected(device));
                                     self.show_device_discovery = false;
                                     self.discovering = false;
                                 }
@@ -1846,12 +2147,28 @@ impl DspView {
             "Stopped"
         };
 
+        // Get display-friendly dither mode name for pipeline
+        let dither_display = match self.dither_mode {
+            DitherMode::None => "None",
+            DitherMode::Rectangular => "Rectangular",
+            DitherMode::Triangular => "TPDF", // Shorter for pipeline display
+            DitherMode::Gaussian => "Gaussian",
+        };
+
+        // Convert resample quality to display string
+        let resample_display = self.resample_quality.as_str();
+
         self.pipeline_view.update(
             self.is_streaming,
             self.sample_rate,
             self.headroom_db,
             self.clip_count,
             self.current_active_preset.as_deref(), // Use actual active preset from EQ Management
+            self.resample_enabled,
+            resample_display,
+            self.target_sample_rate,
+            self.dither_enabled,
+            dither_display,
             output_status,
         );
     }
@@ -1870,6 +2187,14 @@ impl DspView {
             }
             crate::pipeline_view::PipelineAction::FocusEq => {
                 // Could open EQ preset selector or scroll to it
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusResample => {
+                // Scroll to resampling controls (they're visible in the UI)
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusDither => {
+                // Scroll to dithering controls (they're visible in the UI)
                 DspAction::ToggleVisualization // Placeholder
             }
             crate::pipeline_view::PipelineAction::FocusOutput => {
@@ -1896,4 +2221,11 @@ pub enum DspAction {
     HeadroomChanged,
     ClipDetectionChanged,
     ResetClipCount,
+    DitherToggled,
+    DitherModeChanged,
+    NoiseShapingChanged,
+    TargetBitsChanged,
+    ResampleToggled,
+    ResampleQualityChanged,
+    TargetSampleRateChanged,
 }
