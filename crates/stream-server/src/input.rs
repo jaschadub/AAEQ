@@ -490,7 +490,7 @@ impl LocalDacInput {
 
         // Enumerate each render device
         for i in 0..device_count {
-            if let Ok(device) = render_collection.get_device(i) {
+            if let Ok(device) = render_collection.get_device_at_index(i) {
                 if let Ok(name) = device.get_friendlyname() {
                     // Add device with loopback indicator
                     loopback_devices.push(format!("🔊 {} (Loopback)", name));
@@ -536,7 +536,7 @@ impl LocalDacInput {
         // Find matching device
         let mut target_device = None;
         for i in 0..device_count {
-            if let Ok(device) = render_collection.get_device(i) {
+            if let Ok(device) = render_collection.get_device_at_index(i) {
                 if let Ok(name) = device.get_friendlyname() {
                     if name == clean_name {
                         target_device = Some(device);
