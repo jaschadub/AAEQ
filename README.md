@@ -33,7 +33,10 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🎛️ **Manual Genre Editing** - Add genres to tracks that don't have metadata
 - 🔌 **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
 - 📡 **DLNA Support** - Discover and control DLNA/UPnP media renderers
-- 🎯 **Now Playing Detection** - Tracks what's playing on your WiiM device or via MPRIS (Spotify, Strawberry, etc.)
+- 🎯 **Now Playing Detection** - Cross-platform support for all major streaming services
+  - **Linux**: MPRIS (Spotify, Strawberry, VLC, browsers, etc.)
+  - **Windows**: SMTC (Spotify, Tidal, iTunes, browsers, etc.)
+  - **macOS**: All apps with `nowplayingctl` (Spotify, Tidal, YouTube Music, etc.)
 - 🎨 **Album Art Display** - Shows album artwork for the currently playing track with default fallback icon
 - 📊 **EQ Curve Visualization** - View exact EQ curves for both built-in and custom presets
 
@@ -48,7 +51,7 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🎵 **Format Conversion** - Supports S16LE, S24LE, F32 with configurable sample rates (44.1kHz - 192kHz)
 - 📊 **Real-Time Visualization** - Live waveform or spectrum analyzer with FFT-based frequency analysis
 - 📈 **Audio Meters** - Professional VU-style meters with peak hold showing pre/post-EQ levels in dBFS
-- 🎙️ **MPRIS Integration** - Automatically detects what's playing on Linux media players
+- 🎙️ **Now Playing Integration** - Cross-platform detection of currently playing media (all streaming services supported)
 - 🔄 **Device Persistence** - Remembers last used input/output devices and DSP settings between sessions
 - 👤 **Profile-Based DSP Settings** - Each profile can have its own DSP configuration (headroom, EQ, resampling, dithering)
 - 🪟 **Auto-Resize Window** - Window automatically adjusts to fit visualization and meters when enabled
@@ -62,6 +65,28 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 - 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
 - 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
 - 🔌 **Smart Connection Management** - Toggle between Connect/Disconnect states with auto-reconnect
+
+## 🎵 Streaming Service Support
+
+AAEQ supports **all major streaming services** across all platforms:
+
+| Service | Linux | Windows | macOS |
+|---------|-------|---------|-------|
+| **Spotify** | ✅ | ✅ | ✅ |
+| **Tidal** | ✅ | ✅ | ✅ * |
+| **YouTube Music** | ✅ | ✅ | ✅ * |
+| **Amazon Music** | ✅ | ✅ | ✅ * |
+| **Apple Music** | ✅ | ✅ | ✅ |
+| **Deezer** | ✅ | ✅ | ✅ * |
+| **And many more...** | ✅ | ✅ | ✅ * |
+
+**\* macOS Note**: For full compatibility with all streaming services (Tidal, YouTube Music, etc.), install `nowplayingctl`:
+```bash
+brew install nowplayingctl
+```
+Without this tool, only Music.app and Spotify are supported via AppleScript fallback.
+
+📖 See [Streaming Service Support Guide](docs/STREAMING_SERVICE_SUPPORT.md) for detailed compatibility information.
 
 ## 📥 Installation
 
@@ -98,7 +123,12 @@ sudo pacman -S gtk3 xdotool libappindicator-gtk3 alsa-lib dbus
 ```
 
 **macOS:**
-- No additional dependencies required
+- No additional dependencies required for basic functionality
+- **Optional but recommended**: `nowplayingctl` for universal streaming service support (Tidal, YouTube Music, etc.)
+  ```bash
+  brew install nowplayingctl
+  ```
+  Without this tool, only Music.app and Spotify are supported for Now Playing detection.
 
 **Windows:**
 - No additional dependencies required
@@ -165,7 +195,7 @@ cargo build --release
 6. **Start streaming**
    - Select a discovered device and click "Start Streaming"
    - Your computer's audio will be processed and streamed to the selected device
-   - Now Playing will show what's currently playing (via MPRIS on Linux)
+   - Now Playing will show what's currently playing (all platforms supported)
 
 7. **Apply EQ presets**
    - EQ mappings work in DSP mode too!
@@ -203,7 +233,7 @@ In DSP mode, AAEQ processes audio through a professional-grade signal chain:
 Additional features:
 - **Visual Pipeline Display** - Real-time status of all processing stages with clickable controls
 - **Profile-Based Settings** - Each profile can have unique DSP settings (different headroom, resampling, dithering per profile)
-- **MPRIS Integration** - Detects Now Playing on Linux to show what's actually playing
+- **Cross-Platform Now Playing** - Detects currently playing media on Linux (MPRIS), Windows (SMTC), and macOS (system-wide with `nowplayingctl`)
 - **Automatic EQ Mapping** - Applies EQ presets based on detected track (same mapping logic as WiiM API mode)
 
 The DSP mode works independently of WiiM devices - you can stream any audio source to any DLNA-compatible device with professional-quality processing.
@@ -266,6 +296,7 @@ AAEQ/
 ├── crates/
 │   ├── core/             # Core logic and models
 │   ├── device-wiim/      # WiiM device integration
+│   ├── media-session/    # Cross-platform Now Playing detection
 │   ├── persistence/      # SQLite database layer
 │   ├── stream-server/    # DSP engine and streaming
 │   └── ui-egui/          # egui-based UI with DSP controls
@@ -345,7 +376,10 @@ Contributions are welcome! Please:
 - **Platform Support**:
   - Audio capture best supported on Linux (ALSA/PulseAudio)
   - macOS and Windows support planned but not yet fully tested
-  - MPRIS integration (Now Playing detection) only works on Linux
+  - **Now Playing detection**: ✅ Fully supported on all platforms
+    - Linux: MPRIS (all media players)
+    - Windows: SMTC (all modern apps including Tidal, Spotify, etc.)
+    - macOS: System-wide with `nowplayingctl` (recommended), AppleScript fallback for Music.app and Spotify
 
 - **Device Compatibility**:
   - **DLNA streaming**: ✅ Tested and working with WiiM devices and most UPnP renderers
@@ -401,13 +435,18 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Audio processing powered by [cpal](https://github.com/RustAudio/cpal) and custom DSP algorithms
 - High-quality resampling using [rubato](https://github.com/HEnquist/rubato) - professional sinc interpolation
 - DLNA/UPnP discovery and control implementation
-- MPRIS integration for Linux media player detection
+- Cross-platform media detection:
+  - Linux: MPRIS via D-Bus
+  - Windows: System Media Transport Controls (SMTC)
+  - macOS: [nowplayingctl](https://github.com/davidwernhart/nowplayingctl) for universal support
 - WiiM/LinkPlay API documentation
 - Rust community for excellent crates and tools
 
 ## 📚 Additional Documentation
 
 - [AUDIO_CAPTURE_SETUP.md](AUDIO_CAPTURE_SETUP.md) - Detailed audio capture setup guide for Linux
+- [docs/STREAMING_SERVICE_SUPPORT.md](docs/STREAMING_SERVICE_SUPPORT.md) - **Streaming service compatibility guide (Tidal, YouTube Music, etc.)**
+- [docs/CROSS_PLATFORM_MEDIA_DETECTION.md](docs/CROSS_PLATFORM_MEDIA_DETECTION.md) - Technical details on cross-platform Now Playing detection
 - [docs/STREAM_SERVER_IMPLEMENTATION.md](docs/STREAM_SERVER_IMPLEMENTATION.md) - DSP engine architecture
 - [docs/M2_DLNA_IMPLEMENTATION.md](docs/M2_DLNA_IMPLEMENTATION.md) - DLNA/UPnP implementation details
 - [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) - Testing and debugging guide

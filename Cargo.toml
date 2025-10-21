@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/core",
     "crates/device-wiim",
+    "crates/media-session",
     "crates/persistence",
     "crates/ui-egui",
     "apps/desktop", "crates/stream-server",

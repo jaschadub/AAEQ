@@ -1116,15 +1116,15 @@ impl AaeqApp {
                                 let is_dsp_stream = track.title == "AAEQ Stream" || track.title == "414145512053747265616D";
 
                                 if is_dsp_stream {
-                                    // This is our DSP stream, get real metadata from MPRIS
-                                    tracing::debug!("Detected DSP stream, checking MPRIS for real track info");
-                                    match crate::mpris::get_now_playing_mpris() {
-                                        Ok(mpris_track) => {
-                                            track = mpris_track;
-                                            tracing::debug!("Using MPRIS track: {} - {}", track.artist, track.title);
+                                    // This is our DSP stream, get real metadata from media session
+                                    tracing::debug!("Detected DSP stream, checking media session for real track info");
+                                    match crate::media::get_now_playing() {
+                                        Ok(media_track) => {
+                                            track = media_track;
+                                            tracing::debug!("Using media session track: {} - {}", track.artist, track.title);
                                         }
                                         Err(e) => {
-                                            tracing::debug!("MPRIS not available: {}", e);
+                                            tracing::debug!("Media session not available: {}", e);
                                             // Keep the WiiM track (will show "AAEQ Stream")
                                         }
                                     }
@@ -1231,8 +1231,8 @@ impl AaeqApp {
                             }
                         }
                     } else {
-                        // No WiiM device connected, try MPRIS for DSP mode
-                        match crate::mpris::get_now_playing_mpris() {
+                        // No WiiM device connected, try media session for DSP mode
+                        match crate::media::get_now_playing() {
                             Ok(mut track) => {
                                 let track_key = track.track_key();
 
@@ -1417,7 +1417,7 @@ impl AaeqApp {
                                 tracing::error!("DLNA device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_dlna_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("DLNA device '{}' not found in cache. Please run device discovery first.", device_name))
+                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
                             }
                         }
                         SinkType::AirPlay => {
@@ -1434,7 +1434,7 @@ impl AaeqApp {
                                 tracing::error!("AirPlay device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_airplay_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("AirPlay device '{}' not found in cache. Please run device discovery first.", device_name))
+                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
                             }
                         }
                     };

@@ -1395,6 +1395,39 @@ impl DspView {
                 }
             });
 
+            // Show helpful message if device is selected but cache is empty (e.g., after restart)
+            if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
+                let devices_list = match self.selected_sink {
+                    SinkType::Dlna => &self.available_dlna_devices,
+                    SinkType::AirPlay => &self.available_airplay_devices,
+                    _ => &Vec::new(),
+                };
+
+                if self.selected_device.is_some() && devices_list.is_empty() {
+                    ui.add_space(5.0);
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("⚠")
+                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                            );
+                            ui.label(
+                                egui::RichText::new("Device cache is empty")
+                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                                    .strong()
+                            );
+                        });
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new("  Click '🔍 Discover' to find devices on your network before streaming")
+                                .color(egui::Color32::LIGHT_GRAY)
+                                .italics()
+                                .size(10.0)
+                        );
+                    });
+                }
+            }
+
             ui.add_space(5.0);
             ui.separator();
             ui.label("Configuration:");

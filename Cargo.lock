@@ -53,6 +53,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "aaeq-media-session"
+version = "0.5.1"
+dependencies = [
+ "anyhow",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "aaeq-persistence"
 version = "0.5.1"
 dependencies = [
@@ -70,6 +79,7 @@ version = "0.5.1"
 dependencies = [
  "aaeq-core",
  "aaeq-device-wiim",
+ "aaeq-media-session",
  "aaeq-persistence",
  "anyhow",
  "async-trait",
