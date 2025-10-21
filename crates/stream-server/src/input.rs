@@ -519,103 +519,140 @@ impl LocalDacInput {
 
         info!("Starting WASAPI loopback capture for: {}", clean_name);
 
-        // Initialize COM
-        match initialize_mta() {
-            Ok(_) => info!("WASAPI: COM initialized for capture"),
-            Err(e) => info!("WASAPI: COM initialization returned: {:?}", e),
-        }
+        // Create stop channel
+        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
 
-        // Get render devices
-        let render_collection = DeviceCollection::new(&Direction::Render)
-            .map_err(|e| anyhow!("Failed to get render device collection: {:?}", e))?;
+        // Spawn capture thread - all WASAPI objects must be created in the thread they'll be used
+        let clean_name_clone = clean_name.clone();
+        std::thread::spawn(move || {
+            info!("WASAPI: Capture thread started");
 
-        let device_count = render_collection
-            .get_nbr_devices()
-            .map_err(|e| anyhow!("Failed to get device count: {:?}", e))?;
+            // Initialize COM in this thread
+            match initialize_mta() {
+                Ok(_) => info!("WASAPI: COM initialized for capture"),
+                Err(e) => {
+                    error!("WASAPI: COM initialization failed: {:?}", e);
+                    return;
+                }
+            }
 
-        // Find matching device
-        let mut target_device = None;
-        for i in 0..device_count {
-            if let Ok(device) = render_collection.get_device_at_index(i) {
-                if let Ok(name) = device.get_friendlyname() {
-                    if name == clean_name {
-                        target_device = Some(device);
-                        break;
+            // Get render devices
+            let render_collection = match DeviceCollection::new(&Direction::Render) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("WASAPI: Failed to get render device collection: {:?}", e);
+                    return;
+                }
+            };
+
+            let device_count = match render_collection.get_nbr_devices() {
+                Ok(count) => count,
+                Err(e) => {
+                    error!("WASAPI: Failed to get device count: {:?}", e);
+                    return;
+                }
+            };
+
+            // Find matching device
+            let mut target_device = None;
+            for i in 0..device_count {
+                if let Ok(device) = render_collection.get_device_at_index(i) {
+                    if let Ok(name) = device.get_friendlyname() {
+                        if name == clean_name_clone {
+                            target_device = Some(device);
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        let device = target_device
-            .ok_or_else(|| anyhow!("WASAPI device '{}' not found", clean_name))?;
+            let device = match target_device {
+                Some(d) => d,
+                None => {
+                    error!("WASAPI: Device '{}' not found", clean_name_clone);
+                    return;
+                }
+            };
 
-        // Initialize audio client in loopback mode
-        let audio_client = device
-            .get_iaudioclient()
-            .map_err(|e| anyhow!("Failed to get audio client: {:?}", e))?;
+            // Initialize audio client in loopback mode
+            let audio_client = match device.get_iaudioclient() {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("WASAPI: Failed to get audio client: {:?}", e);
+                    return;
+                }
+            };
 
-        // Get device format
-        let waveformat = audio_client
-            .get_mixformat()
-            .map_err(|e| anyhow!("Failed to get device format: {:?}", e))?;
+            // Get device format
+            let waveformat = match audio_client.get_mixformat() {
+                Ok(f) => f,
+                Err(e) => {
+                    error!("WASAPI: Failed to get device format: {:?}", e);
+                    return;
+                }
+            };
 
-        info!(
-            "WASAPI device format: {} Hz, {} channels, {} bits",
-            waveformat.get_samplespersec(),
-            waveformat.get_nchannels(),
-            waveformat.get_bitspersample()
-        );
+            info!(
+                "WASAPI device format: {} Hz, {} channels, {} bits",
+                waveformat.get_samplespersec(),
+                waveformat.get_nchannels(),
+                waveformat.get_bitspersample()
+            );
 
-        // Initialize in loopback mode
-        let blockalign = waveformat.get_blockalign();
-        let (def_time, min_time) = audio_client
-            .get_periods()
-            .map_err(|e| anyhow!("Failed to get periods: {:?}", e))?;
+            // Initialize in loopback mode
+            let blockalign = waveformat.get_blockalign();
+            let (def_time, _min_time) = match audio_client.get_periods() {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("WASAPI: Failed to get periods: {:?}", e);
+                    return;
+                }
+            };
 
-        audio_client
-            .initialize_client(
+            if let Err(e) = audio_client.initialize_client(
                 &waveformat,
                 def_time,
                 &Direction::Capture,
                 &ShareMode::Shared,
                 true, // loopback mode
-            )
-            .map_err(|e| anyhow!("Failed to initialize audio client: {:?}", e))?;
+            ) {
+                error!("WASAPI: Failed to initialize audio client: {:?}", e);
+                return;
+            }
 
-        let buffer_frame_count = audio_client
-            .get_bufferframecount()
-            .map_err(|e| anyhow!("Failed to get buffer frame count: {:?}", e))?;
+            let buffer_frame_count = match audio_client.get_bufferframecount() {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("WASAPI: Failed to get buffer frame count: {:?}", e);
+                    return;
+                }
+            };
 
-        let capture_client = audio_client
-            .get_audiocaptureclient()
-            .map_err(|e| anyhow!("Failed to get capture client: {:?}", e))?;
+            let capture_client = match audio_client.get_audiocaptureclient() {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("WASAPI: Failed to get capture client: {:?}", e);
+                    return;
+                }
+            };
 
-        let sample_rate = waveformat.get_samplespersec();
-        let channels = waveformat.get_nchannels() as u32;
+            let sample_rate = waveformat.get_samplespersec();
+            let channels = waveformat.get_nchannels() as u32;
 
-        info!(
-            "WASAPI: Initialized loopback capture: {} Hz, {} channels, {} frames buffer",
-            sample_rate, channels, buffer_frame_count
-        );
+            info!(
+                "WASAPI: Initialized loopback capture: {} Hz, {} channels, {} frames buffer",
+                sample_rate, channels, buffer_frame_count
+            );
 
-        // Start capture
-        audio_client
-            .start_stream()
-            .map_err(|e| anyhow!("Failed to start stream: {:?}", e))?;
+            // Start capture
+            if let Err(e) = audio_client.start_stream() {
+                error!("WASAPI: Failed to start stream: {:?}", e);
+                return;
+            }
 
-        // Create stop channel
-        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        let stop_flag = std::sync::Arc::new(AtomicBool::new(false));
-        let stop_flag_clone = stop_flag.clone();
-
-        // Spawn capture thread
-        std::thread::spawn(move || {
-            info!("WASAPI: Capture thread started");
-
-            while !stop_flag.load(Ordering::Relaxed) {
+            loop {
                 // Check for stop signal (non-blocking)
                 if stop_rx.try_recv().is_ok() {
-                    stop_flag.store(true, Ordering::Relaxed);
                     break;
                 }
 
