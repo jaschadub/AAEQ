@@ -506,7 +506,7 @@ impl LocalDacInput {
     #[cfg(target_os = "windows")]
     fn start_wasapi_loopback_capture(
         device_name: &str,
-        cfg: OutputConfig,
+        _cfg: OutputConfig,
         tx: mpsc::Sender<Vec<f64>>,
     ) -> Result<mpsc::Sender<()>> {
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -575,7 +575,7 @@ impl LocalDacInput {
             };
 
             // Initialize audio client in loopback mode
-            let audio_client = match device.get_iaudioclient() {
+            let mut audio_client = match device.get_iaudioclient() {
                 Ok(c) => c,
                 Err(e) => {
                     error!("WASAPI: Failed to get audio client: {:?}", e);
