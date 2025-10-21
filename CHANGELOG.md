@@ -7,6 +7,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-10-21
+
+### Added
+
+#### Cross-Platform Media Detection 🌍
+- **Universal Streaming Service Support**: Now Playing detection works with ALL major streaming services across all platforms
+  - **Spotify**: ✅ All platforms
+  - **Tidal**: ✅ All platforms
+  - **YouTube Music**: ✅ All platforms
+  - **Amazon Music**: ✅ All platforms
+  - **Deezer**: ✅ All platforms
+  - **Apple Music/iTunes**: ✅ All platforms
+  - And many more...
+
+- **New Media-Session Crate**: Trait-based abstraction for cross-platform media detection
+  - `MediaSession` trait with unified interface
+  - `MediaMetadata` type for track information
+  - Platform-specific implementations via conditional compilation
+
+- **Linux (MPRIS)**: D-Bus integration for all MPRIS-compatible players
+  - Works with Spotify, Strawberry, VLC, browsers, and more
+  - Prioritizes dedicated music players over browsers
+  - Full metadata extraction (title, artist, album, genre, artwork)
+
+- **Windows (SMTC)**: System Media Transport Controls integration
+  - Universal support for all modern Windows apps
+  - Works with Spotify, Tidal, iTunes, YouTube Music (browser), Amazon Music
+  - Native Windows Runtime API via `windows` crate
+  - Automatic async operation handling
+
+- **macOS (System-Wide + AppleScript)**: Dual detection methods
+  - System-wide support via `nowplayingctl` for ALL streaming services
+  - AppleScript fallback for Music.app and Spotify
+  - Setup instructions: `brew install nowplayingctl`
+
+#### DSP Pipeline Enhancements 🎛️
+- **High-Quality Audio Resampling**: Professional sinc-based sample rate conversion
+  - Four quality presets: Fast, Balanced, High, Ultra
+  - Support for 44.1kHz, 48kHz, 88.2kHz, 96kHz, 192kHz
+  - Powered by `rubato` library with sinc interpolation
+
+- **Dithering & Noise Shaping**: Industry-standard bit depth reduction
+  - Four dither modes: None, Rectangular, TPDF (Triangular), Gaussian
+  - Four noise shaping algorithms: None, First Order, Second Order, Gesemann
+  - Configurable target bit depth (8-24 bits)
+  - Professional audio quality for lossy format conversion
+
+- **Headroom Control**: Prevent clipping in DSP pipeline
+  - Configurable headroom reduction (e.g., -3 dB)
+  - Clip detection and logging
+  - Applied before EQ to prevent distortion
+
+- **Pipeline Visualization**: Real-time DSP chain display
+  - Visual representation: Input → Headroom → EQ → Resample → Dither → Output
+  - Clickable stage controls for quick configuration
+  - Status indicators for each processing stage
+
+- **Profile-Based DSP Settings**: Per-profile DSP configuration
+  - Each profile can have unique sample rate, format, headroom, resampling, dithering
+  - Settings persist per profile in database
+  - Perfect for different listening scenarios (Headphones vs Speakers)
+
+#### Documentation 📚
+- **Streaming Service Support Guide**: User-friendly compatibility documentation
+  - Platform-specific setup instructions
+  - Troubleshooting section for common issues
+  - Detailed service compatibility matrix
+
+- **Cross-Platform Media Detection**: Technical implementation guide
+  - Architecture overview and design decisions
+  - Platform-specific API documentation
+  - Testing strategies and CI/CD setup
+
+- **Updated README**: Comprehensive streaming service information
+  - Compatibility table for all major services
+  - macOS setup instructions for `nowplayingctl`
+  - Links to detailed documentation
+
+### Fixed
+
+#### UI/UX Improvements 🐛
+- **Device Cache Warning**: Visual notification when DLNA/AirPlay device cache is empty
+  - Orange warning appears when device is selected but cache is empty (e.g., after restart)
+  - Clear instruction: "Click '🔍 Discover' to find devices on your network"
+  - Prevents confusion when trying to stream without discovery
+
+- **Improved Error Messages**: Better error feedback for streaming failures
+  - Clear actionable messages: "Device 'X' not found. Click '🔍 Discover'..."
+  - Removed technical jargon from user-facing errors
+
+### Changed
+
+#### Architecture Improvements
+- **Media Detection Abstraction**: Replaced platform-specific calls with unified API
+  - `crate::mpris::get_now_playing_mpris()` → `crate::media::get_now_playing()`
+  - Single interface works across Linux, Windows, and macOS
+  - Clean separation between platform detection and UI integration
+
+- **Module Organization**: New media module for cross-platform integration
+  - `crates/ui-egui/src/media.rs`: Bridge between media-session and AAEQ
+  - Provides compatibility layer for `TrackMeta` conversion
+
+#### CI/CD Enhancements
+- **Cross-Platform Build Checks**: Automated compilation verification
+  - Matrix build strategy: `[ubuntu-latest, windows-latest, macos-latest]`
+  - Runs on every push/PR to catch platform-specific issues early
+  - `fail-fast: false` ensures all platforms are tested
+
+### Technical Details
+
+#### New Crates
+- `crates/media-session/`: Cross-platform media detection
+  - `lib.rs`: Core trait definitions and factory function
+  - `linux.rs`: MPRIS implementation (311 lines)
+  - `windows.rs`: SMTC implementation (225 lines)
+  - `macos.rs`: System-wide + AppleScript (267 lines)
+
+#### New Modules
+- `crates/ui-egui/src/media.rs`: Media session integration layer
+- `crates/ui-egui/src/pipeline_view.rs`: DSP pipeline visualization
+- `crates/stream-server/src/dsp/`: Organized DSP modules
+  - `mod.rs`: Module organization
+  - `eq.rs`: Parametric EQ (moved from dsp.rs)
+  - `headroom.rs`: Headroom control with clip detection
+  - `resampler.rs`: High-quality sample rate conversion
+  - `dither.rs`: Dithering and noise shaping algorithms
+
+#### Database Schema
+- `010_dsp_profile_settings.sql`: Profile-based DSP configuration
+- `011_dsp_dithering_settings.sql`: Dithering parameters storage
+
+#### Dependencies
+- `windows = "0.58"`: Windows Runtime bindings for SMTC
+- `rubato`: High-quality audio resampling library
+
+#### Performance
+- Efficient media detection with minimal overhead
+- Cached media session instances (OnceLock pattern)
+- Platform-native implementations for best performance
+
 ## [0.5.1] - 2025-10-19
 
 ### Fixed
@@ -252,7 +392,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jaschadub/AAEQ/compare/v0.5.1...v0.6.0
+[0.5.1]: https://github.com/jaschadub/AAEQ/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jaschadub/AAEQ/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jaschadub/AAEQ/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jaschadub/AAEQ/compare/v0.1.4...v0.4.0
