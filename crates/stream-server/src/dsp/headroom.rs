@@ -208,8 +208,8 @@ mod tests {
         // No clips should be counted
         assert_eq!(control.clip_count(), 0);
 
-        // But samples should still be limited
-        assert_eq!(samples[0], 1.0);
-        assert_eq!(samples[1], -1.0);
+        // Samples should NOT be limited when clip detection is disabled
+        assert_eq!(samples[0], 1.5);
+        assert_eq!(samples[1], -1.2);
     }
 }
