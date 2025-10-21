@@ -53,9 +53,12 @@ impl SmtcSession {
     }
 
     /// Block on an async Windows operation
-    fn block_on_async_operation<T: Clone>(
+    fn block_on_async_operation<T>(
         operation: IAsyncOperation<T>
-    ) -> Result<T> {
+    ) -> Result<T>
+    where
+        T: windows::core::RuntimeType + Clone,
+    {
         use std::time::{Duration, Instant};
 
         let timeout = Duration::from_secs(2);
@@ -148,27 +151,11 @@ impl SmtcSession {
         })
     }
 
-    /// Get all active sessions (Windows supports multiple concurrent media sessions)
-    fn get_all_sessions(&self) -> Vec<GlobalSystemMediaTransportControlsSession> {
-        let manager = match self.manager.as_ref() {
-            Some(m) => m,
-            None => return Vec::new(),
-        };
-
-        match manager.GetSessions() {
-            Ok(sessions) => {
-                let mut result = Vec::new();
-                if let Ok(size) = sessions.Size() {
-                    for i in 0..size {
-                        if let Ok(session) = sessions.GetAt(i) {
-                            result.push(session);
-                        }
-                    }
-                }
-                result
-            }
-            Err(_) => Vec::new(),
-        }
+    /// Get current session if available
+    /// Note: Windows SMTC API doesn't provide a way to enumerate all sessions,
+    /// so we can only check the currently active one
+    fn get_current_session_option(&self) -> Option<GlobalSystemMediaTransportControlsSession> {
+        self.get_current_session().ok().flatten()
     }
 
     /// Check if a session is currently playing
@@ -209,17 +196,12 @@ impl MediaSession for SmtcSession {
     }
 
     fn list_active_players(&self) -> Vec<String> {
-        let sessions = self.get_all_sessions();
-        let mut players = Vec::new();
-
-        for session in sessions {
-            if let Ok(info) = session.GetPlaybackInfo() {
-                if let Ok(source) = session.SourceAppUserModelId() {
-                    players.push(source.to_string());
-                }
+        // Windows SMTC API only provides access to the current active session
+        if let Some(session) = self.get_current_session_option() {
+            if let Ok(source) = session.SourceAppUserModelId() {
+                return vec![source.to_string()];
             }
         }
-
-        players
+        Vec::new()
     }
 }

@@ -469,17 +469,8 @@ impl LocalDacInput {
             }
         }
 
-        // Get device enumerator
-        let enumerator = match DeviceEnumerator::new() {
-            Ok(e) => e,
-            Err(e) => {
-                info!("WASAPI: Failed to create device enumerator: {:?}", e);
-                return Ok(loopback_devices);
-            }
-        };
-
         // Get render (output) devices - these can be used for loopback capture
-        let render_collection = match enumerator.get_device_collection(Direction::Render) {
+        let render_collection = match DeviceCollection::new(&Direction::Render) {
             Ok(c) => c,
             Err(e) => {
                 info!("WASAPI: Failed to get render device collection: {:?}", e);
@@ -534,13 +525,8 @@ impl LocalDacInput {
             Err(e) => info!("WASAPI: COM initialization returned: {:?}", e),
         }
 
-        // Get device enumerator
-        let enumerator = DeviceEnumerator::new()
-            .map_err(|e| anyhow!("Failed to create WASAPI device enumerator: {:?}", e))?;
-
         // Get render devices
-        let render_collection = enumerator
-            .get_device_collection(Direction::Render)
+        let render_collection = DeviceCollection::new(&Direction::Render)
             .map_err(|e| anyhow!("Failed to get render device collection: {:?}", e))?;
 
         let device_count = render_collection
