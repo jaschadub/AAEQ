@@ -621,15 +621,19 @@ impl LocalDacInput {
 
                 // Get available frames
                 match capture_client.get_next_nbr_frames() {
-                    Ok(frames_available) if frames_available > 0 => {
+                    Ok(Some(frames_available)) if frames_available > 0 => {
+                        // Calculate buffer size needed
+                        let buffer_size = (frames_available as usize) * (blockalign as usize);
+                        let mut buffer = vec![0u8; buffer_size];
+
                         // Read buffer
-                        match capture_client.read_from_device(frames_available as usize) {
-                            Ok(data) => {
+                        match capture_client.read_from_device(blockalign as usize, &mut buffer) {
+                            Ok((_frames_read, _flags)) => {
                                 // Convert to f64 samples
                                 let samples: Vec<f64> = match waveformat.get_bitspersample() {
                                     16 => {
                                         // 16-bit PCM
-                                        data.chunks_exact(2)
+                                        buffer.chunks_exact(2)
                                             .map(|chunk| {
                                                 let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
                                                 sample as f64 / 32768.0
@@ -638,7 +642,7 @@ impl LocalDacInput {
                                     }
                                     24 => {
                                         // 24-bit PCM
-                                        data.chunks_exact(3)
+                                        buffer.chunks_exact(3)
                                             .map(|chunk| {
                                                 let sample = i32::from_le_bytes([chunk[0], chunk[1], chunk[2], 0]) >> 8;
                                                 sample as f64 / 8388608.0
@@ -647,7 +651,7 @@ impl LocalDacInput {
                                     }
                                     32 => {
                                         // 32-bit float
-                                        data.chunks_exact(4)
+                                        buffer.chunks_exact(4)
                                             .map(|chunk| {
                                                 let sample = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                                                 sample as f64
