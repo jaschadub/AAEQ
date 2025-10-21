@@ -855,9 +855,7 @@ pub struct DspView {
     pub audio_viz: AudioVizState, // Audio waveform visualization
     pub spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState, // Spectrum analyzer
     pub viz_mode: VisualizationMode, // Current visualization mode
-    pub selected_preset: Option<String>, // EQ preset for DSP processing
-    pub wiim_presets: Vec<String>, // Presets loaded from WiiM device
-    pub custom_presets: Vec<String>, // Custom EQ presets saved by user
+    pub current_active_preset: Option<String>, // Actual active EQ preset from EQ Management
     pub pre_eq_meter: crate::meter::MeterState, // Pre-EQ audio levels
     pub post_eq_meter: crate::meter::MeterState, // Post-EQ audio levels
     pub show_meters: bool, // Toggle to show/hide audio level meters
@@ -866,6 +864,13 @@ pub struct DspView {
     viz_delay_auto_set: bool, // Track if delay was auto-set for current streaming session
     viz_sample_buffer: std::collections::VecDeque<(std::time::Instant, Vec<f64>)>, // Buffered samples with timestamps
     viz_metrics_buffer: std::collections::VecDeque<(std::time::Instant, VizMetrics)>, // Buffered metrics with timestamps
+    // Headroom control settings
+    pub headroom_db: f32, // Headroom in dB (0 to -6)
+    pub auto_compensate: bool, // Apply makeup gain (future feature)
+    pub clip_detection: bool, // Enable clip detection
+    pub clip_count: u64, // Number of detected clips
+    // Pipeline visualization
+    pub pipeline_view: crate::pipeline_view::PipelineView,
 }
 
 /// Struct to hold visualization metrics for buffering
@@ -953,9 +958,7 @@ impl Default for DspView {
             audio_viz: AudioVizState::new(),
             spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState::new(),
             viz_mode: VisualizationMode::Waveform, // Default to waveform
-            selected_preset: None, // No preset selected by default
-            wiim_presets: vec![],
-            custom_presets: vec![],
+            current_active_preset: None, // No active preset initially
             pre_eq_meter: crate::meter::MeterState::default(),
             post_eq_meter: crate::meter::MeterState::default(),
             show_meters: false, // Start hidden by default
@@ -964,6 +967,13 @@ impl Default for DspView {
             viz_delay_auto_set: false, // Will auto-set on first stream status
             viz_sample_buffer: std::collections::VecDeque::new(),
             viz_metrics_buffer: std::collections::VecDeque::new(),
+            // Headroom control defaults
+            headroom_db: -3.0, // Default -3 dB headroom
+            auto_compensate: false, // Disabled by default
+            clip_detection: true, // Enabled by default
+            clip_count: 0, // No clips initially
+            // Pipeline visualization
+            pipeline_view: crate::pipeline_view::PipelineView::new(),
         }
     }
 }
@@ -975,6 +985,14 @@ impl DspView {
         let spectrum_colors = theme.spectrum_colors();
 
         ScrollArea::vertical().show(ui, |ui| {
+        // Update and display pipeline visualization
+        self.update_pipeline_view();
+        if let Some(pipeline_action) = self.pipeline_view.show(ui, theme) {
+            action = Some(self.handle_pipeline_action(pipeline_action));
+        }
+
+        ui.add_space(10.0);
+
         ui.group(|ui| {
             // Collapsible header with streaming controls
             ui.horizontal(|ui| {
@@ -1011,21 +1029,39 @@ impl DspView {
                     }
                 }
 
-                // Status indicator with colored text (better Linux compatibility than emoji)
+                // Status indicator with colored shapes
                 if self.is_streaming {
-                    ui.label(
-                        egui::RichText::new("● STREAMING")
-                            .size(14.0)
-                            .color(egui::Color32::from_rgb(50, 205, 50)) // Lime green
-                            .strong()
-                    );
+                    ui.horizontal(|ui| {
+                        // Draw green circle
+                        let size = egui::Vec2::new(10.0, 10.0);
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(50, 205, 50));
+                        }
+
+                        ui.label(
+                            egui::RichText::new("STREAMING")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(50, 205, 50))
+                                .strong()
+                        );
+                    });
                 } else {
-                    ui.label(
-                        egui::RichText::new("● STOPPED")
-                            .size(14.0)
-                            .color(egui::Color32::from_rgb(220, 20, 60)) // Crimson red
-                            .strong()
-                    );
+                    ui.horizontal(|ui| {
+                        // Draw red circle
+                        let size = egui::Vec2::new(10.0, 10.0);
+                        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(220, 20, 60));
+                        }
+
+                        ui.label(
+                            egui::RichText::new("STOPPED")
+                                .size(14.0)
+                                .color(egui::Color32::from_rgb(220, 20, 60))
+                                .strong()
+                        );
+                    });
                 }
             });
 
@@ -1050,6 +1086,48 @@ impl DspView {
                     action = Some(DspAction::SinkTypeChanged(SinkType::AirPlay));
                 }
             });
+
+            // Warning about feedback loop for Local DAC without test tone
+            if self.selected_sink == SinkType::LocalDac && !self.use_test_tone {
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    // Draw warning icon as exclamation mark in a circle
+                    let (icon_rect, _) = ui.allocate_exact_size(egui::Vec2::new(16.0, 16.0), egui::Sense::hover());
+                    if ui.is_rect_visible(icon_rect) {
+                        let painter = ui.painter();
+                        let center = icon_rect.center();
+                        let warning_color = egui::Color32::from_rgb(255, 200, 0);
+
+                        // Draw circle
+                        painter.circle_stroke(center, 7.0, egui::Stroke::new(2.0, warning_color));
+
+                        // Draw exclamation mark
+                        painter.line_segment(
+                            [center + egui::Vec2::new(0.0, -4.0), center + egui::Vec2::new(0.0, 1.0)],
+                            egui::Stroke::new(2.0, warning_color)
+                        );
+                        painter.circle_filled(center + egui::Vec2::new(0.0, 4.0), 1.0, warning_color);
+                    }
+
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new("Feedback Loop Warning")
+                                .color(egui::Color32::from_rgb(255, 200, 0))
+                                .strong()
+                        );
+                        ui.label(
+                            egui::RichText::new("Using audio input with Local DAC may cause feedback.")
+                                .color(egui::Color32::LIGHT_GRAY)
+                                .size(10.0)
+                        );
+                        ui.label(
+                            egui::RichText::new("Enable 'Use Test Tone' below to avoid feedback loop.")
+                                .color(egui::Color32::LIGHT_GRAY)
+                                .size(10.0)
+                        );
+                    });
+                });
+            }
 
             // Visualization delay control (only for network streaming)
             if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
@@ -1306,73 +1384,85 @@ impl DspView {
                 ui.add(egui::Slider::new(&mut self.buffer_ms, 50..=500).suffix(" ms"));
             });
 
+            // Headroom control
+            ui.horizontal(|ui| {
+                ui.label("Headroom:");
+                let prev_headroom = self.headroom_db;
+                ui.add(egui::Slider::new(&mut self.headroom_db, -6.0..=0.0)
+                    .suffix(" dB")
+                    .text(""))
+                    .on_hover_text("Create headroom to prevent clipping from EQ/DSP processing.\nRecommended: -3 dB for most applications.");
+
+                if self.headroom_db != prev_headroom {
+                    action = Some(DspAction::HeadroomChanged);
+                }
+            });
+
+            // Clip detection controls
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut self.clip_detection, "Clip Detection")
+                    .on_hover_text("Monitor and count audio samples that exceed ±1.0")
+                    .changed()
+                {
+                    action = Some(DspAction::ClipDetectionChanged);
+                }
+
+                // Show clip counter if clips detected
+                if self.clip_count > 0 {
+                    ui.label(
+                        egui::RichText::new(format!("! {} clips", self.clip_count))
+                            .color(egui::Color32::from_rgb(255, 100, 100))
+                            .strong()
+                    ).on_hover_text("Audio clipping detected! Consider increasing headroom or reducing EQ gains.");
+
+                    if ui.small_button("Reset").on_hover_text("Reset clip counter").clicked() {
+                        self.clip_count = 0;
+                        action = Some(DspAction::ResetClipCount);
+                    }
+                }
+            });
+
             ui.add_space(10.0);
             ui.separator();
 
-            // EQ Preset selection
-            ui.label("EQ Preset:");
+            // EQ Status (managed via EQ Management tab)
+            ui.label("EQ Status:");
             ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("dsp_preset_selector")
-                    .selected_text(self.selected_preset.as_deref().unwrap_or("None"))
-                    .show_ui(ui, |ui| {
-                        // Option to disable EQ
-                        if ui.selectable_label(
-                            self.selected_preset.is_none(),
-                            "None (No EQ)"
-                        ).clicked() {
-                            self.selected_preset = None;
-                            action = Some(DspAction::PresetSelected(None));
-                        }
-
-                        // Show WiiM presets (from device or known presets)
-                        let wiim_presets_to_show = if !self.wiim_presets.is_empty() {
-                            self.wiim_presets.clone()
-                        } else {
-                            // Show default known presets if no WiiM device connected
-                            crate::preset_library::list_known_presets()
-                                .iter()
-                                .map(|s| s.to_string())
-                                .collect::<Vec<String>>()
-                        };
-
-                        if !wiim_presets_to_show.is_empty() {
-                            ui.separator();
-                            ui.label(
-                                egui::RichText::new("WiiM Presets")
-                                    .strong()
-                                    .color(egui::Color32::LIGHT_GREEN)
-                            );
-                            for preset in &wiim_presets_to_show {
-                                if ui.selectable_label(
-                                    self.selected_preset.as_ref() == Some(preset),
-                                    preset
-                                ).clicked() {
-                                    self.selected_preset = Some(preset.clone());
-                                    action = Some(DspAction::PresetSelected(Some(preset.clone())));
-                                }
-                            }
-                        }
-
-                        // Show custom EQ presets
-                        if !self.custom_presets.is_empty() {
-                            ui.separator();
-                            ui.label(
-                                egui::RichText::new("Custom Presets")
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(255, 180, 100))
-                            );
-                            for preset in &self.custom_presets.clone() {
-                                if ui.selectable_label(
-                                    self.selected_preset.as_ref() == Some(preset),
-                                    preset
-                                ).clicked() {
-                                    self.selected_preset = Some(preset.clone());
-                                    action = Some(DspAction::PresetSelected(Some(preset.clone())));
-                                }
-                            }
-                        }
-                    });
+                if self.is_streaming {
+                    if let Some(preset_name) = &self.current_active_preset {
+                        // Draw green circle for active EQ
+                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(50, 205, 50));
+                        ui.label(
+                            egui::RichText::new(format!("ACTIVE: {}", preset_name))
+                                .color(egui::Color32::from_rgb(50, 205, 50))
+                                .strong()
+                        );
+                    } else {
+                        // Draw grey circle for bypassed EQ
+                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
+                        ui.label(
+                            egui::RichText::new("BYPASSED (Flat)")
+                                .color(egui::Color32::from_rgb(150, 150, 150))
+                        );
+                    }
+                } else {
+                    // Draw grey circle for stopped
+                    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
+                    ui.label(
+                        egui::RichText::new("STOPPED")
+                            .color(egui::Color32::from_rgb(150, 150, 150))
+                    );
+                }
             });
+            ui.label(
+                egui::RichText::new("EQ presets are managed in the EQ Management tab")
+                    .size(10.0)
+                    .color(egui::Color32::GRAY)
+                    .italics()
+            );
 
             ui.add_space(10.0);
             ui.separator();
@@ -1737,6 +1827,57 @@ impl DspView {
     pub fn reset_auto_delay(&mut self) {
         self.viz_delay_auto_set = false;
     }
+
+    /// Update pipeline view with current state
+    fn update_pipeline_view(&mut self) {
+        let output_status = if self.is_streaming {
+            match self.selected_sink {
+                SinkType::LocalDac => {
+                    self.selected_device.as_deref().unwrap_or("Local DAC")
+                }
+                SinkType::Dlna => {
+                    self.selected_device.as_deref().unwrap_or("DLNA")
+                }
+                SinkType::AirPlay => {
+                    self.selected_device.as_deref().unwrap_or("AirPlay")
+                }
+            }
+        } else {
+            "Stopped"
+        };
+
+        self.pipeline_view.update(
+            self.is_streaming,
+            self.sample_rate,
+            self.headroom_db,
+            self.clip_count,
+            self.current_active_preset.as_deref(), // Use actual active preset from EQ Management
+            output_status,
+        );
+    }
+
+    /// Handle pipeline action (clicking on a stage)
+    fn handle_pipeline_action(&self, action: crate::pipeline_view::PipelineAction) -> DspAction {
+        match action {
+            crate::pipeline_view::PipelineAction::FocusInput => {
+                // For now, just return a no-op action
+                // In the future, could scroll to input device selector
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusHeadroom => {
+                // Scroll to headroom controls (they're already visible in the UI)
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusEq => {
+                // Could open EQ preset selector or scroll to it
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusOutput => {
+                // Scroll to output device selector
+                DspAction::ToggleVisualization // Placeholder
+            }
+        }
+    }
 }
 
 pub enum DspAction {
@@ -1751,6 +1892,8 @@ pub enum DspAction {
     PlayTestTone,
     ToggleVisualization,
     ToggleMeters,
-    PresetSelected(Option<String>),
     SaveCustomPreset(EqPreset),
+    HeadroomChanged,
+    ClipDetectionChanged,
+    ResetClipCount,
 }

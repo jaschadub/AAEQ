@@ -55,6 +55,8 @@ enum AppCommand {
     ReloadProfiles, // Reload profiles from database
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
+    LoadDspSettings(i64), // Load DSP settings for a profile
+    SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>), // (sink_type, output_device, config, use_test_tone, input_device, preset_name)
@@ -100,6 +102,8 @@ enum AppResponse {
     ProfilesLoaded(Vec<aaeq_core::Profile>), // Reloaded profiles from database
     DspPresetChanged(String), // Preset changed during streaming
     ThemeSaved, // Theme saved to database
+    DspSettingsLoaded(aaeq_core::DspSettings), // DSP settings loaded for a profile
+    DspSettingsSaved, // DSP settings saved successfully
 }
 
 /// Main application state
@@ -245,6 +249,26 @@ impl AaeqApp {
             tracing::info!("Loaded active profile ID: {}", active_id);
         }
 
+        // Load DSP settings for the active profile
+        use aaeq_persistence::DspSettingsRepository;
+        let dsp_repo = DspSettingsRepository::new(self.pool.clone());
+        match dsp_repo.get_by_profile(self.active_profile_id).await {
+            Ok(Some(settings)) => {
+                tracing::info!("Loaded DSP settings for active profile: {:?}", settings);
+                self.dsp_view.sample_rate = settings.sample_rate;
+                self.dsp_view.buffer_ms = settings.buffer_ms;
+                self.dsp_view.headroom_db = settings.headroom_db;
+                self.dsp_view.auto_compensate = settings.auto_compensate;
+                self.dsp_view.clip_detection = settings.clip_detection;
+            }
+            Ok(None) => {
+                tracing::info!("No DSP settings found for active profile, using defaults");
+            }
+            Err(e) => {
+                tracing::error!("Failed to load DSP settings: {}", e);
+            }
+        }
+
         // Load mappings from database for the active profile
         self.reload_mappings().await?;
 
@@ -385,6 +409,7 @@ impl AaeqApp {
                 device.apply_preset(&desired_preset).await?;
 
                 self.current_preset = Some(desired_preset.clone());
+                self.dsp_view.current_active_preset = Some(desired_preset.clone()); // Sync to DSP view
                 self.status_message = Some(format!("Applied preset: {}", desired_preset));
 
                 // Save to database
@@ -401,6 +426,7 @@ impl AaeqApp {
         // Update UI
         self.now_playing_view.track = self.current_track.clone();
         self.now_playing_view.current_preset = self.current_preset.clone();
+        self.dsp_view.current_active_preset = self.current_preset.clone(); // Sync to DSP view for pipeline
 
         Ok(())
     }
@@ -726,6 +752,39 @@ impl AaeqApp {
                     } else {
                         tracing::info!("Saved theme: {}", theme_str);
                         let _ = response_tx.send(AppResponse::ThemeSaved);
+                    }
+                }
+
+                AppCommand::LoadDspSettings(profile_id) => {
+                    use aaeq_persistence::DspSettingsRepository;
+                    let dsp_repo = DspSettingsRepository::new(pool.clone());
+                    match dsp_repo.get_by_profile(profile_id).await {
+                        Ok(Some(settings)) => {
+                            tracing::info!("Loaded DSP settings for profile {}: {:?}", profile_id, settings);
+                            let _ = response_tx.send(AppResponse::DspSettingsLoaded(settings));
+                        }
+                        Ok(None) => {
+                            // No settings found, return defaults
+                            tracing::info!("No DSP settings found for profile {}, using defaults", profile_id);
+                            let default_settings = aaeq_core::DspSettings::new_for_profile(profile_id);
+                            let _ = response_tx.send(AppResponse::DspSettingsLoaded(default_settings));
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to load DSP settings: {}", e);
+                            let _ = response_tx.send(AppResponse::Error(format!("Failed to load DSP settings: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::SaveDspSettings(settings) => {
+                    use aaeq_persistence::DspSettingsRepository;
+                    let dsp_repo = DspSettingsRepository::new(pool.clone());
+                    if let Err(e) = dsp_repo.upsert(&settings).await {
+                        tracing::error!("Failed to save DSP settings: {}", e);
+                        let _ = response_tx.send(AppResponse::Error(format!("Failed to save DSP settings: {}", e)));
+                    } else {
+                        tracing::info!("Saved DSP settings for profile {}", settings.profile_id);
+                        let _ = response_tx.send(AppResponse::DspSettingsSaved);
                     }
                 }
 
@@ -1800,6 +1859,7 @@ impl eframe::App for AaeqApp {
                     self.device = None;
                     self.current_track = None;
                     self.current_preset = None;
+                    self.dsp_view.current_active_preset = None; // Sync to DSP view
                     self.now_playing_view.track = None;
                     self.now_playing_view.current_preset = None;
                     // Mark connection lost time for auto-reconnect
@@ -1811,11 +1871,10 @@ impl eframe::App for AaeqApp {
                 AppResponse::PresetsLoaded(presets) => {
                     self.available_presets = presets.clone();
                     self.presets_view.presets = presets.clone();
-                    // Also make them available in DSP mode
-                    self.dsp_view.wiim_presets = presets;
                 }
                 AppResponse::PresetApplied(preset) => {
                     self.current_preset = Some(preset.clone());
+                    self.dsp_view.current_active_preset = Some(preset.clone()); // Sync to DSP view
                     self.status_message = Some(format!("Applied: {}", preset));
                 }
                 AppResponse::MappingSaved(msg) => {
@@ -1849,6 +1908,7 @@ impl eframe::App for AaeqApp {
 
                     self.current_track = Some(track.clone());
                     self.current_preset = preset;
+                    self.dsp_view.current_active_preset = self.current_preset.clone(); // Sync to DSP view
                     self.now_playing_view.track = Some(track.clone());
                     self.now_playing_view.current_preset = self.current_preset.clone();
 
@@ -1921,7 +1981,6 @@ impl eframe::App for AaeqApp {
                     self.dsp_view.buffer_metrics(metrics);
                 }
                 AppResponse::CustomPresetsLoaded(presets) => {
-                    self.dsp_view.custom_presets = presets.clone();
                     self.presets_view.custom_presets = presets.clone();
                     self.now_playing_view.custom_presets = presets;
                 }
@@ -1932,7 +1991,7 @@ impl eframe::App for AaeqApp {
                     // Open EQ editor with loaded preset in edit mode
                     let preset_name = preset.name.clone();
                     let mut editor = EqEditorView::new_for_edit(preset);
-                    editor.set_existing_presets(self.dsp_view.custom_presets.clone());
+                    editor.set_existing_presets(self.presets_view.custom_presets.clone());
                     self.eq_editor_view = Some(editor);
                     self.show_eq_editor = true;
                     self.status_message = Some(format!("Editing preset: {}", preset_name));
@@ -1955,6 +2014,7 @@ impl eframe::App for AaeqApp {
                             let flat_preset = aaeq_core::EqPreset::default();
                             let _ = self.command_tx.send(AppCommand::DspApplyPresetData(flat_preset));
                             self.current_preset = None;
+                            self.dsp_view.current_active_preset = None; // Sync to DSP view
                             self.current_preset_curve = Some(aaeq_core::EqPreset::default());
                             self.now_playing_view.current_preset = None;
                             self.now_playing_view.current_preset_curve = Some(aaeq_core::EqPreset::default());
@@ -1965,6 +2025,7 @@ impl eframe::App for AaeqApp {
                             tracing::info!("Deleted preset '{}' was active on WiiM device - reverting to Flat", preset_name);
                             let _ = self.command_tx.send(AppCommand::ApplyPreset("Flat".to_string()));
                             self.current_preset = Some("Flat".to_string());
+                            self.dsp_view.current_active_preset = Some("Flat".to_string()); // Sync to DSP view
                             self.now_playing_view.current_preset = Some("Flat".to_string());
                             // Load Flat curve for display
                             let _ = self.command_tx.send(AppCommand::LoadPresetCurve("Flat".to_string()));
@@ -1977,9 +2038,6 @@ impl eframe::App for AaeqApp {
                     }
 
                     // If deleted preset was selected, clear selection
-                    if self.dsp_view.selected_preset.as_ref() == Some(&preset_name) {
-                        self.dsp_view.selected_preset = None;
-                    }
                     if self.presets_view.selected_preset.as_ref() == Some(&preset_name) {
                         self.presets_view.selected_preset = None;
                     }
@@ -1998,6 +2056,7 @@ impl eframe::App for AaeqApp {
                 }
                 AppResponse::DspPresetChanged(preset) => {
                     self.current_preset = Some(preset.clone());
+                    self.dsp_view.current_active_preset = Some(preset.clone()); // Sync to DSP view
                     self.now_playing_view.current_preset = Some(preset.clone());
                     self.status_message = Some(format!("DSP preset changed: {}", preset));
                     // Load the EQ curve for display
@@ -2005,6 +2064,19 @@ impl eframe::App for AaeqApp {
                 }
                 AppResponse::ThemeSaved => {
                     self.status_message = Some("Theme saved".to_string());
+                }
+                AppResponse::DspSettingsLoaded(settings) => {
+                    tracing::info!("Applying loaded DSP settings: {:?}", settings);
+                    // Update DspView with loaded settings
+                    self.dsp_view.sample_rate = settings.sample_rate;
+                    self.dsp_view.buffer_ms = settings.buffer_ms;
+                    self.dsp_view.headroom_db = settings.headroom_db;
+                    self.dsp_view.auto_compensate = settings.auto_compensate;
+                    self.dsp_view.clip_detection = settings.clip_detection;
+                    self.status_message = Some(format!("Loaded DSP settings for profile {}", settings.profile_id));
+                }
+                AppResponse::DspSettingsSaved => {
+                    self.status_message = Some("DSP settings saved successfully".to_string());
                 }
             }
         }
@@ -2277,6 +2349,7 @@ impl eframe::App for AaeqApp {
                                     if self.dsp_view.is_streaming {
                                         tracing::info!("Preset '{}' saved (already applied via live preview)", preset_name);
                                         self.current_preset = Some(preset_name.clone());
+                                        self.dsp_view.current_active_preset = Some(preset_name.clone()); // Sync to DSP view
                                         self.now_playing_view.current_preset = Some(preset_name.clone());
                                         self.status_message = Some(format!("Saved preset: {}", preset_name));
                                         let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset_name));
@@ -2339,6 +2412,7 @@ impl eframe::App for AaeqApp {
 
                                 // Immediately update UI state for instant feedback
                                 self.current_preset = Some(preset.clone());
+                                self.dsp_view.current_active_preset = Some(preset.clone()); // Sync to DSP view
                                 self.now_playing_view.current_preset = Some(preset.clone());
 
                                 // Clear the curve immediately to avoid showing stale data
@@ -2355,6 +2429,7 @@ impl eframe::App for AaeqApp {
 
                                 // Immediately update UI state for instant feedback
                                 self.current_preset = Some(preset.clone());
+                                self.dsp_view.current_active_preset = Some(preset.clone()); // Sync to DSP view
                                 self.now_playing_view.current_preset = Some(preset.clone());
 
                                 // Clear the curve immediately to avoid showing stale data
@@ -2371,7 +2446,7 @@ impl eframe::App for AaeqApp {
                         PresetAction::CreateCustom => {
                             let mut editor = EqEditorView::default();
                             // Populate existing presets list and auto-fix name conflicts
-                            editor.set_existing_presets(self.dsp_view.custom_presets.clone());
+                            editor.set_existing_presets(self.presets_view.custom_presets.clone());
                             self.eq_editor_view = Some(editor);
                             self.show_eq_editor = true;
 
@@ -2566,7 +2641,7 @@ impl eframe::App for AaeqApp {
                                         config,
                                         self.dsp_view.use_test_tone,
                                         self.dsp_view.selected_input_device.clone(),
-                                        self.dsp_view.selected_preset.clone(),
+                                        None, // No manual preset override - use EQ Management
                                     ));
                                     self.dsp_view.is_starting = true; // Show spinner while connecting
                                 } else {
@@ -2601,7 +2676,7 @@ impl eframe::App for AaeqApp {
                                             config,
                                             true, // use_test_tone
                                             None, // input_device
-                                            self.dsp_view.selected_preset.clone(), // Use selected EQ preset
+                                            None, // No manual preset override - use EQ Management // Use selected EQ preset
                                         ));
                                         self.status_message = Some("Starting test tone...".to_string());
                                     } else {
@@ -2644,62 +2719,25 @@ impl eframe::App for AaeqApp {
                             DspAction::ToggleMeters => {
                                 tracing::info!("Meters toggled: {}", self.dsp_view.show_meters);
                             }
-                            DspAction::PresetSelected(preset) => {
-                                if let Some(ref preset_name) = preset {
-                                    tracing::info!("EQ preset selected: {}", preset_name);
-                                } else {
-                                    tracing::info!("EQ preset cleared");
-                                }
-
-                                // If streaming is active, restart to apply the new preset
-                                if self.dsp_view.is_streaming {
-                                    tracing::info!("Restarting stream to apply preset change");
-
-                                    // Stop current stream
-                                    let _ = self.command_tx.send(AppCommand::DspStopStreaming);
-
-                                    // Start new stream with updated preset after a brief delay
-                                    let command_tx = self.command_tx.clone();
-                                    let sink_type = self.dsp_view.selected_sink;
-                                    let device = self.dsp_view.selected_device.clone();
-                                    let use_test_tone = self.dsp_view.use_test_tone;
-                                    let input_device = self.dsp_view.selected_input_device.clone();
-                                    let preset_clone = preset.clone();
-                                    let format = match self.dsp_view.format {
-                                        FormatOption::F32 => SampleFormat::F32,
-                                        FormatOption::S24LE => SampleFormat::S24LE,
-                                        FormatOption::S16LE => SampleFormat::S16LE,
-                                    };
-                                    let config = OutputConfig {
-                                        sample_rate: self.dsp_view.sample_rate,
-                                        channels: 2,
-                                        format,
-                                        buffer_ms: self.dsp_view.buffer_ms,
-                                        exclusive: false,
-                                    };
-
-                                    tokio::spawn(async move {
-                                        // Wait for stop to complete
-                                        tokio::time::sleep(Duration::from_millis(200)).await;
-
-                                        if let Some(device) = device {
-                                            let _ = command_tx.send(AppCommand::DspStartStreaming(
-                                                sink_type,
-                                                device,
-                                                config,
-                                                use_test_tone,
-                                                input_device,
-                                                preset_clone,
-                                            ));
-                                        }
-                                    });
-
-                                    self.status_message = Some("Restarting stream with new preset...".to_string());
-                                }
-                            }
                             DspAction::SaveCustomPreset(preset) => {
                                 tracing::info!("Saving custom preset: {}", preset.name);
                                 let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset));
+                            }
+                            DspAction::HeadroomChanged => {
+                                tracing::info!("Headroom changed to {} dB", self.dsp_view.headroom_db);
+                                // Headroom will be applied on next stream start or restart
+                                // For now, just log the change. Implementation will be completed
+                                // when integrating with the streaming pipeline.
+                            }
+                            DspAction::ClipDetectionChanged => {
+                                tracing::info!("Clip detection changed to: {}", self.dsp_view.clip_detection);
+                                // Clip detection setting will be applied on next stream start
+                            }
+                            DspAction::ResetClipCount => {
+                                tracing::info!("Clip counter reset");
+                                self.dsp_view.clip_count = 0;
+                                // TODO: Also reset the counter in the actual HeadroomControl instance
+                                // This will be implemented when integrating with the DSP pipeline
                             }
                         }
                     }
@@ -2727,6 +2765,109 @@ impl eframe::App for AaeqApp {
                                     }
                                 }
                             });
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Profile and DSP Settings
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Profile & DSP Settings").strong().size(16.0));
+                        ui.add_space(10.0);
+
+                        // Profile selector
+                        ui.horizontal(|ui| {
+                            ui.label("Active Profile:");
+
+                            let current_profile_name = self.available_profiles
+                                .iter()
+                                .find(|p| p.id == Some(self.active_profile_id))
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("Unknown");
+
+                            egui::ComboBox::new("profile_selector", "")
+                                .selected_text(current_profile_name)
+                                .show_ui(ui, |ui| {
+                                    for profile in &self.available_profiles.clone() {
+                                        if let Some(profile_id) = profile.id {
+                                            if ui.selectable_value(&mut self.active_profile_id, profile_id, &profile.name).clicked() {
+                                                tracing::info!("Profile changed to: {} (id={})", profile.name, profile_id);
+                                                // Load DSP settings for this profile
+                                                let _ = self.command_tx.send(AppCommand::LoadDspSettings(profile_id));
+                                            }
+                                        }
+                                    }
+                                });
+                        });
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(5.0);
+
+                        // DSP Settings for active profile
+                        ui.label(egui::RichText::new("DSP Configuration").strong());
+                        ui.add_space(5.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("Sample Rate:");
+                            let prev_rate = self.dsp_view.sample_rate;
+                            egui::ComboBox::new("settings_sample_rate", "")
+                                .selected_text(format!("{} Hz", self.dsp_view.sample_rate))
+                                .show_ui(ui, |ui| {
+                                    for &rate in &[44100, 48000, 96000, 192000] {
+                                        ui.selectable_value(&mut self.dsp_view.sample_rate, rate, format!("{} Hz", rate));
+                                    }
+                                });
+
+                            if self.dsp_view.sample_rate != prev_rate {
+                                tracing::info!("Sample rate changed to: {}", self.dsp_view.sample_rate);
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Buffer Size:");
+                            ui.add(egui::Slider::new(&mut self.dsp_view.buffer_ms, 50..=500).suffix(" ms"));
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Headroom:");
+                            ui.add(egui::Slider::new(&mut self.dsp_view.headroom_db, -6.0..=0.0)
+                                .suffix(" dB")
+                                .text(""))
+                                .on_hover_text("Create headroom to prevent clipping from EQ/DSP processing");
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut self.dsp_view.clip_detection, "Enable Clip Detection")
+                                .on_hover_text("Monitor and count audio samples that exceed ±1.0");
+                        });
+
+                        ui.add_space(10.0);
+
+                        // Save button
+                        if ui.button("💾 Save DSP Settings for This Profile").clicked() {
+                            tracing::info!("Saving DSP settings for profile {}", self.active_profile_id);
+                            let settings = aaeq_core::DspSettings {
+                                id: None,
+                                profile_id: self.active_profile_id,
+                                sample_rate: self.dsp_view.sample_rate,
+                                buffer_ms: self.dsp_view.buffer_ms,
+                                headroom_db: self.dsp_view.headroom_db,
+                                auto_compensate: self.dsp_view.auto_compensate,
+                                clip_detection: self.dsp_view.clip_detection,
+                                created_at: 0,
+                                updated_at: 0,
+                            };
+                            let _ = self.command_tx.send(AppCommand::SaveDspSettings(settings));
+                            self.status_message = Some("DSP settings saved for profile".to_string());
+                        }
+
+                        ui.add_space(5.0);
+                        ui.label(
+                            egui::RichText::new("💡 DSP settings are stored per profile and applied when streaming starts")
+                                .color(egui::Color32::GRAY)
+                                .italics()
+                                .size(10.0)
+                        );
                     });
 
                     ui.add_space(20.0);
