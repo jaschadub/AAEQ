@@ -36,16 +36,58 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Initialize logging
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,aaeq=debug".into()),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    // Get database path early (before logging, so we know where to put the log file)
+    let db_path = get_db_path()?;
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    // Initialize database (we need this to check the debug logging setting)
+    let pool = aaeq_persistence::init_db(&db_path).await?;
+
+    // Check if debug logging to file is enabled
+    let settings_repo = aaeq_persistence::AppSettingsRepository::new(pool.clone());
+    let enable_debug_logging = settings_repo.get_enable_debug_logging().await.unwrap_or(false);
+
+    // Initialize logging with optional file output
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,aaeq=debug".into());
+
+    if enable_debug_logging {
+        // Set up logging with both console and file output
+        let log_dir = db_path.parent()
+            .ok_or_else(|| anyhow::anyhow!("Failed to get database parent directory"))?;
+
+        let file_appender = tracing_appender::rolling::daily(log_dir, "debug.log");
+        let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+        // Initialize with both console and file layers
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .with_ansi(false) // Disable ANSI colors in file output
+            )
+            .init();
+
+        // Leak the guard to keep file writer alive for the application lifetime
+        std::mem::forget(_guard);
+
+        eprintln!("Debug logging enabled. Log file: {}/debug.log", log_dir.display());
+    } else {
+        // Console-only logging
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     tracing::info!("Starting AAEQ - Adaptive Audio Equalizer");
+    tracing::info!("Database path: {}", db_path.display());
 
     // Ensure only one instance is running
     let _instance = SingleInstance::new("aaeq-app-instance")?;
@@ -59,18 +101,6 @@ async fn main() -> Result<()> {
     // Keep the instance lock in a static location so it persists for the app lifetime
     // We leak it intentionally to keep the lock held until process exit
     let _instance_guard = Box::leak(Box::new(_instance));
-
-    // Get database path
-    let db_path = get_db_path()?;
-    tracing::info!("Database path: {}", db_path.display());
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    // Initialize database
-    let pool = aaeq_persistence::init_db(&db_path).await?;
 
     // Create app
     let mut app = AaeqApp::new(pool, db_path.clone());

@@ -68,6 +68,7 @@ enum AppCommand {
     ReloadProfiles, // Reload profiles from database
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
+    SaveEnableDebugLogging(bool), // Save debug logging preference to database
     LoadDspSettings(i64), // Load DSP settings for a profile
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
     // DSP Commands
@@ -159,6 +160,7 @@ pub struct AaeqApp {
     /// UI state
     current_mode: AppMode,
     current_theme: crate::theme::Theme,
+    enable_debug_logging: bool,
     show_eq_editor: bool,
     show_delete_confirmation: bool, // Show delete preset confirmation dialog
     preset_to_delete: Option<String>, // Preset name pending deletion
@@ -223,6 +225,7 @@ impl AaeqApp {
             last_track_key: None,
             current_mode: AppMode::EqManagement,
             current_theme: crate::theme::Theme::default(), // Will be loaded in initialize()
+            enable_debug_logging: false, // Will be loaded in initialize()
             show_eq_editor: false,
             show_delete_confirmation: false,
             preset_to_delete: None,
@@ -375,6 +378,12 @@ impl AaeqApp {
                 tracing::info!("Loading saved theme: {}", theme_str);
                 self.current_theme = theme;
             }
+        }
+
+        // Load debug logging setting
+        if let Ok(enabled) = settings_repo.get_enable_debug_logging().await {
+            self.enable_debug_logging = enabled;
+            tracing::info!("Debug logging enabled: {}", enabled);
         }
 
         // Trigger device discovery on startup for Local DAC (fast, populates device lists)
@@ -803,6 +812,14 @@ impl AaeqApp {
                     } else {
                         tracing::info!("Saved theme: {}", theme_str);
                         let _ = response_tx.send(AppResponse::ThemeSaved);
+                    }
+                }
+                AppCommand::SaveEnableDebugLogging(enabled) => {
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_enable_debug_logging(enabled).await {
+                        tracing::error!("Failed to save debug logging setting: {}", e);
+                    } else {
+                        tracing::info!("Debug logging setting saved: {}", enabled);
                     }
                 }
 
@@ -3009,6 +3026,45 @@ impl eframe::App for AaeqApp {
                                     }
                                 }
                             });
+                    });
+
+                    ui.add_space(20.0);
+
+                    // Debug logging option
+                    ui.group(|ui| {
+                        ui.label(egui::RichText::new("Debug Logging").strong().size(16.0));
+                        ui.add_space(10.0);
+
+                        let prev_debug_logging = self.enable_debug_logging;
+                        ui.checkbox(&mut self.enable_debug_logging, "Enable debug logging to file")
+                            .on_hover_text("Save all debug logs to a file for troubleshooting and bug reporting");
+
+                        if self.enable_debug_logging != prev_debug_logging {
+                            tracing::info!("Debug logging changed to: {}", self.enable_debug_logging);
+                            // Save setting to database
+                            let _ = self.command_tx.send(AppCommand::SaveEnableDebugLogging(self.enable_debug_logging));
+                        }
+
+                        ui.add_space(5.0);
+
+                        // Show log file location
+                        if self.enable_debug_logging {
+                            let log_dir = self.db_path.parent()
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "unknown".to_string());
+
+                            ui.label(
+                                egui::RichText::new(format!("📁 Log file: {}/debug.log", log_dir))
+                                    .color(egui::Color32::GRAY)
+                                    .size(10.0)
+                            );
+                            ui.label(
+                                egui::RichText::new("⚠️ Changes take effect after restarting the application")
+                                    .color(egui::Color32::from_rgb(255, 140, 0))
+                                    .italics()
+                                    .size(10.0)
+                            );
+                        }
                     });
 
                     ui.add_space(20.0);
