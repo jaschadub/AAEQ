@@ -1071,30 +1071,31 @@ impl DspView {
 
                 ui.add_space(10.0);
 
-                // Start/Stop controls (always visible) - larger button
-                if !self.is_streaming && !self.is_starting {
-                    if ui.add_sized([180.0, 30.0], egui::Button::new("▶ Start Streaming")).clicked() {
-                        action = Some(DspAction::StartStreaming);
-                    }
-                } else if self.is_starting {
-                    // Show spinner while connecting
-                    ui.add_enabled_ui(false, |ui| {
-                        ui.add_sized([180.0, 30.0], |ui: &mut egui::Ui| {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Connecting...");
-                            }).response
+                // Start/Stop controls and EQ Status (always visible) - in horizontal layout
+                ui.horizontal(|ui| {
+                    // Start/Stop button
+                    if !self.is_streaming && !self.is_starting {
+                        if ui.add_sized([180.0, 30.0], egui::Button::new("▶ Start Streaming")).clicked() {
+                            action = Some(DspAction::StartStreaming);
+                        }
+                    } else if self.is_starting {
+                        // Show spinner while connecting
+                        ui.add_enabled_ui(false, |ui| {
+                            ui.add_sized([180.0, 30.0], |ui: &mut egui::Ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Connecting...");
+                                }).response
+                            });
                         });
-                    });
-                } else {
-                    if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
-                        action = Some(DspAction::StopStreaming);
+                    } else {
+                        if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
+                            action = Some(DspAction::StopStreaming);
+                        }
                     }
-                }
 
-                // Status indicator with colored shapes
-                if self.is_streaming {
-                    ui.horizontal(|ui| {
+                    // Status indicator beside button
+                    if self.is_streaming {
                         // Draw green circle
                         let size = egui::Vec2::new(10.0, 10.0);
                         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -1108,9 +1109,7 @@ impl DspView {
                                 .color(egui::Color32::from_rgb(50, 205, 50))
                                 .strong()
                         );
-                    });
-                } else {
-                    ui.horizontal(|ui| {
+                    } else {
                         // Draw red circle
                         let size = egui::Vec2::new(10.0, 10.0);
                         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -1124,8 +1123,56 @@ impl DspView {
                                 .color(egui::Color32::from_rgb(220, 20, 60))
                                 .strong()
                         );
+                    }
+
+                    // Vertical separator
+                    ui.separator();
+
+                    // EQ Status - always visible
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new("EQ Status:").strong().size(11.0));
+                        ui.horizontal(|ui| {
+                            if self.is_streaming {
+                                if let Some(preset_name) = &self.current_active_preset {
+                                    // Draw green circle for active EQ
+                                    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(50, 205, 50));
+                                    ui.label(
+                                        egui::RichText::new(format!("ACTIVE: {}", preset_name))
+                                            .color(egui::Color32::from_rgb(50, 205, 50))
+                                            .strong()
+                                            .size(11.0)
+                                    );
+                                } else {
+                                    // Draw grey circle for bypassed EQ
+                                    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                                    ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
+                                    ui.label(
+                                        egui::RichText::new("BYPASSED (Flat)")
+                                            .color(egui::Color32::from_rgb(150, 150, 150))
+                                            .size(11.0)
+                                    );
+                                }
+                            } else {
+                                // Draw grey circle for stopped
+                                let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
+                                ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
+                                ui.label(
+                                    egui::RichText::new("STOPPED")
+                                        .color(egui::Color32::from_rgb(150, 150, 150))
+                                        .size(11.0)
+                                );
+                            }
+                        });
+                        // Help text for EQ Status
+                        ui.label(
+                            egui::RichText::new("EQ presets are managed in the EQ Management tab")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
+                        );
                     });
-                }
+                });
             });
 
             // Only show details when not collapsed
@@ -1528,235 +1575,193 @@ impl DspView {
             ui.add_space(10.0);
             ui.separator();
 
-            // EQ Status (managed via EQ Management tab)
-            ui.label("EQ Status:");
+            // Dithering & Resampling sections - side by side
             ui.horizontal(|ui| {
-                if self.is_streaming {
-                    if let Some(preset_name) = &self.current_active_preset {
-                        // Draw green circle for active EQ
-                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(50, 205, 50));
+                // Left column: Dithering & Noise Shaping
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("Dithering & Noise Shaping").strong().size(14.0));
+
+                    if ui.checkbox(&mut self.dither_enabled, "Enable Dithering")
+                        .on_hover_text("Add dither noise to reduce quantization distortion when reducing bit depth")
+                        .changed()
+                    {
+                        action = Some(DspAction::DitherToggled);
+                    }
+
+                    if self.dither_enabled {
+                        ui.add_space(5.0);
+
+                        // Dither mode selection
+                        ui.horizontal(|ui| {
+                            ui.label("Dither Mode:");
+                            let prev_mode = self.dither_mode;
+
+                            let display_name = match self.dither_mode {
+                                DitherMode::None => "None",
+                                DitherMode::Rectangular => "Rectangular",
+                                DitherMode::Triangular => "Triangular (TPDF)",
+                                DitherMode::Gaussian => "Gaussian",
+                            };
+
+                            egui::ComboBox::from_id_salt("dither_mode")
+                                .selected_text(display_name)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.dither_mode, DitherMode::None, "None");
+                                    ui.selectable_value(&mut self.dither_mode, DitherMode::Rectangular, "Rectangular");
+                                    ui.selectable_value(&mut self.dither_mode, DitherMode::Triangular, "Triangular (TPDF)");
+                                    ui.selectable_value(&mut self.dither_mode, DitherMode::Gaussian, "Gaussian");
+                                });
+
+                            if self.dither_mode != prev_mode {
+                                action = Some(DspAction::DitherModeChanged);
+                            }
+                        });
                         ui.label(
-                            egui::RichText::new(format!("ACTIVE: {}", preset_name))
-                                .color(egui::Color32::from_rgb(50, 205, 50))
-                                .strong()
+                            egui::RichText::new("TPDF (Triangular) is the industry standard")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
                         );
-                    } else {
-                        // Draw grey circle for bypassed EQ
-                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
-                        ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
+
+                        ui.add_space(5.0);
+
+                        // Noise shaping selection
+                        ui.horizontal(|ui| {
+                            ui.label("Noise Shaping:");
+                            let prev_shaping = self.noise_shaping;
+
+                            let display_name = match self.noise_shaping {
+                                NoiseShaping::None => "None",
+                                NoiseShaping::FirstOrder => "First Order",
+                                NoiseShaping::SecondOrder => "Second Order",
+                                NoiseShaping::Gesemann => "Gesemann",
+                            };
+
+                            egui::ComboBox::from_id_salt("noise_shaping")
+                                .selected_text(display_name)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.noise_shaping, NoiseShaping::None, "None");
+                                    ui.selectable_value(&mut self.noise_shaping, NoiseShaping::FirstOrder, "First Order");
+                                    ui.selectable_value(&mut self.noise_shaping, NoiseShaping::SecondOrder, "Second Order");
+                                    ui.selectable_value(&mut self.noise_shaping, NoiseShaping::Gesemann, "Gesemann");
+                                });
+
+                            if self.noise_shaping != prev_shaping {
+                                action = Some(DspAction::NoiseShapingChanged);
+                            }
+                        });
                         ui.label(
-                            egui::RichText::new("BYPASSED (Flat)")
-                                .color(egui::Color32::from_rgb(150, 150, 150))
+                            egui::RichText::new("Shapes noise spectrum to audible range")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
+                        );
+
+                        ui.add_space(5.0);
+
+                        // Target bit depth selection
+                        ui.horizontal(|ui| {
+                            ui.label("Target Bit Depth:");
+                            let prev_bits = self.target_bits;
+                            egui::ComboBox::from_id_salt("target_bits")
+                                .selected_text(format!("{} bits", self.target_bits))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.target_bits, 16, "16 bits (CD quality)");
+                                    ui.selectable_value(&mut self.target_bits, 24, "24 bits (HD audio)");
+                                    ui.selectable_value(&mut self.target_bits, 32, "32 bits (studio)");
+                                });
+
+                            if self.target_bits != prev_bits {
+                                action = Some(DspAction::TargetBitsChanged);
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new("Use 16-bit for CD, 24-bit for most DACs")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
                         );
                     }
-                } else {
-                    // Draw grey circle for stopped
-                    let (rect, _) = ui.allocate_exact_size(egui::Vec2::new(10.0, 10.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 5.0, egui::Color32::from_rgb(100, 100, 100));
-                    ui.label(
-                        egui::RichText::new("STOPPED")
-                            .color(egui::Color32::from_rgb(150, 150, 150))
-                    );
-                }
+                });
+
+                // Vertical separator
+                ui.separator();
+
+                // Right column: High-Quality Resampling
+                ui.vertical(|ui| {
+                    ui.label(egui::RichText::new("High-Quality Resampling").strong().size(14.0));
+
+                    if ui.checkbox(&mut self.resample_enabled, "Enable Resampling")
+                        .on_hover_text("Convert sample rate using high-quality sinc interpolation")
+                        .changed()
+                    {
+                        action = Some(DspAction::ResampleToggled);
+                    }
+
+                    if self.resample_enabled {
+                        ui.add_space(5.0);
+
+                        // Quality preset selection
+                        ui.horizontal(|ui| {
+                            ui.label("Quality:");
+                            let prev_quality = self.resample_quality;
+
+                            let display_name = match self.resample_quality {
+                                ResamplerQuality::Fast => "Fast",
+                                ResamplerQuality::Balanced => "Balanced",
+                                ResamplerQuality::High => "High",
+                                ResamplerQuality::Ultra => "Ultra",
+                            };
+
+                            egui::ComboBox::from_id_salt("resample_quality")
+                                .selected_text(display_name)
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Fast, "Fast");
+                                    ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Balanced, "Balanced");
+                                    ui.selectable_value(&mut self.resample_quality, ResamplerQuality::High, "High");
+                                    ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Ultra, "Ultra");
+                                });
+
+                            if self.resample_quality != prev_quality {
+                                action = Some(DspAction::ResampleQualityChanged);
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new("Balanced recommended for most use cases")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
+                        );
+
+                        ui.add_space(5.0);
+
+                        // Target sample rate selection
+                        ui.horizontal(|ui| {
+                            ui.label("Target Sample Rate:");
+                            let prev_rate = self.target_sample_rate;
+                            egui::ComboBox::from_id_salt("target_sample_rate")
+                                .selected_text(format!("{} Hz", self.target_sample_rate))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.target_sample_rate, 44100, "44100 Hz (CD standard)");
+                                    ui.selectable_value(&mut self.target_sample_rate, 48000, "48000 Hz (studio standard)");
+                                    ui.selectable_value(&mut self.target_sample_rate, 88200, "88200 Hz (2x CD)");
+                                    ui.selectable_value(&mut self.target_sample_rate, 96000, "96000 Hz (HD audio)");
+                                    ui.selectable_value(&mut self.target_sample_rate, 192000, "192000 Hz (ultra HD)");
+                                });
+
+                            if self.target_sample_rate != prev_rate {
+                                action = Some(DspAction::TargetSampleRateChanged);
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new("Match your DAC's native sample rate")
+                                .size(9.0)
+                                .color(egui::Color32::GRAY)
+                                .italics()
+                        );
+                    }
+                });
             });
-            ui.label(
-                egui::RichText::new("EQ presets are managed in the EQ Management tab")
-                    .size(10.0)
-                    .color(egui::Color32::GRAY)
-                    .italics()
-            );
-
-            ui.add_space(10.0);
-            ui.separator();
-
-            // Dithering & Noise Shaping section
-            ui.label(egui::RichText::new("Dithering & Noise Shaping").strong().size(14.0));
-
-            ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.dither_enabled, "Enable Dithering")
-                    .on_hover_text("Add dither noise to reduce quantization distortion when reducing bit depth")
-                    .changed()
-                {
-                    action = Some(DspAction::DitherToggled);
-                }
-            });
-
-            if self.dither_enabled {
-                ui.add_space(5.0);
-
-                // Dither mode selection
-                ui.horizontal(|ui| {
-                    ui.label("Dither Mode:");
-                    let prev_mode = self.dither_mode;
-
-                    // Display user-friendly name
-                    let display_name = match self.dither_mode {
-                        DitherMode::None => "None",
-                        DitherMode::Rectangular => "Rectangular",
-                        DitherMode::Triangular => "Triangular (TPDF)",
-                        DitherMode::Gaussian => "Gaussian",
-                    };
-
-                    egui::ComboBox::from_id_salt("dither_mode")
-                        .selected_text(display_name)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.dither_mode, DitherMode::None, "None");
-                            ui.selectable_value(&mut self.dither_mode, DitherMode::Rectangular, "Rectangular");
-                            ui.selectable_value(&mut self.dither_mode, DitherMode::Triangular, "Triangular (TPDF)");
-                            ui.selectable_value(&mut self.dither_mode, DitherMode::Gaussian, "Gaussian");
-                        });
-
-                    if self.dither_mode != prev_mode {
-                        action = Some(DspAction::DitherModeChanged);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new("TPDF (Triangular) is the industry standard - eliminates harmonic distortion")
-                        .size(10.0)
-                        .color(egui::Color32::GRAY)
-                        .italics()
-                );
-
-                ui.add_space(5.0);
-
-                // Noise shaping selection
-                ui.horizontal(|ui| {
-                    ui.label("Noise Shaping:");
-                    let prev_shaping = self.noise_shaping;
-
-                    // Display user-friendly name
-                    let display_name = match self.noise_shaping {
-                        NoiseShaping::None => "None",
-                        NoiseShaping::FirstOrder => "First Order",
-                        NoiseShaping::SecondOrder => "Second Order",
-                        NoiseShaping::Gesemann => "Gesemann",
-                    };
-
-                    egui::ComboBox::from_id_salt("noise_shaping")
-                        .selected_text(display_name)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::None, "None");
-                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::FirstOrder, "First Order");
-                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::SecondOrder, "Second Order");
-                            ui.selectable_value(&mut self.noise_shaping, NoiseShaping::Gesemann, "Gesemann");
-                        });
-
-                    if self.noise_shaping != prev_shaping {
-                        action = Some(DspAction::NoiseShapingChanged);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new("Shapes dither noise spectrum to move it out of audible range")
-                        .size(10.0)
-                        .color(egui::Color32::GRAY)
-                        .italics()
-                );
-
-                ui.add_space(5.0);
-
-                // Target bit depth selection
-                ui.horizontal(|ui| {
-                    ui.label("Target Bit Depth:");
-                    let prev_bits = self.target_bits;
-                    egui::ComboBox::from_id_salt("target_bits")
-                        .selected_text(format!("{} bits", self.target_bits))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.target_bits, 16, "16 bits (CD quality)");
-                            ui.selectable_value(&mut self.target_bits, 24, "24 bits (HD audio)");
-                            ui.selectable_value(&mut self.target_bits, 32, "32 bits (studio)");
-                        });
-
-                    if self.target_bits != prev_bits {
-                        action = Some(DspAction::TargetBitsChanged);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new("Use 16-bit for CD output, 24-bit for most DACs")
-                        .size(10.0)
-                        .color(egui::Color32::GRAY)
-                        .italics()
-                );
-            }
-
-            ui.add_space(10.0);
-            ui.separator();
-
-            // Resampling section
-            ui.label(egui::RichText::new("High-Quality Resampling").strong().size(14.0));
-
-            ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.resample_enabled, "Enable Resampling")
-                    .on_hover_text("Convert sample rate using high-quality sinc interpolation")
-                    .changed()
-                {
-                    action = Some(DspAction::ResampleToggled);
-                }
-            });
-
-            if self.resample_enabled {
-                ui.add_space(5.0);
-
-                // Quality preset selection
-                ui.horizontal(|ui| {
-                    ui.label("Quality:");
-                    let prev_quality = self.resample_quality;
-
-                    // Display user-friendly name
-                    let display_name = match self.resample_quality {
-                        ResamplerQuality::Fast => "Fast",
-                        ResamplerQuality::Balanced => "Balanced",
-                        ResamplerQuality::High => "High",
-                        ResamplerQuality::Ultra => "Ultra",
-                    };
-
-                    egui::ComboBox::from_id_salt("resample_quality")
-                        .selected_text(display_name)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Fast, "Fast");
-                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Balanced, "Balanced");
-                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::High, "High");
-                            ui.selectable_value(&mut self.resample_quality, ResamplerQuality::Ultra, "Ultra");
-                        });
-
-                    if self.resample_quality != prev_quality {
-                        action = Some(DspAction::ResampleQualityChanged);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new("Balanced recommended for most use cases")
-                        .size(10.0)
-                        .color(egui::Color32::GRAY)
-                        .italics()
-                );
-
-                ui.add_space(5.0);
-
-                // Target sample rate selection
-                ui.horizontal(|ui| {
-                    ui.label("Target Sample Rate:");
-                    let prev_rate = self.target_sample_rate;
-                    egui::ComboBox::from_id_salt("target_sample_rate")
-                        .selected_text(format!("{} Hz", self.target_sample_rate))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut self.target_sample_rate, 44100, "44100 Hz (CD standard)");
-                            ui.selectable_value(&mut self.target_sample_rate, 48000, "48000 Hz (studio standard)");
-                            ui.selectable_value(&mut self.target_sample_rate, 88200, "88200 Hz (2x CD)");
-                            ui.selectable_value(&mut self.target_sample_rate, 96000, "96000 Hz (HD audio)");
-                            ui.selectable_value(&mut self.target_sample_rate, 192000, "192000 Hz (ultra HD)");
-                        });
-
-                    if self.target_sample_rate != prev_rate {
-                        action = Some(DspAction::TargetSampleRateChanged);
-                    }
-                });
-                ui.label(
-                    egui::RichText::new("Match your DAC's native sample rate for best quality")
-                        .size(10.0)
-                        .color(egui::Color32::GRAY)
-                        .italics()
-                );
-            }
 
             ui.add_space(10.0);
             ui.separator();
