@@ -1,5 +1,4 @@
 /// Control API Server implementation
-
 use super::routes::{create_router, AppState, Metrics, RouteConfig};
 use crate::manager::OutputManager;
 use anyhow::Result;

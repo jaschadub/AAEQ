@@ -80,7 +80,7 @@ pub fn convert_with_gain(
 /// Calculate RMS level of an audio block (in dBFS)
 pub fn calculate_rms_dbfs(block: AudioBlock<'_>) -> f64 {
     if block.frames.is_empty() {
-        return -std::f64::INFINITY;
+        return -f64::INFINITY;
     }
 
     let sum_squares: f64 = block.frames.iter().map(|&s| s * s).sum();
@@ -89,7 +89,7 @@ pub fn calculate_rms_dbfs(block: AudioBlock<'_>) -> f64 {
     if rms > 0.0 {
         20.0 * rms.log10()
     } else {
-        -std::f64::INFINITY
+        -f64::INFINITY
     }
 }
 
@@ -105,7 +105,7 @@ pub fn calculate_peak_dbfs(block: AudioBlock<'_>) -> f64 {
     if peak > 0.0 {
         20.0 * peak.log10()
     } else {
-        -std::f64::INFINITY
+        -f64::INFINITY
     }
 }
 
@@ -128,7 +128,7 @@ pub fn is_silence(block: AudioBlock<'_>, threshold_dbfs: f64) -> bool {
 /// Returns the average level of the quietest 10% of samples (in dBFS)
 pub fn calculate_noise_floor_dbfs(block: AudioBlock<'_>) -> f64 {
     if block.frames.is_empty() {
-        return -std::f64::INFINITY;
+        return -f64::INFINITY;
     }
 
     // Get absolute values and sort
@@ -146,7 +146,7 @@ pub fn calculate_noise_floor_dbfs(block: AudioBlock<'_>) -> f64 {
     if noise_rms > 0.0 {
         20.0 * noise_rms.log10()
     } else {
-        -std::f64::INFINITY
+        -f64::INFINITY
     }
 }
 
@@ -279,7 +279,7 @@ mod tests {
         // Pure silence should have -inf noise floor
         let frames = vec![0.0; 100];
         let block = AudioBlock::new(&frames, 48000, 2);
-        assert_eq!(calculate_noise_floor_dbfs(block), -std::f64::INFINITY);
+        assert_eq!(calculate_noise_floor_dbfs(block), -f64::INFINITY);
 
         // Signal with low noise floor
         let mut noisy_frames = vec![0.0001; 100]; // Quiet noise

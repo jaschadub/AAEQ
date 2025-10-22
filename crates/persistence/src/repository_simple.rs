@@ -2,6 +2,7 @@ use aaeq_core::{Device, DspSettings, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use chrono::Utc;
+use std::str::FromStr;
 
 /// Repository for device operations
 pub struct DeviceRepository {
@@ -174,7 +175,7 @@ impl MappingRepository {
 
         let mappings = rows.iter().filter_map(|row| {
             let scope_str: String = row.get(1);
-            let scope = Scope::from_str(&scope_str)?;
+            let scope = Scope::from_str(&scope_str).ok()?;
 
             Some(Mapping {
                 id: Some(row.get(0)),
@@ -200,7 +201,7 @@ impl MappingRepository {
 
         let mappings = rows.iter().filter_map(|row| {
             let scope_str: String = row.get(1);
-            let scope = Scope::from_str(&scope_str)?;
+            let scope = Scope::from_str(&scope_str).ok()?;
 
             Some(Mapping {
                 id: Some(row.get(0)),

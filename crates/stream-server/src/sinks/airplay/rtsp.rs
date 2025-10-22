@@ -112,7 +112,7 @@ impl RtspClient {
         reader.read_line(&mut status_line).await?;
 
         // Parse status line: RTSP/1.0 200 OK
-        let parts: Vec<&str> = status_line.trim().split_whitespace().collect();
+        let parts: Vec<&str> = status_line.split_whitespace().collect();
         if parts.len() < 3 {
             return Err(anyhow!("Invalid RTSP response"));
         }

@@ -5,7 +5,6 @@
 /// - EQ: Parametric equalization with biquad IIR filters
 /// - Headroom: Gain control and clipping prevention
 /// - Resampler: High-quality sample rate conversion with sinc interpolation
-
 pub mod dither;
 pub mod eq;
 pub mod headroom;

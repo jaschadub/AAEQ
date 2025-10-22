@@ -2,7 +2,6 @@
 ///
 /// Implements parametric EQ using biquad IIR filters for low-latency
 /// audio processing in the streaming pipeline.
-
 use aaeq_core::EqPreset;
 use std::f64::consts::PI;
 

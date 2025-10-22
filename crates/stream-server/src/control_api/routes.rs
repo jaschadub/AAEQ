@@ -1,5 +1,4 @@
 /// Route handlers for the Control API
-
 use super::types::*;
 use crate::manager::OutputManager;
 use axum::{

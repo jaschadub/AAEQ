@@ -147,8 +147,8 @@ impl MprisSession {
                             if val_line.starts_with("variant") && val_line.contains("array") {
                                 debug!("Found array variant for key: {}", key);
                                 // Look for the first string value inside the array
-                                for k in j + 1..std::cmp::min(j + 10, lines.len()) {
-                                    let array_line = lines[k].trim();
+                                for array_line in lines.iter().skip(j + 1).take(9) {
+                                    let array_line = array_line.trim();
 
                                     // Stop at closing bracket or next dict entry
                                     if array_line.starts_with("]") || array_line.starts_with("dict entry(") {
@@ -173,8 +173,8 @@ impl MprisSession {
                             else if val_line.starts_with("variant") {
                                 debug!("Found simple variant for key: {}", key);
                                 // Look for string on same or next line
-                                for k in j..std::cmp::min(j + 3, lines.len()) {
-                                    let string_line = lines[k].trim();
+                                for string_line in lines.iter().skip(j).take(3) {
+                                    let string_line = string_line.trim();
                                     if string_line.contains("string") && string_line.contains('"') {
                                         if let Some(value) = string_line.split('"').nth(1) {
                                             debug!("Extracted simple value for {}: {}", key, value);

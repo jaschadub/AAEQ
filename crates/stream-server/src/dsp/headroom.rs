@@ -2,7 +2,6 @@
 ///
 /// Provides configurable headroom to prevent clipping in the DSP chain,
 /// with optional auto-compensation and clip detection/counting.
-
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Convert dB to linear gain

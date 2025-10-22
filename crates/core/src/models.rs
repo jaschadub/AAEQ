@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Track metadata extracted from the device
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -61,14 +62,30 @@ impl Scope {
             Scope::Default => "default",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+/// Error type for invalid scope strings
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseScopeError;
+
+impl std::fmt::Display for ParseScopeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid scope value")
+    }
+}
+
+impl std::error::Error for ParseScopeError {}
+
+impl FromStr for Scope {
+    type Err = ParseScopeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "song" => Some(Scope::Song),
-            "album" => Some(Scope::Album),
-            "genre" => Some(Scope::Genre),
-            "default" => Some(Scope::Default),
-            _ => None,
+            "song" => Ok(Scope::Song),
+            "album" => Ok(Scope::Album),
+            "genre" => Ok(Scope::Genre),
+            "default" => Ok(Scope::Default),
+            _ => Err(ParseScopeError),
         }
     }
 }

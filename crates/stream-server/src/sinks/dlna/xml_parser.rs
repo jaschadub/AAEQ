@@ -1,5 +1,4 @@
 /// Proper XML parsing for UPnP device descriptions using quick-xml
-
 use anyhow::{anyhow, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;

@@ -1,7 +1,6 @@
 /// DIDL-Lite XML metadata generation for UPnP/DLNA
 ///
 /// DIDL-Lite is the metadata format used by UPnP to describe media items.
-
 use crate::types::OutputConfig;
 
 /// Media metadata for DIDL-Lite generation

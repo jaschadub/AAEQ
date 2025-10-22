@@ -1,5 +1,4 @@
 /// Type definitions for the Control API
-
 use crate::types::OutputConfig;
 use serde::{Deserialize, Serialize};
 

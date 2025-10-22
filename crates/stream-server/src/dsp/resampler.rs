@@ -12,13 +12,14 @@ use rubato::{
 use serde::{Deserialize, Serialize};
 
 /// Resampling quality preset
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ResamplerQuality {
     /// Fast resampling - lower quality, minimal CPU usage
     /// Good for real-time monitoring or less critical applications
     Fast,
     /// Balanced resampling - good quality, moderate CPU usage
     /// Recommended for most use cases
+    #[default]
     Balanced,
     /// High quality - excellent quality, higher CPU usage
     /// For audiophile-grade resampling
@@ -73,11 +74,6 @@ impl ResamplerQuality {
     }
 }
 
-impl Default for ResamplerQuality {
-    fn default() -> Self {
-        ResamplerQuality::Balanced
-    }
-}
 
 /// High-quality sample rate converter
 pub struct Resampler {
@@ -153,8 +149,8 @@ impl Resampler {
         let mut interleaved_output = Vec::with_capacity(output_frames * num_channels);
 
         for frame in 0..output_frames {
-            for channel in 0..num_channels {
-                interleaved_output.push(planar_output[channel][frame]);
+            for channel_data in &planar_output[..num_channels] {
+                interleaved_output.push(channel_data[frame]);
             }
         }
 

@@ -2,6 +2,7 @@ use aaeq_core::{Device, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::SqlitePool;
 use chrono::Utc;
+use std::str::FromStr;
 
 /// Repository for device operations
 pub struct DeviceRepository {

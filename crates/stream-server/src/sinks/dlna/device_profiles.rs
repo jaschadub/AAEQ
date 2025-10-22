@@ -2,7 +2,6 @@
 ///
 /// Different DLNA devices have different quirks, limitations, and preferred settings.
 /// This module provides device profiles to handle these differences gracefully.
-
 use crate::types::{OutputConfig, SampleFormat};
 use super::discovery::DlnaDevice;
 

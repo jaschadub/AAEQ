@@ -146,8 +146,10 @@ mod tests {
             album_art_url: None,
         };
 
-        let mut rules = RulesIndex::default();
-        rules.default_preset = Some("Flat".to_string());
+        let rules = RulesIndex {
+            default_preset: Some("Flat".to_string()),
+            ..Default::default()
+        };
 
         let result = resolve_preset(&track, &rules, "Fallback");
         assert_eq!(result, "Flat");

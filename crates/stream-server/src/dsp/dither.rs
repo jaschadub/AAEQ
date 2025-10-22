@@ -10,13 +10,14 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 
 /// Dithering algorithm for noise generation
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DitherMode {
     /// No dithering (hard quantization)
     None,
     /// Rectangular probability density function (simple random)
     Rectangular,
     /// Triangular probability density function (TPDF - industry standard)
+    #[default]
     Triangular,
     /// Gaussian probability density function (smooth noise)
     Gaussian,
@@ -33,16 +34,12 @@ impl DitherMode {
     }
 }
 
-impl Default for DitherMode {
-    fn default() -> Self {
-        DitherMode::Triangular // TPDF is the industry standard
-    }
-}
 
 /// Noise shaping curve for spectral shaping of quantization noise
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NoiseShaping {
     /// No noise shaping
+    #[default]
     None,
     /// First-order f-weighted shaping (simple)
     FirstOrder,
@@ -63,11 +60,6 @@ impl NoiseShaping {
     }
 }
 
-impl Default for NoiseShaping {
-    fn default() -> Self {
-        NoiseShaping::None
-    }
-}
 
 /// Dithering processor with noise shaping
 #[derive(Debug)]

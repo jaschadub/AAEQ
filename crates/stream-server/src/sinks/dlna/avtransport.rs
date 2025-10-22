@@ -4,7 +4,6 @@
 /// - Set the stream URL on a renderer (SetAVTransportURI)
 /// - Start/stop playback (Play, Stop)
 /// - Query playback state (GetTransportInfo)
-
 use anyhow::{anyhow, Result};
 use std::time::Duration;
 use tracing::{debug, info};

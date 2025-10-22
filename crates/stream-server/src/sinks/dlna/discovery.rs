@@ -1,7 +1,6 @@
 /// UPnP/SSDP device discovery for DLNA renderers
 ///
 /// This module discovers UPnP MediaRenderer devices on the network using SSDP (Simple Service Discovery Protocol).
-
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -232,7 +231,7 @@ async fn parse_ssdp_response(response: &str, source_ip: IpAddr) -> Option<DlnaDe
     let location = response
         .lines()
         .find(|line| line.to_lowercase().starts_with("location:"))?
-        .trim_start_matches(|c: char| c.to_ascii_lowercase() != 'h') // Find the start of http://
+        .trim_start_matches(|c: char| !c.eq_ignore_ascii_case(&'h')) // Find the start of http://
         .trim()
         .to_string();
 

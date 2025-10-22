@@ -6,7 +6,6 @@
 /// - AVTransport control (push mode)
 /// - DIDL-Lite metadata generation
 /// - Proper XML parsing with quick-xml
-
 pub mod avtransport;
 pub mod device_profiles;
 pub mod didl;

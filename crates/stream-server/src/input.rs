@@ -5,7 +5,6 @@
 /// - Application-specific audio
 /// - File playback
 /// - Network streams
-
 use crate::types::OutputConfig;
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -87,9 +86,9 @@ impl LocalDacInput {
 
                         // Look ahead for description
                         let mut description = name.clone();
-                        for j in i + 1..std::cmp::min(i + 5, lines.len()) {
-                            if lines[j].trim().starts_with("Description:") {
-                                description = lines[j]
+                        for line in lines.iter().skip(i + 1).take(4) {
+                            if line.trim().starts_with("Description:") {
+                                description = line
                                     .trim()
                                     .strip_prefix("Description:")
                                     .unwrap_or("")

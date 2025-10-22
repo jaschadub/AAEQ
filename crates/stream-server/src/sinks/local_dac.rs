@@ -66,8 +66,8 @@ impl RingBuffer {
         let available = self.available_write();
         let to_write = data.len().min(available);
 
-        for i in 0..to_write {
-            self.data[self.write_pos] = data[i];
+        for &byte in &data[..to_write] {
+            self.data[self.write_pos] = byte;
             self.write_pos = (self.write_pos + 1) % self.capacity;
         }
 
@@ -78,8 +78,8 @@ impl RingBuffer {
         let available = self.available_read();
         let to_read = output.len().min(available);
 
-        for i in 0..to_read {
-            output[i] = self.data[self.read_pos];
+        for output_byte in &mut output[..to_read] {
+            *output_byte = self.data[self.read_pos];
             self.read_pos = (self.read_pos + 1) % self.capacity;
         }
 
@@ -247,9 +247,7 @@ impl OutputSink for LocalDacSink {
                                 warn!("Buffer underrun #{}: only {} of {} samples available", underruns, samples_from_buffer, data.len());
                             }
 
-                            for i in samples_from_buffer..data.len() {
-                                data[i] = 0.0;
-                            }
+                            data[samples_from_buffer..].fill(0.0);
                         }
                     },
                     |err| error!("Stream error: {}", err),
@@ -281,9 +279,7 @@ impl OutputSink for LocalDacSink {
                                 warn!("Buffer underrun #{}: only {} of {} samples available", underruns, samples_from_buffer, data.len());
                             }
 
-                            for i in samples_from_buffer..data.len() {
-                                data[i] = 0;
-                            }
+                            data[samples_from_buffer..].fill(0);
                         }
                     },
                     |err| error!("Stream error: {}", err),
