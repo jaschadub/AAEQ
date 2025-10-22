@@ -110,7 +110,7 @@
       </Feature>
     </Feature>
 
-    <Icon Id='ProductIcon' SourceFile='..\aaeq-icon.ico' />
+    <Icon Id='ProductIcon' SourceFile='aaeq-icon.ico' />
     <Property Id='ARPPRODUCTICON' Value='ProductIcon' />
     <Property Id='ARPHELPLINK' Value='https://github.com/jaschadub/AAEQ' />
     <Property Id='ARPURLINFOABOUT' Value='https://github.com/jaschadub/AAEQ' />
@@ -123,7 +123,7 @@
         Value='LaunchApplication'>WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
     </UI>
 
-    <WixVariable Id='WixUILicenseRtf' Value='{{eula}}'/>
+    <WixVariable Id='WixUILicenseRtf' Value='License.rtf'/>
 
     <Property Id='WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT' Value='Launch AAEQ' />
     <Property Id='WixShellExecTarget' Value='[#AaeqEXE]' />
