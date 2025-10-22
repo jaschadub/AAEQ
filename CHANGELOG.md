@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2025-10-22
+
+### Fixed
+
+#### Build & Release 🔧
+- **Windows MSI Installer**: Fixed WiX linker error preventing Windows installer builds
+  - Updated license file path to use cargo-wix Mustache template variable `{{eula}}`
+  - Corrected icon file path reference in WiX configuration
+  - Removed obsolete root `wix/` directory
+  - Windows installer builds now succeed in CI/CD pipeline
+
+### Changed
+
+#### Code Quality Improvements 🧹
+- **Implemented FromStr trait** for Scope enum with proper error handling
+- **Improved iterator usage** by replacing needless range loops with iterator-based approaches (8 instances)
+- **Fixed documentation formatting** by removing empty lines after doc comments (15+ instances)
+- **Modernized numeric constants** by replacing legacy `std::f64::INFINITY` with `f64::INFINITY`
+- **Simplified default implementations** by using `#[derive(Default)]` with `#[default]` attribute for enums
+- **Improved struct initialization** patterns using struct update syntax
+
+#### Technical Details
+- All changes pass `cargo clippy --all-features --all-targets -- -D warnings` for core libraries
+- Fixed compilation issues in core, media-session, persistence, and stream-server crates
+- Improved type safety and error handling across repository interfaces
+
 ## [0.6.0] - 2025-10-21
 
 ### Added
@@ -392,7 +418,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/jaschadub/AAEQ/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jaschadub/AAEQ/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/jaschadub/AAEQ/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jaschadub/AAEQ/compare/v0.4.1...v0.5.0
