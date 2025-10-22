@@ -69,7 +69,6 @@ enum AppCommand {
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
     SaveEnableDebugLogging(bool), // Save debug logging preference to database
-    LoadDspSettings(i64), // Load DSP settings for a profile
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
@@ -116,7 +115,6 @@ enum AppResponse {
     ProfilesLoaded(Vec<aaeq_core::Profile>), // Reloaded profiles from database
     DspPresetChanged(String), // Preset changed during streaming
     ThemeSaved, // Theme saved to database
-    DspSettingsLoaded(aaeq_core::DspSettings), // DSP settings loaded for a profile
     DspSettingsSaved, // DSP settings saved successfully
 }
 
@@ -820,27 +818,6 @@ impl AaeqApp {
                         tracing::error!("Failed to save debug logging setting: {}", e);
                     } else {
                         tracing::info!("Debug logging setting saved: {}", enabled);
-                    }
-                }
-
-                AppCommand::LoadDspSettings(profile_id) => {
-                    use aaeq_persistence::DspSettingsRepository;
-                    let dsp_repo = DspSettingsRepository::new(pool.clone());
-                    match dsp_repo.get_by_profile(profile_id).await {
-                        Ok(Some(settings)) => {
-                            tracing::info!("Loaded DSP settings for profile {}: {:?}", profile_id, settings);
-                            let _ = response_tx.send(AppResponse::DspSettingsLoaded(settings));
-                        }
-                        Ok(None) => {
-                            // No settings found, return defaults
-                            tracing::info!("No DSP settings found for profile {}, using defaults", profile_id);
-                            let default_settings = aaeq_core::DspSettings::new_for_profile(profile_id);
-                            let _ = response_tx.send(AppResponse::DspSettingsLoaded(default_settings));
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to load DSP settings: {}", e);
-                            let _ = response_tx.send(AppResponse::Error(format!("Failed to load DSP settings: {}", e)));
-                        }
                     }
                 }
 
@@ -2231,55 +2208,6 @@ impl eframe::App for AaeqApp {
                 AppResponse::ThemeSaved => {
                     self.status_message = Some("Theme saved".to_string());
                 }
-                AppResponse::DspSettingsLoaded(settings) => {
-                    tracing::info!("Applying loaded DSP settings: {:?}", settings);
-                    // Update DspView with loaded settings
-                    self.dsp_view.sample_rate = settings.sample_rate;
-                    self.dsp_view.buffer_ms = settings.buffer_ms;
-                    self.dsp_view.headroom_db = settings.headroom_db;
-                    self.dsp_view.auto_compensate = settings.auto_compensate;
-                    self.dsp_view.clip_detection = settings.clip_detection;
-
-                    // Load dithering settings
-                    self.dsp_view.dither_enabled = settings.dither_enabled;
-                    self.dsp_view.target_bits = settings.target_bits;
-
-                    // Parse dither mode from string
-                    use stream_server::dsp::DitherMode;
-                    self.dsp_view.dither_mode = match settings.dither_mode.as_str() {
-                        "None" => DitherMode::None,
-                        "Rectangular" => DitherMode::Rectangular,
-                        "Triangular" => DitherMode::Triangular,
-                        "Gaussian" => DitherMode::Gaussian,
-                        _ => DitherMode::Triangular, // Default to TPDF if unknown
-                    };
-
-                    // Parse noise shaping from string
-                    use stream_server::dsp::NoiseShaping;
-                    self.dsp_view.noise_shaping = match settings.noise_shaping.as_str() {
-                        "None" => NoiseShaping::None,
-                        "FirstOrder" => NoiseShaping::FirstOrder,
-                        "SecondOrder" => NoiseShaping::SecondOrder,
-                        "Gesemann" => NoiseShaping::Gesemann,
-                        _ => NoiseShaping::None, // Default to None if unknown
-                    };
-
-                    // Load resampling settings
-                    self.dsp_view.resample_enabled = settings.resample_enabled;
-                    self.dsp_view.target_sample_rate = settings.target_sample_rate;
-
-                    // Parse resample quality from string
-                    use stream_server::dsp::ResamplerQuality;
-                    self.dsp_view.resample_quality = match settings.resample_quality.as_str() {
-                        "Fast" => ResamplerQuality::Fast,
-                        "Balanced" => ResamplerQuality::Balanced,
-                        "High" => ResamplerQuality::High,
-                        "Ultra" => ResamplerQuality::Ultra,
-                        _ => ResamplerQuality::Balanced, // Default to Balanced if unknown
-                    };
-
-                    self.status_message = Some(format!("Loaded DSP settings for profile {}", settings.profile_id));
-                }
                 AppResponse::DspSettingsSaved => {
                     self.status_message = Some("DSP settings saved successfully".to_string());
                 }
@@ -3067,118 +2995,6 @@ impl eframe::App for AaeqApp {
                         }
                     });
 
-                    ui.add_space(20.0);
-
-                    // Profile and DSP Settings
-                    ui.group(|ui| {
-                        ui.label(egui::RichText::new("Profile & DSP Settings").strong().size(16.0));
-                        ui.add_space(10.0);
-
-                        // Profile selector
-                        ui.horizontal(|ui| {
-                            ui.label("Active Profile:");
-
-                            let current_profile_name = self.available_profiles
-                                .iter()
-                                .find(|p| p.id == Some(self.active_profile_id))
-                                .map(|p| p.name.as_str())
-                                .unwrap_or("Unknown");
-
-                            egui::ComboBox::new("profile_selector", "")
-                                .selected_text(current_profile_name)
-                                .show_ui(ui, |ui| {
-                                    for profile in &self.available_profiles.clone() {
-                                        if let Some(profile_id) = profile.id {
-                                            if ui.selectable_value(&mut self.active_profile_id, profile_id, &profile.name).clicked() {
-                                                tracing::info!("Profile changed to: {} (id={})", profile.name, profile_id);
-                                                // Load DSP settings for this profile
-                                                let _ = self.command_tx.send(AppCommand::LoadDspSettings(profile_id));
-                                            }
-                                        }
-                                    }
-                                });
-                        });
-
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.add_space(5.0);
-
-                        // DSP Settings for active profile
-                        ui.label(egui::RichText::new("DSP Configuration").strong());
-                        ui.add_space(5.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label("Sample Rate:");
-                            let prev_rate = self.dsp_view.sample_rate;
-                            egui::ComboBox::new("settings_sample_rate", "")
-                                .selected_text(format!("{} Hz", self.dsp_view.sample_rate))
-                                .show_ui(ui, |ui| {
-                                    for &rate in &[44100, 48000, 96000, 192000] {
-                                        ui.selectable_value(&mut self.dsp_view.sample_rate, rate, format!("{} Hz", rate));
-                                    }
-                                });
-
-                            if self.dsp_view.sample_rate != prev_rate {
-                                tracing::info!("Sample rate changed to: {}", self.dsp_view.sample_rate);
-                            }
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Buffer Size:");
-                            ui.add(egui::Slider::new(&mut self.dsp_view.buffer_ms, 50..=500).suffix(" ms"));
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Headroom:");
-                            ui.add(egui::Slider::new(&mut self.dsp_view.headroom_db, -6.0..=0.0)
-                                .suffix(" dB")
-                                .text(""))
-                                .on_hover_text("Create headroom to prevent clipping from EQ/DSP processing");
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.dsp_view.clip_detection, "Enable Clip Detection")
-                                .on_hover_text("Monitor and count audio samples that exceed ±1.0");
-                        });
-
-                        ui.add_space(10.0);
-
-                        // Save button
-                        if ui.button("💾 Save DSP Settings for This Profile").clicked() {
-                            let settings = aaeq_core::DspSettings {
-                                id: None,
-                                profile_id: self.active_profile_id,
-                                sample_rate: self.dsp_view.sample_rate,
-                                buffer_ms: self.dsp_view.buffer_ms,
-                                headroom_db: self.dsp_view.headroom_db,
-                                auto_compensate: self.dsp_view.auto_compensate,
-                                clip_detection: self.dsp_view.clip_detection,
-                                dither_enabled: self.dsp_view.dither_enabled,
-                                dither_mode: self.dsp_view.dither_mode.as_str().to_string(),
-                                noise_shaping: self.dsp_view.noise_shaping.as_str().to_string(),
-                                target_bits: self.dsp_view.target_bits,
-                                resample_enabled: self.dsp_view.resample_enabled,
-                                resample_quality: self.dsp_view.resample_quality.as_str().to_string(),
-                                target_sample_rate: self.dsp_view.target_sample_rate,
-                                created_at: 0,
-                                updated_at: 0,
-                            };
-                            tracing::info!("💾 SAVING DSP settings for profile {}: dither={}, resample={}, target_rate={}",
-                                self.active_profile_id, settings.dither_enabled, settings.resample_enabled, settings.target_sample_rate);
-                            let _ = self.command_tx.send(AppCommand::SaveDspSettings(settings));
-                            self.status_message = Some("Saving DSP settings...".to_string());
-                        }
-
-                        ui.add_space(5.0);
-                        ui.label(
-                            egui::RichText::new("💡 DSP settings are stored per profile and applied when streaming starts")
-                                .color(egui::Color32::GRAY)
-                                .italics()
-                                .size(10.0)
-                        );
-                    });
-
-                    ui.add_space(20.0);
 
                     // Database management
                     ui.group(|ui| {
