@@ -94,7 +94,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libsqlite3-dev libglib2.0-dev libasound2-dev libxdo-dev libappindicator3-dev pkg-config
+          sudo apt-get install -y libgtk-3-dev libsqlite3-dev libglib2.0-dev libasound2-dev libxdo-dev libappindicator3-dev pkg-config libfuse2
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -108,16 +108,55 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
-      - name: Create archive
+      - name: Create tar.gz archive
         run: |
           cd target/release
           tar -czf aaeq-linux-x64.tar.gz aaeq
 
-      - name: Upload artifact
+      - name: Download linuxdeploy and plugins
+        run: |
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
+          chmod +x linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-plugin-gtk.sh
+
+      - name: Create AppImage
+        run: |
+          # Create AppDir structure
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+
+          # Copy binary
+          cp target/release/aaeq AppDir/usr/bin/
+
+          # Copy desktop file and icon
+          cp aaeq.desktop AppDir/usr/share/applications/
+          cp aaeq-icon.png AppDir/usr/share/icons/hicolor/256x256/apps/aaeq.png
+
+          # Set environment for linuxdeploy
+          export DEPLOY_GTK_VERSION=3
+          export OUTPUT=aaeq-linux-x64.AppImage
+
+          # Create AppImage
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin gtk \
+            --output appimage \
+            --desktop-file AppDir/usr/share/applications/aaeq.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/aaeq.png
+
+      - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aaeq-linux-x64
+          name: aaeq-linux-x64-tarball
           path: target/release/aaeq-linux-x64.tar.gz
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aaeq-linux-x64-appimage
+          path: aaeq-linux-x64.AppImage
 
   build-linux-arm64:
     name: Build Linux ARM64
@@ -298,13 +337,14 @@ jobs:
           name: aaeq-windows-x64-msi
           path: target/wix/aaeq-windows-x64.msi
 
-  upload-release-assets:
-    name: Upload Release Assets
+  sign-artifacts:
+    name: Sign Release Artifacts
     runs-on: ubuntu-latest
     needs: [build-linux, build-linux-arm64, build-macos, build-windows]
     if: ${{ always() && github.event_name == 'release' && (needs.build-linux.result == 'success' || needs.build-macos.result == 'success' || needs.build-windows.result == 'success') }}
     permissions:
       contents: write
+      id-token: write  # Required for OIDC keyless signing
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -317,16 +357,92 @@ jobs:
           ls -la artifacts/ || echo "No artifacts directory"
           find artifacts -type f || echo "No files found"
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign artifacts with cosign
+        run: |
+          # Find and sign all release artifacts
+          find artifacts -type f \( \
+            -name "*.tar.gz" -o \
+            -name "*.AppImage" -o \
+            -name "*.dmg" -o \
+            -name "*.zip" -o \
+            -name "*.msi" \
+          \) | while read -r file; do
+            echo "Signing: $file"
+            cosign sign-blob --yes "$file" --output-signature "${file}.sig" --output-certificate "${file}.pem"
+            echo "✓ Signed: $file"
+          done
+
+      - name: Verify signatures
+        run: |
+          # Verify all signatures were created
+          find artifacts -type f \( \
+            -name "*.tar.gz" -o \
+            -name "*.AppImage" -o \
+            -name "*.dmg" -o \
+            -name "*.zip" -o \
+            -name "*.msi" \
+          \) | while read -r file; do
+            if [ -f "${file}.sig" ]; then
+              echo "✓ Signature exists for: $file"
+            else
+              echo "✗ Missing signature for: $file"
+              exit 1
+            fi
+          done
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-artifacts
+          path: artifacts/**/*
+
+  upload-release-assets:
+    name: Upload Release Assets
+    runs-on: ubuntu-latest
+    needs: sign-artifacts
+    if: ${{ always() && github.event_name == 'release' && needs.sign-artifacts.result == 'success' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-artifacts
+          path: artifacts
+
+      - name: List artifacts to upload
+        run: |
+          echo "Artifacts to upload:"
+          find artifacts -type f || echo "No files found"
+
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/aaeq-linux-x64/*.tar.gz
+            artifacts/aaeq-linux-x64-tarball/*.tar.gz
+            artifacts/aaeq-linux-x64-tarball/*.tar.gz.sig
+            artifacts/aaeq-linux-x64-tarball/*.tar.gz.pem
+            artifacts/aaeq-linux-x64-appimage/*.AppImage
+            artifacts/aaeq-linux-x64-appimage/*.AppImage.sig
+            artifacts/aaeq-linux-x64-appimage/*.AppImage.pem
             artifacts/aaeq-linux-arm64/*.tar.gz
+            artifacts/aaeq-linux-arm64/*.tar.gz.sig
+            artifacts/aaeq-linux-arm64/*.tar.gz.pem
             artifacts/aaeq-macos-dmg/*.dmg
+            artifacts/aaeq-macos-dmg/*.dmg.sig
+            artifacts/aaeq-macos-dmg/*.dmg.pem
             artifacts/aaeq-macos-tarball/*.tar.gz
+            artifacts/aaeq-macos-tarball/*.tar.gz.sig
+            artifacts/aaeq-macos-tarball/*.tar.gz.pem
             artifacts/aaeq-windows-x64-zip/*.zip
+            artifacts/aaeq-windows-x64-zip/*.zip.sig
+            artifacts/aaeq-windows-x64-zip/*.zip.pem
             artifacts/aaeq-windows-x64-msi/*.msi
+            artifacts/aaeq-windows-x64-msi/*.msi.sig
+            artifacts/aaeq-windows-x64-msi/*.msi.pem
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

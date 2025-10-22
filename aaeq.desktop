@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AAEQ
+GenericName=Adaptive Audio Equalizer
+Comment=Automatically apply per-song EQ presets and stream audio with professional DSP processing
+Exec=aaeq
+Icon=aaeq
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=audio;equalizer;eq;dsp;streaming;wiim;dlna;
+StartupNotify=true
+StartupWMClass=aaeq
