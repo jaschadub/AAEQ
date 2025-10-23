@@ -1817,15 +1817,16 @@ impl DspView {
                     ui.separator(); // Visual separator
 
                     // CPU usage with color coding
-                    let cpu_color = if status.cpu_usage > 80.0 {
-                        egui::Color32::RED
-                    } else if status.cpu_usage > 50.0 {
-                        egui::Color32::YELLOW
-                    } else {
-                        egui::Color32::GREEN
-                    };
-                    ui.label("CPU:");
-                    ui.colored_label(cpu_color, format!("{:.1}%", status.cpu_usage));
+                    // TODO: CPU usage calculation - commented out for now
+                    // let cpu_color = if status.cpu_usage > 80.0 {
+                    //     egui::Color32::RED
+                    // } else if status.cpu_usage > 50.0 {
+                    //     egui::Color32::YELLOW
+                    // } else {
+                    //     egui::Color32::GREEN
+                    // };
+                    // ui.label("CPU:");
+                    // ui.colored_label(cpu_color, format!("{:.1}%", status.cpu_usage));
 
                     // DSP latency (only show if > 0.1ms)
                     if status.dsp_latency_ms > 0.1 {
