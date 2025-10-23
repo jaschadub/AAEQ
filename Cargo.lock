@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aaeq"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aaeq-persistence",
  "aaeq-ui-egui",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "aaeq-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "aaeq-device-wiim"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aaeq-core",
  "anyhow",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "aaeq-media-session"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "tracing",
@@ -64,7 +64,7 @@ dependencies = [
 
 [[package]]
 name = "aaeq-persistence"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aaeq-core",
  "anyhow",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "aaeq-ui-egui"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aaeq-core",
  "aaeq-device-wiim",
@@ -5841,7 +5841,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stream-server"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aaeq-core",
  "aes",

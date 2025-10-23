@@ -121,6 +121,7 @@ jobs:
           chmod +x linuxdeploy-plugin-gtk.sh
 
       - name: Create AppImage
+        continue-on-error: true
         run: |
           # Create AppDir structure
           mkdir -p AppDir/usr/bin
@@ -147,16 +148,19 @@ jobs:
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/aaeq.png
 
       - name: Upload tar.gz artifact
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: aaeq-linux-x64-tarball
           path: target/release/aaeq-linux-x64.tar.gz
 
       - name: Upload AppImage artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: aaeq-linux-x64-appimage
           path: aaeq-linux-x64.AppImage
+          if-no-files-found: warn
 
   build-linux-arm64:
     name: Build Linux ARM64
