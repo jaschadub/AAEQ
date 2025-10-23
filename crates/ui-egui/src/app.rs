@@ -3358,12 +3358,14 @@ impl eframe::App for AaeqApp {
                 self.last_viz_state, viz_enabled, self.last_viz_mode, viz_mode, self.last_meters_state, show_meters, self.last_collapsed_state, is_collapsed);
 
             // Calculate new window height based on visible elements
-            let base_height = 600.0;
+            // Base height includes: title bar, menu, Device section, DSP section header
+            let base_height = 250.0;
+            let audio_output_section_height = 350.0; // Audio Output section when expanded
             let mut new_height = base_height;
 
-            // Subtract height when Audio Output section is collapsed (~400px for all hidden controls)
-            if is_collapsed {
-                new_height -= 400.0;
+            // Add Audio Output section height (unless collapsed)
+            if !is_collapsed {
+                new_height += audio_output_section_height;
             }
 
             // Add height for visualization based on mode
