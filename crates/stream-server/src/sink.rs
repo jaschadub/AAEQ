@@ -26,6 +26,11 @@ pub trait OutputSink: Send + Sync {
 
     /// Check if the sink is currently open and ready
     fn is_open(&self) -> bool;
+
+    /// Get current sink statistics (buffer fill, underruns, etc.)
+    fn stats(&self) -> SinkStats {
+        SinkStats::default()
+    }
 }
 
 /// Statistics for monitoring output sink performance

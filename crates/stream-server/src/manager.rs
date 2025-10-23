@@ -122,8 +122,14 @@ impl OutputManager {
     }
 
     /// Get statistics for the active sink
-    pub fn active_sink_stats(&self) -> Option<&SinkStats> {
-        self.active_idx.map(|idx| &self.sinks[idx].stats)
+    pub fn active_sink_stats(&self) -> Option<SinkStats> {
+        self.active_idx.map(|idx| {
+            // Get stats from the sink itself (buffer fill, underruns, etc.)
+            let mut sink_stats = self.sinks[idx].sink.stats();
+            // Merge with manager's frame count tracking
+            sink_stats.frames_written = self.sinks[idx].stats.frames_written;
+            sink_stats
+        })
     }
 
     /// Get the active sink's latency

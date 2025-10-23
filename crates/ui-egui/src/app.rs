@@ -1651,7 +1651,6 @@ impl AaeqApp {
                                     let mgr = manager.read().await;
                                     let latency = mgr.active_sink_latency().unwrap_or(0);
                                     let stats = mgr.active_sink_stats()
-                                        .cloned()
                                         .unwrap_or(SinkStats::default());
 
                                     // Initial CPU is 0 (no samples processed yet)
@@ -1810,7 +1809,6 @@ impl AaeqApp {
                                             if frame_count % (sample_rate as u64 / 10) == 0 {
                                                 let latency = mgr.active_sink_latency().unwrap_or(0);
                                                 let stats = mgr.active_sink_stats()
-                                                    .cloned()
                                                     .unwrap_or(SinkStats::default());
 
                                                 // Calculate average CPU usage
@@ -1917,7 +1915,6 @@ impl AaeqApp {
                                             if frame_count % (sample_rate as u64 / 10) == 0 {
                                                 let latency = mgr.active_sink_latency().unwrap_or(0);
                                                 let stats = mgr.active_sink_stats()
-                                                    .cloned()
                                                     .unwrap_or(SinkStats::default());
 
                                                 // Calculate average CPU usage

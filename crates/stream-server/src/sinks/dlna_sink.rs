@@ -473,6 +473,36 @@ impl OutputSink for DlnaSink {
     fn is_open(&self) -> bool {
         self.is_open
     }
+
+    fn stats(&self) -> crate::sink::SinkStats {
+        if let Some(cfg) = &self.config {
+            // Calculate buffer fill (0.0 to 1.0)
+            let buffer_size = {
+                let buffer = self.buffer.lock().unwrap();
+                buffer.len()
+            };
+
+            // Max buffer is 1 second of audio (see write method MAX_BUFFER_MS)
+            let bytes_per_sample = cfg.format.bytes_per_sample();
+            let samples_per_sec = cfg.sample_rate as usize * cfg.channels as usize;
+            let max_buffer_size = samples_per_sec * bytes_per_sample; // 1 second
+
+            let buffer_fill = if max_buffer_size > 0 {
+                (buffer_size as f32 / max_buffer_size as f32).min(1.0)
+            } else {
+                0.0
+            };
+
+            crate::sink::SinkStats {
+                frames_written: 0, // Managed by OutputManager
+                underruns: 0,      // DLNA doesn't track underruns (network buffering handles this)
+                overruns: 0,       // DLNA doesn't have overruns (buffer is capped)
+                buffer_fill,
+            }
+        } else {
+            crate::sink::SinkStats::default()
+        }
+    }
 }
 
 #[cfg(test)]
