@@ -1724,6 +1724,9 @@ impl AaeqApp {
                                             // Start timing for CPU usage calculation
                                             let dsp_start = std::time::Instant::now();
 
+                                            // Store original sample count BEFORE any processing that might change length
+                                            let original_sample_count = captured_samples.len() / channels;
+
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&captured_samples);
 
@@ -1773,9 +1776,8 @@ impl AaeqApp {
 
                                             frame_count += (captured_samples.len() / channels) as u64;
 
-                                            // Calculate CPU usage
+                                            // Calculate CPU usage (using original sample count from before resampling)
                                             let dsp_elapsed = dsp_start.elapsed();
-                                            let original_sample_count = captured_samples.len() / channels;
                                             let audio_duration_secs = original_sample_count as f64 / sample_rate as f64;
                                             let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
 
