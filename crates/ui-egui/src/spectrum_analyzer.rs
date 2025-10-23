@@ -1,10 +1,10 @@
-/// Real-time frequency spectrum analyzer visualization
-///
-/// Displays audio frequency content using FFT with:
-/// - Log-scale frequency axis (20Hz - 20kHz)
-/// - dB scale on Y-axis
-/// - Peak-hold bars
-/// - Theme-aware colors
+//! Real-time frequency spectrum analyzer visualization
+//!
+//! Displays audio frequency content using FFT with:
+//! - Log-scale frequency axis (20Hz - 20kHz)
+//! - dB scale on Y-axis
+//! - Peak-hold bars
+//! - Theme-aware colors
 
 use egui::{pos2, vec2, Color32, Rect, Ui};
 use rustfft::{FftPlanner, num_complex::Complex};
@@ -133,8 +133,9 @@ impl SpectrumAnalyzerState {
             let f_high = center_freq + bandwidth / 2.0;
 
             // Find FFT bins in this band
+            // Note: bin 0 is DC, skip it. Valid bins are 1 to (fft_size/2 - 1)
             let bin_low = ((f_low / freq_per_bin) as usize).max(1);
-            let bin_high = ((f_high / freq_per_bin) as usize).min(fft_size / 2);
+            let bin_high = ((f_high / freq_per_bin) as usize + 1).min(fft_size / 2);
 
             if bin_low >= bin_high {
                 continue;
@@ -240,6 +241,7 @@ impl SpectrumAnalyzerState {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn paint(&self, ui: &mut Ui, rect: Rect, bg: Color32, grid: Color32,
              fill: Color32, peak_color: Color32, text_color: Color32) {
         let painter = ui.painter();
@@ -253,12 +255,14 @@ impl SpectrumAnalyzerState {
         }
 
         // Add horizontal padding for labels (30px on each side for dB scale numbers)
+        // Add vertical padding at bottom for frequency labels
         let h_padding = 30.0;
+        let v_padding = 20.0; // Space for frequency labels at bottom
         let w = rect.width() - (h_padding * 2.0);
-        let h = rect.height();
+        let h = rect.height() - v_padding;
         let left = rect.left() + h_padding;
         let right = rect.right() - h_padding;
-        let bottom = rect.bottom();
+        let bottom = rect.top() + h;
 
         // Helper: map dB to y coordinate
         let y_for_db = |db: f32| {
@@ -408,16 +412,16 @@ impl SpectrumAnalyzerState {
             let xt = (fx - log_min) / (log_max - log_min);
             let x = left + xt * w;
 
-            // Vertical grid line
+            // Vertical grid line - only in bar area, not extending into label space
             painter.line_segment(
-                [pos2(x, rect.top()), pos2(x, rect.bottom())],
+                [pos2(x, rect.top()), pos2(x, bottom)],
                 egui::Stroke::new(0.3, grid.linear_multiply(0.5)),
             );
 
-            // Frequency label
+            // Frequency label - positioned below the bar area
             painter.text(
-                pos2(x, rect.bottom() - 4.0),
-                egui::Align2::CENTER_BOTTOM,
+                pos2(x, bottom + 10.0),
+                egui::Align2::CENTER_TOP,
                 pretty_hz(f),
                 egui::FontId::proportional(10.0),
                 text_color,

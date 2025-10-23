@@ -153,12 +153,11 @@ impl EqEditorView {
                     );
 
                     // Offer auto-fix button for name conflicts (not for empty names)
-                    if has_conflict {
-                        if ui.button("Auto-fix").on_hover_text("Automatically choose a unique name").clicked() {
-                            let unique_name = self.find_unique_name(&self.preset_name);
-                            self.preset_name = unique_name;
-                            self.name_error = None;
-                        }
+                    if has_conflict
+                        && ui.button("Auto-fix").on_hover_text("Automatically choose a unique name").clicked() {
+                        let unique_name = self.find_unique_name(&self.preset_name);
+                        self.preset_name = unique_name;
+                        self.name_error = None;
                     }
                 });
             } else if is_generic_name && !self.edit_mode {
@@ -260,6 +259,7 @@ fn format_frequency(hz: u32) -> String {
 }
 
 /// View for showing now playing and quick save options
+#[derive(Default)]
 pub struct NowPlayingView {
     pub track: Option<TrackMeta>,
     pub current_preset: Option<String>,
@@ -269,21 +269,6 @@ pub struct NowPlayingView {
     album_art_texture: Option<egui::TextureHandle>,
     last_album_art_url: Option<String>,
     default_icon_texture: Option<egui::TextureHandle>, // Default icon when no album art available
-}
-
-impl Default for NowPlayingView {
-    fn default() -> Self {
-        Self {
-            track: None,
-            current_preset: None,
-            current_preset_curve: None,
-            custom_presets: vec![],
-            genre_edit: String::new(),
-            album_art_texture: None,
-            last_album_art_url: None,
-            default_icon_texture: None,
-        }
-    }
 }
 
 impl NowPlayingView {
@@ -414,7 +399,7 @@ impl NowPlayingView {
                                             // Convert to texture
                                             tracing::debug!("Album art from lookup loaded, converting to texture");
                                             let texture = ui.ctx().load_texture(
-                                                &format!("album_art_{}", art_url),
+                                                format!("album_art_{}", art_url),
                                                 color_image.as_ref().clone(),
                                                 Default::default(),
                                             );
@@ -448,7 +433,7 @@ impl NowPlayingView {
                                         // Convert ColorImage to texture
                                         tracing::debug!("Album art loaded successfully, converting to texture");
                                         let texture = ui.ctx().load_texture(
-                                            &format!("album_art_{}", art_url),
+                                            format!("album_art_{}", art_url),
                                             color_image.as_ref().clone(),
                                             Default::default(),
                                         );
@@ -705,20 +690,11 @@ pub enum NowPlayingAction {
 }
 
 /// View for listing and managing presets
+#[derive(Default)]
 pub struct PresetsView {
     pub presets: Vec<String>,         // WiiM device presets
     pub custom_presets: Vec<String>,  // Custom EQ presets
     pub selected_preset: Option<String>,
-}
-
-impl Default for PresetsView {
-    fn default() -> Self {
-        Self {
-            presets: vec![],
-            custom_presets: vec![],
-            selected_preset: None,
-        }
-    }
 }
 
 impl PresetsView {
@@ -1092,10 +1068,8 @@ impl DspView {
                                 }).response
                             });
                         });
-                    } else {
-                        if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
-                            action = Some(DspAction::StopStreaming);
-                        }
+                    } else if ui.add_sized([180.0, 30.0], egui::Button::new("⏹ Stop Streaming")).clicked() {
+                        action = Some(DspAction::StopStreaming);
                     }
 
                     // Status indicator beside button

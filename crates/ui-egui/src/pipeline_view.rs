@@ -1,7 +1,7 @@
-/// Pipeline visualization module
-///
-/// Displays the DSP signal processing chain as a visual flow diagram
-/// showing: Input → Headroom → EQ → Output with status indicators
+//! Pipeline visualization module
+//!
+//! Displays the DSP signal processing chain as a visual flow diagram
+//! showing: Input → Headroom → EQ → Output with status indicators
 
 use egui::{Color32, Ui, Vec2};
 
@@ -102,6 +102,7 @@ impl PipelineView {
     }
 
     /// Update the pipeline state based on current DSP configuration
+    #[allow(clippy::too_many_arguments)]
     pub fn update(&mut self,
         is_streaming: bool,
         sample_rate: u32,
@@ -147,8 +148,6 @@ impl PipelineView {
             .with_latency(2.3)
             .with_state(if is_streaming && eq_preset.is_some() {
                 StageState::Normal
-            } else if is_streaming {
-                StageState::Bypassed
             } else {
                 StageState::Bypassed
             })

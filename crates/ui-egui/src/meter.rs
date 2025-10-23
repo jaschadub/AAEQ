@@ -135,6 +135,7 @@ pub fn draw_mc_style_meter(_ui: &mut Ui, rect: Rect, painter: &Painter, state: &
     draw_one_meter(painter, right, "RIGHT", state.needle_dbfs_r, state.peak_hold_dbfs_r, &state.scale, ticks, needle, label_color, peak_hold);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_one_meter(
     painter: &Painter,
     rect: Rect,

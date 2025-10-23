@@ -1,7 +1,7 @@
-/// Audio waveform visualization widget
-///
-/// Inspired by egui's Dancing Strings demo, this widget displays
-/// real-time audio waveforms with optional coloring.
+//! Audio waveform visualization widget
+//!
+//! Inspired by egui's Dancing Strings demo, this widget displays
+//! real-time audio waveforms with optional coloring.
 
 use egui::{
     Color32, Pos2, Rect, Ui,

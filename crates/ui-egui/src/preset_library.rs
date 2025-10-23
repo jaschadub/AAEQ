@@ -1,5 +1,5 @@
-/// Library of common EQ preset curves
-/// These are typical frequency response patterns for standard presets
+//! Library of common EQ preset curves
+//! These are typical frequency response patterns for standard presets
 
 use aaeq_core::EqPreset;
 

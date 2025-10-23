@@ -70,14 +70,9 @@ impl AlbumArtCache {
             // Check if already loading or loaded
             {
                 let cache_read = cache.read().await;
-                if let Some(state) = cache_read.get(&url) {
-                    match state {
-                        AlbumArtState::Loading | AlbumArtState::Loaded(_) => {
-                            // Already loading or loaded, don't reload
-                            return;
-                        }
-                        _ => {}
-                    }
+                if let Some(AlbumArtState::Loading | AlbumArtState::Loaded(_)) = cache_read.get(&url) {
+                    // Already loading or loaded, don't reload
+                    return;
                 }
             }
 

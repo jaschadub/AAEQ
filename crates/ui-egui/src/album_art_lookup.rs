@@ -1,7 +1,7 @@
-/// Album art lookup from external services
-///
-/// Fetches album artwork URLs using track metadata (artist, album, title)
-/// from various free music databases.
+//! Album art lookup from external services
+//!
+//! Fetches album artwork URLs using track metadata (artist, album, title)
+//! from various free music databases.
 
 use anyhow::Result;
 use serde::Deserialize;
@@ -203,7 +203,7 @@ pub async fn lookup_album_art(artist: &str, album: &str) -> Result<Option<String
                 .take(2)
                 .collect();
 
-            if keywords.len() >= 1 {
+            if !keywords.is_empty() {
                 let keyword_query = format!("{} {}", artist, keywords.join(" "));
                 let keyword_url = format!(
                     "https://itunes.apple.com/search?term={}&entity=album&limit=10",

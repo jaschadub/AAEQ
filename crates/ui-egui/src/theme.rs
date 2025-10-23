@@ -1,8 +1,10 @@
 /// Theme system for AAEQ UI
 use egui::{Color32, Visuals, Stroke};
+use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Theme {
+    #[default]
     Dark,
     Light,
     WinAmp,
@@ -22,16 +24,10 @@ impl Theme {
         }
     }
 
-    /// Parse theme from string
+    /// Parse theme from string (deprecated - use str::parse() instead)
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "dark" => Some(Theme::Dark),
-            "light" => Some(Theme::Light),
-            "winamp" => Some(Theme::WinAmp),
-            "vintage" => Some(Theme::Vintage),
-            "studio" => Some(Theme::Studio),
-            _ => None,
-        }
+        s.parse().ok()
     }
 
     /// Get all available themes
@@ -195,9 +191,18 @@ impl Theme {
     }
 }
 
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
+impl FromStr for Theme {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "dark" => Ok(Theme::Dark),
+            "light" => Ok(Theme::Light),
+            "winamp" => Ok(Theme::WinAmp),
+            "vintage" => Ok(Theme::Vintage),
+            "studio" => Ok(Theme::Studio),
+            _ => Err(format!("Unknown theme: {}", s)),
+        }
     }
 }
 

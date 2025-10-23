@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 static MEDIA_SESSION: OnceLock<Box<dyn MediaSession>> = OnceLock::new();
 
 /// Get the global media session instance
+#[allow(clippy::borrowed_box)]
 fn get_media_session() -> &'static Box<dyn MediaSession> {
     MEDIA_SESSION.get_or_init(|| create_media_session())
 }

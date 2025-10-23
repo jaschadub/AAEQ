@@ -307,8 +307,8 @@ fn load_window_icon() -> egui::IconData {
 
     egui::IconData {
         rgba: rgba_data,
-        width: width as u32,
-        height: height as u32,
+        width,
+        height,
     }
 }
 

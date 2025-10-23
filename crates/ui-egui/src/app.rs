@@ -2476,12 +2476,10 @@ impl eframe::App for AaeqApp {
                         self.device = None;
                         self.status_message = Some("Disconnected".to_string());
                     }
-                } else {
-                    if ui.button("Connect").clicked() {
-                        let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
-                        // Optimistically set device as connected (will be updated by response)
-                        self.device = Some(Arc::new(WiimController::new("WiiM Device", self.device_host.clone())));
-                    }
+                } else if ui.button("Connect").clicked() {
+                    let _ = self.command_tx.send(AppCommand::ConnectDevice(self.device_host.clone()));
+                    // Optimistically set device as connected (will be updated by response)
+                    self.device = Some(Arc::new(WiimController::new("WiiM Device", self.device_host.clone())));
                 }
 
                 if ui.button("🔍 Discover").on_hover_text("Discover WiiM devices on local network").clicked() {
@@ -2678,7 +2676,7 @@ impl eframe::App for AaeqApp {
                         egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                             for (name, host) in &self.discovered_devices.clone() {
                                 ui.horizontal(|ui| {
-                                    ui.label(format!("{}", name));
+                                    ui.label(name);
                                     ui.label(format!("({})", host));
                                     if ui.button("Connect").clicked() {
                                         self.device_host = host.clone();
