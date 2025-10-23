@@ -31,6 +31,7 @@ pub enum OperatingMode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ProfileDialogMode {
     Create,
+    Duplicate,
     Rename,
     Delete,
 }
@@ -178,6 +179,9 @@ pub struct AaeqApp {
     show_profile_dialog: bool,
     profile_dialog_mode: ProfileDialogMode,
     profile_name_input: String,
+    profile_icon_input: String,
+    profile_color_input: String,
+    profile_to_duplicate: Option<i64>,
     profile_to_rename: Option<i64>,
     profile_to_delete: Option<i64>,
 
@@ -243,6 +247,9 @@ impl AaeqApp {
             show_profile_dialog: false,
             profile_dialog_mode: ProfileDialogMode::Create,
             profile_name_input: String::new(),
+            profile_icon_input: "📁".to_string(), // Default folder icon
+            profile_color_input: "#4A90E2".to_string(), // Default blue
+            profile_to_duplicate: None,
             profile_to_rename: None,
             profile_to_delete: None,
             command_tx,
@@ -2496,21 +2503,44 @@ impl eframe::App for AaeqApp {
 
                 // Profile selector
                 ui.label("Profile:");
-                let current_profile_name = self.available_profiles
+                let current_profile = self.available_profiles
                     .iter()
-                    .find(|p| p.id == Some(self.active_profile_id))
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("Default");
+                    .find(|p| p.id == Some(self.active_profile_id));
+
+                let current_profile_text = if let Some(prof) = current_profile {
+                    format!("{} {}", prof.icon, prof.name)
+                } else {
+                    "Default".to_string()
+                };
 
                 egui::ComboBox::from_id_salt("profile_selector")
-                    .selected_text(current_profile_name)
+                    .selected_text(current_profile_text)
                     .show_ui(ui, |ui| {
                         for profile in &self.available_profiles.clone() {
                             if let Some(profile_id) = profile.id {
                                 let is_selected = profile_id == self.active_profile_id;
 
+                                // Parse profile color
+                                let profile_color = if profile.color.starts_with('#') && profile.color.len() == 7 {
+                                    let r = u8::from_str_radix(&profile.color[1..3], 16).unwrap_or(128);
+                                    let g = u8::from_str_radix(&profile.color[3..5], 16).unwrap_or(128);
+                                    let b = u8::from_str_radix(&profile.color[5..7], 16).unwrap_or(128);
+                                    egui::Color32::from_rgb(r, g, b)
+                                } else {
+                                    egui::Color32::GRAY
+                                };
+
                                 ui.horizontal(|ui| {
-                                    if ui.selectable_label(is_selected, &profile.name).clicked() {
+                                    // Color indicator dot
+                                    let size = egui::Vec2::new(12.0, 12.0);
+                                    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+                                    if ui.is_rect_visible(rect) {
+                                        ui.painter().circle_filled(rect.center(), 6.0, profile_color);
+                                    }
+
+                                    // Icon and name
+                                    let label_text = format!("{} {}", profile.icon, profile.name);
+                                    if ui.selectable_label(is_selected, label_text).clicked() {
                                         self.active_profile_id = profile_id;
 
                                         // Save active profile to settings
@@ -2554,8 +2584,17 @@ impl eframe::App for AaeqApp {
                                         self.status_message = Some(format!("Switched to profile: {}", profile.name));
                                     }
 
-                                    // Show rename/delete buttons for non-builtin profiles
+                                    // Show duplicate/rename/delete buttons for non-builtin profiles
                                     if !profile.is_builtin {
+                                        if ui.small_button("📋").on_hover_text("Duplicate profile").clicked() {
+                                            self.show_profile_dialog = true;
+                                            self.profile_dialog_mode = ProfileDialogMode::Duplicate;
+                                            self.profile_name_input = format!("{} Copy", profile.name);
+                                            self.profile_icon_input = profile.icon.clone();
+                                            self.profile_color_input = profile.color.clone();
+                                            self.profile_to_duplicate = Some(profile_id);
+                                        }
+
                                         if ui.small_button("✏").on_hover_text("Rename profile").clicked() {
                                             self.show_profile_dialog = true;
                                             self.profile_dialog_mode = ProfileDialogMode::Rename;
@@ -3405,6 +3444,7 @@ impl eframe::App for AaeqApp {
         if self.show_profile_dialog {
             egui::Window::new(match self.profile_dialog_mode {
                 ProfileDialogMode::Create => "Create Profile",
+                ProfileDialogMode::Duplicate => "Duplicate Profile",
                 ProfileDialogMode::Rename => "Rename Profile",
                 ProfileDialogMode::Delete => "Delete Profile",
             })
@@ -3413,31 +3453,117 @@ impl eframe::App for AaeqApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 match self.profile_dialog_mode {
-                    ProfileDialogMode::Create | ProfileDialogMode::Rename => {
+                    ProfileDialogMode::Create | ProfileDialogMode::Duplicate | ProfileDialogMode::Rename => {
                         ui.label("Profile name:");
                         ui.text_edit_singleline(&mut self.profile_name_input);
 
-                        ui.add_space(10.0);
+                        ui.add_space(5.0);
+
+                        // Icon picker (for Create and Duplicate modes)
+                        if self.profile_dialog_mode == ProfileDialogMode::Create || self.profile_dialog_mode == ProfileDialogMode::Duplicate {
+                            ui.horizontal(|ui| {
+                                ui.label("Icon:");
+
+                                // Icon selection buttons (desktop-appropriate icons, no car)
+                                let icons = ["🏠", "🎧", "🔊", "🎵", "🎼", "🎹", "📻", "💿", "📁", "⭐"];
+                                for icon in icons {
+                                    if ui.selectable_label(self.profile_icon_input == icon, icon).clicked() {
+                                        self.profile_icon_input = icon.to_string();
+                                    }
+                                }
+                            });
+
+                            ui.add_space(5.0);
+
+                            // Color picker
+                            ui.horizontal(|ui| {
+                                ui.label("Color:");
+
+                                // Parse current color
+                                let mut color = egui::Color32::from_rgb(74, 144, 226); // Default blue
+                                if self.profile_color_input.starts_with('#') && self.profile_color_input.len() == 7 {
+                                    if let Ok(r) = u8::from_str_radix(&self.profile_color_input[1..3], 16) {
+                                        if let Ok(g) = u8::from_str_radix(&self.profile_color_input[3..5], 16) {
+                                            if let Ok(b) = u8::from_str_radix(&self.profile_color_input[5..7], 16) {
+                                                color = egui::Color32::from_rgb(r, g, b);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Color picker
+                                if ui.color_edit_button_srgba(&mut color).changed() {
+                                    self.profile_color_input = format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b());
+                                }
+
+                                // Preset color swatches (theme-aware colors)
+                                let preset_colors = [
+                                    ("#4A90E2", "Blue"),
+                                    ("#9B59B6", "Purple"),
+                                    ("#E74C3C", "Red"),
+                                    ("#F39C12", "Orange"),
+                                    ("#2ECC71", "Green"),
+                                    ("#1ABC9C", "Teal"),
+                                    ("#34495E", "Gray"),
+                                ];
+
+                                for (hex, _name) in preset_colors {
+                                    let preset_color = if hex.starts_with('#') && hex.len() == 7 {
+                                        let r = u8::from_str_radix(&hex[1..3], 16).unwrap_or(128);
+                                        let g = u8::from_str_radix(&hex[3..5], 16).unwrap_or(128);
+                                        let b = u8::from_str_radix(&hex[5..7], 16).unwrap_or(128);
+                                        egui::Color32::from_rgb(r, g, b)
+                                    } else {
+                                        egui::Color32::GRAY
+                                    };
+
+                                    let size = egui::Vec2::new(20.0, 20.0);
+                                    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+
+                                    if ui.is_rect_visible(rect) {
+                                        ui.painter().circle_filled(rect.center(), 10.0, preset_color);
+                                        if self.profile_color_input == hex {
+                                            ui.painter().circle_stroke(rect.center(), 11.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
+                                        }
+                                    }
+
+                                    if response.clicked() {
+                                        self.profile_color_input = hex.to_string();
+                                    }
+
+                                    response.on_hover_text(_name);
+                                }
+                            });
+
+                            ui.add_space(5.0);
+                        }
+
+                        ui.add_space(5.0);
 
                         ui.horizontal(|ui| {
                             if ui.button("Cancel").clicked() {
                                 self.show_profile_dialog = false;
                                 self.profile_name_input.clear();
+                                self.profile_icon_input = "📁".to_string();
+                                self.profile_color_input = "#4A90E2".to_string();
                             }
 
-                            let button_text = if self.profile_dialog_mode == ProfileDialogMode::Create {
-                                "Create"
-                            } else {
-                                "Rename"
+                            let button_text = match self.profile_dialog_mode {
+                                ProfileDialogMode::Create => "Create",
+                                ProfileDialogMode::Duplicate => "Duplicate",
+                                ProfileDialogMode::Rename => "Rename",
+                                _ => "OK",
                             };
 
                             if ui.button(button_text).clicked() && !self.profile_name_input.trim().is_empty() {
                                 let profile_name = self.profile_name_input.trim().to_string();
 
-                                if self.profile_dialog_mode == ProfileDialogMode::Create {
+                                if self.profile_dialog_mode == ProfileDialogMode::Create || self.profile_dialog_mode == ProfileDialogMode::Duplicate {
                                     // Create new profile
                                     let pool = self.pool.clone();
                                     let profile_name_clone = profile_name.clone();
+                                    let profile_icon = self.profile_icon_input.clone();
+                                    let profile_color = self.profile_color_input.clone();
                                     let command_tx = self.command_tx.clone();
                                     tokio::spawn(async move {
                                         let profile_repo = ProfileRepository::new(pool);
@@ -3445,8 +3571,8 @@ impl eframe::App for AaeqApp {
                                             id: None,
                                             name: profile_name_clone.clone(),
                                             is_builtin: false,
-                                            icon: "📁".to_string(), // Default folder icon
-                                            color: "#4A90E2".to_string(), // Default blue
+                                            icon: profile_icon,
+                                            color: profile_color,
                                             created_at: chrono::Utc::now().timestamp(),
                                             updated_at: chrono::Utc::now().timestamp(),
                                         };
@@ -3461,7 +3587,16 @@ impl eframe::App for AaeqApp {
                                         }
                                     });
 
-                                    self.status_message = Some(format!("Creating profile: {}", profile_name));
+                                    let action = if self.profile_dialog_mode == ProfileDialogMode::Duplicate {
+                                        "Duplicating"
+                                    } else {
+                                        "Creating"
+                                    };
+                                    self.status_message = Some(format!("{} profile: {}", action, profile_name));
+                                    // Reset inputs
+                                    self.profile_icon_input = "📁".to_string();
+                                    self.profile_color_input = "#4A90E2".to_string();
+                                    self.profile_to_duplicate = None;
                                 } else {
                                     // Rename existing profile
                                     if let Some(profile_id) = self.profile_to_rename {
