@@ -72,7 +72,7 @@ impl SpectrumAnalyzerState {
             peak_db: vec![-50.0; n_bands],
             freqs_hz,
             db_floor: -50.0,
-            db_ceil: 10.0,
+            db_ceil: 20.0,  // Extended to +20 dB for bass frequencies
             peak_decay_db: 0.6,
             band_decay_db: 1.5,  // Faster decay for band levels when no signal
             peak_band_idx: None,
