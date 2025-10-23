@@ -171,6 +171,64 @@ pub struct Device {
     pub discovered_at: i64,
 }
 
+/// DSP settings specific to each sink type (output device type)
+/// This allows different audio configurations for different output types
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DspSinkSettings {
+    pub id: Option<i64>,
+    pub sink_type: String,     // "LocalDac", "Dlna", "AirPlay"
+    pub sample_rate: u32,      // Hz (44100, 48000, 96000, 192000)
+    pub format: String,        // "S16LE", "S24LE", "F32"
+    pub buffer_ms: u32,        // Buffer size in milliseconds
+    pub headroom_db: f32,      // Pre-EQ gain reduction (typically -3.0 to -6.0)
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl DspSinkSettings {
+    /// Create default settings for LocalDac
+    pub fn default_local_dac() -> Self {
+        Self {
+            id: None,
+            sink_type: "LocalDac".to_string(),
+            sample_rate: 48000,
+            format: "F32".to_string(),
+            buffer_ms: 150,
+            headroom_db: -3.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    /// Create default settings for DLNA
+    pub fn default_dlna() -> Self {
+        Self {
+            id: None,
+            sink_type: "Dlna".to_string(),
+            sample_rate: 48000,
+            format: "S16LE".to_string(),
+            buffer_ms: 200,
+            headroom_db: -3.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    /// Create default settings for AirPlay
+    pub fn default_airplay() -> Self {
+        Self {
+            id: None,
+            sink_type: "AirPlay".to_string(),
+            sample_rate: 44100,
+            format: "S16LE".to_string(),
+            buffer_ms: 300,
+            headroom_db: -3.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

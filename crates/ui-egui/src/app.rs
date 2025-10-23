@@ -71,6 +71,7 @@ enum AppCommand {
     SaveTheme(String), // Save theme preference to database
     SaveEnableDebugLogging(bool), // Save debug logging preference to database
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
+    SaveDspSinkSettings(aaeq_core::DspSinkSettings), // Save DSP settings for a specific sink type
     // DSP Commands
     DspDiscoverDevices(SinkType, Option<String>), // (sink_type, fallback_ip)
     DspStartStreaming(SinkType, String, OutputConfig, bool, Option<String>, Option<String>, DspRuntimeConfig), // (sink_type, output_device, config, use_test_tone, input_device, preset_name, dsp_config)
@@ -327,6 +328,38 @@ impl AaeqApp {
             }
             Err(e) => {
                 tracing::error!("Failed to load DSP settings: {}", e);
+            }
+        }
+
+        // Load DSP sink settings for the current sink type
+        use aaeq_persistence::DspSinkSettingsRepository;
+        let sink_repo = DspSinkSettingsRepository::new(self.pool.clone());
+        let sink_type_str = self.dsp_view.selected_sink.to_db_string();
+        match sink_repo.get_by_sink_type(sink_type_str).await {
+            Ok(Some(sink_settings)) => {
+                tracing::info!("Loaded DSP sink settings for {}: sample_rate={}, format={}, buffer_ms={}, headroom_db={}",
+                    sink_settings.sink_type, sink_settings.sample_rate, sink_settings.format,
+                    sink_settings.buffer_ms, sink_settings.headroom_db);
+
+                // Apply sink-specific settings (these override profile settings for sample_rate, buffer_ms, headroom_db)
+                self.dsp_view.sample_rate = sink_settings.sample_rate;
+                self.dsp_view.buffer_ms = sink_settings.buffer_ms;
+                self.dsp_view.headroom_db = sink_settings.headroom_db;
+
+                // Parse format from string
+                use crate::views::FormatOption;
+                self.dsp_view.format = match sink_settings.format.as_str() {
+                    "F32" => FormatOption::F32,
+                    "S24LE" => FormatOption::S24LE,
+                    "S16LE" => FormatOption::S16LE,
+                    _ => FormatOption::F32, // Default to F32 if unknown
+                };
+            }
+            Ok(None) => {
+                tracing::info!("No DSP sink settings found for {}, using defaults", sink_type_str);
+            }
+            Err(e) => {
+                tracing::error!("Failed to load DSP sink settings: {}", e);
             }
         }
 
@@ -844,6 +877,21 @@ impl AaeqApp {
                         Err(e) => {
                             tracing::error!("❌ Failed to save DSP settings: {}", e);
                             let _ = response_tx.send(AppResponse::Error(format!("Failed to save DSP settings: {}", e)));
+                        }
+                    }
+                }
+
+                AppCommand::SaveDspSinkSettings(settings) => {
+                    tracing::info!("📥 Saving DSP sink settings for {}: sample_rate={}, format={}, buffer_ms={}, headroom_db={}",
+                        settings.sink_type, settings.sample_rate, settings.format, settings.buffer_ms, settings.headroom_db);
+                    use aaeq_persistence::DspSinkSettingsRepository;
+                    let sink_repo = DspSinkSettingsRepository::new(pool.clone());
+                    match sink_repo.upsert(&settings).await {
+                        Ok(_) => {
+                            tracing::info!("✅ Successfully saved DSP sink settings for {}", settings.sink_type);
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Failed to save DSP sink settings: {}", e);
                         }
                     }
                 }
@@ -2075,6 +2123,31 @@ impl AaeqApp {
         }
     }
 
+    /// Save DSP sink settings to database when user changes them
+    fn save_dsp_sink_settings(&self) {
+        let format_str = match self.dsp_view.format {
+            FormatOption::F32 => "F32",
+            FormatOption::S24LE => "S24LE",
+            FormatOption::S16LE => "S16LE",
+        };
+
+        let settings = aaeq_core::DspSinkSettings {
+            id: None,
+            sink_type: self.dsp_view.selected_sink.to_db_string().to_string(),
+            sample_rate: self.dsp_view.sample_rate,
+            format: format_str.to_string(),
+            buffer_ms: self.dsp_view.buffer_ms,
+            headroom_db: self.dsp_view.headroom_db,
+            created_at: 0,
+            updated_at: 0,
+        };
+
+        tracing::debug!("Saving DSP sink settings for {}: sample_rate={}, format={}, buffer_ms={}, headroom_db={}",
+            settings.sink_type, settings.sample_rate, settings.format, settings.buffer_ms, settings.headroom_db);
+
+        let _ = self.command_tx.send(AppCommand::SaveDspSinkSettings(settings));
+    }
+
     /// Auto-save DSP settings to database when user changes them
     fn auto_save_dsp_settings(&self) {
         let settings = aaeq_core::DspSettings {
@@ -2951,7 +3024,22 @@ impl eframe::App for AaeqApp {
                                     }
                                 };
 
-                                // Adjust format based on sink type
+                                // Load DSP sink settings for the new sink type
+                                let pool = self.pool.clone();
+                                let sink_type_str = sink_type.to_db_string().to_string();
+                                tokio::spawn(async move {
+                                    use aaeq_persistence::DspSinkSettingsRepository;
+                                    let sink_repo = DspSinkSettingsRepository::new(pool);
+                                    if let Ok(Some(settings)) = sink_repo.get_by_sink_type(&sink_type_str).await {
+                                        tracing::info!("Loaded DSP sink settings for {}: sample_rate={}, format={}, buffer_ms={}, headroom_db={}",
+                                            settings.sink_type, settings.sample_rate, settings.format, settings.buffer_ms, settings.headroom_db);
+                                        // TODO: Apply settings to UI (requires sending response back)
+                                    } else {
+                                        tracing::info!("No DSP sink settings found for {}, using current values", sink_type_str);
+                                    }
+                                });
+
+                                // For now, adjust format based on sink type compatibility as fallback
                                 match sink_type {
                                     SinkType::LocalDac => {
                                         // Local DAC only supports F32 and S16LE
@@ -3147,10 +3235,9 @@ impl eframe::App for AaeqApp {
                                 let _ = self.command_tx.send(AppCommand::SaveCustomPreset(preset));
                             }
                             DspAction::HeadroomChanged => {
-                                tracing::info!("Headroom changed to {} dB", self.dsp_view.headroom_db);
+                                tracing::info!("Headroom changed to {} dB - saving to database", self.dsp_view.headroom_db);
+                                self.save_dsp_sink_settings();
                                 // Headroom will be applied on next stream start or restart
-                                // For now, just log the change. Implementation will be completed
-                                // when integrating with the streaming pipeline.
                             }
                             DspAction::ClipDetectionChanged => {
                                 tracing::info!("Clip detection changed to: {}", self.dsp_view.clip_detection);
@@ -3222,6 +3309,27 @@ impl eframe::App for AaeqApp {
                                     self.dsp_view.needs_restart = true;
                                     self.status_message = Some("Restarting stream with new sample rate...".to_string());
                                 }
+                            }
+                            DspAction::SampleRateChanged => {
+                                tracing::info!("Sample rate changed to: {} Hz - saving to database", self.dsp_view.sample_rate);
+                                self.save_dsp_sink_settings();
+                                // If streaming, need to restart for sample rate change
+                                if self.dsp_view.is_streaming {
+                                    self.dsp_view.needs_restart = true;
+                                }
+                            }
+                            DspAction::FormatChanged => {
+                                tracing::info!("Format changed to: {:?} - saving to database", self.dsp_view.format);
+                                self.save_dsp_sink_settings();
+                                // If streaming, need to restart for format change
+                                if self.dsp_view.is_streaming {
+                                    self.dsp_view.needs_restart = true;
+                                }
+                            }
+                            DspAction::BufferChanged => {
+                                tracing::info!("Buffer changed to: {} ms - saving to database", self.dsp_view.buffer_ms);
+                                self.save_dsp_sink_settings();
+                                // Buffer change can be applied without restart for some sinks
                             }
                         }
                     }

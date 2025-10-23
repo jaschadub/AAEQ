@@ -1,4 +1,4 @@
-use aaeq_core::{Device, DspSettings, Mapping, Profile, Scope};
+use aaeq_core::{Device, DspSettings, DspSinkSettings, Mapping, Profile, Scope};
 use anyhow::Result;
 use sqlx::{Row, SqlitePool};
 use chrono::Utc;
@@ -1064,6 +1064,94 @@ impl DspSettingsRepository {
             target_sample_rate: r.get(13),
             created_at: r.get(14),
             updated_at: r.get(15),
+        }).collect())
+    }
+}
+
+/// Repository for DSP sink settings operations (per-sink-type configuration)
+pub struct DspSinkSettingsRepository {
+    pool: SqlitePool,
+}
+
+impl DspSinkSettingsRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Get DSP settings for a specific sink type
+    pub async fn get_by_sink_type(&self, sink_type: &str) -> Result<Option<DspSinkSettings>> {
+        let row = sqlx::query(
+            r#"SELECT id, sink_type, sample_rate, format, buffer_ms, headroom_db,
+                      created_at, updated_at
+               FROM dsp_sink_settings
+               WHERE sink_type = ?"#
+        )
+        .bind(sink_type)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| DspSinkSettings {
+            id: Some(r.get(0)),
+            sink_type: r.get(1),
+            sample_rate: r.get(2),
+            format: r.get(3),
+            buffer_ms: r.get(4),
+            headroom_db: r.get(5),
+            created_at: r.get(6),
+            updated_at: r.get(7),
+        }))
+    }
+
+    /// Save or update DSP settings for a specific sink type
+    pub async fn upsert(&self, settings: &DspSinkSettings) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            r#"INSERT INTO dsp_sink_settings
+               (sink_type, sample_rate, format, buffer_ms, headroom_db, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(sink_type) DO UPDATE SET
+                   sample_rate = excluded.sample_rate,
+                   format = excluded.format,
+                   buffer_ms = excluded.buffer_ms,
+                   headroom_db = excluded.headroom_db,
+                   updated_at = ?
+            "#
+        )
+        .bind(&settings.sink_type)
+        .bind(settings.sample_rate)
+        .bind(&settings.format)
+        .bind(settings.buffer_ms)
+        .bind(settings.headroom_db)
+        .bind(now)
+        .bind(now)
+        .bind(now) // For the UPDATE SET updated_at
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// List all sink settings
+    pub async fn list_all(&self) -> Result<Vec<DspSinkSettings>> {
+        let rows = sqlx::query(
+            r#"SELECT id, sink_type, sample_rate, format, buffer_ms, headroom_db,
+                      created_at, updated_at
+               FROM dsp_sink_settings
+               ORDER BY sink_type"#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| DspSinkSettings {
+            id: Some(r.get(0)),
+            sink_type: r.get(1),
+            sample_rate: r.get(2),
+            format: r.get(3),
+            buffer_ms: r.get(4),
+            headroom_db: r.get(5),
+            created_at: r.get(6),
+            updated_at: r.get(7),
         }).collect())
     }
 }

@@ -435,6 +435,86 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added icon and color columns to profile table with defaults");
     }
 
+    // Migration 014: Add dsp_sink_settings table for per-sink-type DSP configuration
+    let sink_settings_table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='dsp_sink_settings'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !sink_settings_table_exists {
+        tracing::info!("Creating dsp_sink_settings table for per-sink-type DSP configuration");
+
+        sqlx::query(r#"
+            CREATE TABLE dsp_sink_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sink_type TEXT NOT NULL UNIQUE,
+                sample_rate INTEGER NOT NULL DEFAULT 48000,
+                format TEXT NOT NULL DEFAULT 'F32',
+                buffer_ms INTEGER NOT NULL DEFAULT 150,
+                headroom_db REAL NOT NULL DEFAULT -3.0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        "#)
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX idx_dsp_sink_settings_type ON dsp_sink_settings(sink_type)"
+        )
+        .execute(pool)
+        .await?;
+
+        // Insert default settings for each sink type
+        let now = chrono::Utc::now().timestamp();
+
+        // LocalDac: 48kHz F32, 150ms buffer, -3dB headroom
+        sqlx::query(
+            "INSERT INTO dsp_sink_settings (sink_type, sample_rate, format, buffer_ms, headroom_db, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("LocalDac")
+        .bind(48000)
+        .bind("F32")
+        .bind(150)
+        .bind(-3.0)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        // Dlna: 48kHz S16LE, 200ms buffer, -3dB headroom
+        sqlx::query(
+            "INSERT INTO dsp_sink_settings (sink_type, sample_rate, format, buffer_ms, headroom_db, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("Dlna")
+        .bind(48000)
+        .bind("S16LE")
+        .bind(200)
+        .bind(-3.0)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        // AirPlay: 44.1kHz S16LE, 300ms buffer, -3dB headroom
+        sqlx::query(
+            "INSERT INTO dsp_sink_settings (sink_type, sample_rate, format, buffer_ms, headroom_db, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind("AirPlay")
+        .bind(44100)
+        .bind("S16LE")
+        .bind(300)
+        .bind(-3.0)
+        .bind(now)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+        tracing::info!("Created dsp_sink_settings table with default settings for LocalDac, Dlna, and AirPlay");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

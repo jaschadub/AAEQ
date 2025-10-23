@@ -900,6 +900,15 @@ impl SinkType {
             SinkType::AirPlay => "AirPlay",
         }
     }
+
+    /// Convert to database string format for DSP sink settings
+    pub fn to_db_string(&self) -> &'static str {
+        match self {
+            SinkType::LocalDac => "LocalDac",
+            SinkType::Dlna => "Dlna",
+            SinkType::AirPlay => "AirPlay",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1480,6 +1489,7 @@ impl DspView {
             // Sample rate selector
             ui.horizontal(|ui| {
                 ui.label("Sample Rate:");
+                let prev_sample_rate = self.sample_rate;
                 egui::ComboBox::from_id_salt("sample_rate")
                     .selected_text(format!("{} Hz", self.sample_rate))
                     .show_ui(ui, |ui| {
@@ -1492,11 +1502,16 @@ impl DspView {
                             }
                         }
                     });
+
+                if self.sample_rate != prev_sample_rate {
+                    action = Some(DspAction::SampleRateChanged);
+                }
             });
 
             // Format selector
             ui.horizontal(|ui| {
                 ui.label("Format:");
+                let prev_format = self.format;
                 egui::ComboBox::from_id_salt("format")
                     .selected_text(self.format.as_str())
                     .show_ui(ui, |ui| {
@@ -1517,6 +1532,10 @@ impl DspView {
                         }
                     });
 
+                if self.format != prev_format {
+                    action = Some(DspAction::FormatChanged);
+                }
+
                 // Show hint for Local DAC
                 if self.selected_sink == SinkType::LocalDac {
                     ui.label(
@@ -1529,7 +1548,12 @@ impl DspView {
             // Buffer size
             ui.horizontal(|ui| {
                 ui.label("Buffer:");
+                let prev_buffer = self.buffer_ms;
                 ui.add(egui::Slider::new(&mut self.buffer_ms, 50..=500).suffix(" ms"));
+
+                if self.buffer_ms != prev_buffer {
+                    action = Some(DspAction::BufferChanged);
+                }
             });
 
             // Headroom control
@@ -2252,4 +2276,7 @@ pub enum DspAction {
     ResampleToggled,
     ResampleQualityChanged,
     TargetSampleRateChanged,
+    SampleRateChanged,
+    FormatChanged,
+    BufferChanged,
 }
