@@ -48,7 +48,105 @@ struct DspRuntimeConfig {
     target_sample_rate: u32,
 }
 
+/// Error categories for user-friendly error handling
+#[derive(Clone, Debug, PartialEq)]
+#[allow(dead_code)] // Not all error categories are used yet
+enum ErrorCategory {
+    Connection,     // Network/device connection issues
+    Discovery,      // Device discovery failures
+    Audio,          // Audio streaming/output issues
+    Database,       // Database/persistence errors
+    Preset,         // EQ preset related errors
+    General,        // Other errors
+}
+
+/// Structured error information with helpful context
+#[derive(Clone, Debug)]
+struct ErrorInfo {
+    category: ErrorCategory,
+    message: String,
+    help_text: String,
+    can_retry: bool,
+    retry_action: Option<AppCommand>,
+}
+
+#[allow(dead_code)] // Not all error helper functions are used yet
+impl ErrorInfo {
+    /// Create a connection error with retry option
+    fn connection_error(host: String) -> Self {
+        Self {
+            category: ErrorCategory::Connection,
+            message: format!("Could not connect to device at {}", host),
+            help_text: "Make sure the device is powered on and connected to the same network. Check your router settings to ensure devices can communicate.".to_string(),
+            can_retry: true,
+            retry_action: Some(AppCommand::ConnectDevice(host)),
+        }
+    }
+
+    /// Create a discovery error with retry option
+    fn discovery_error(error_msg: String) -> Self {
+        Self {
+            category: ErrorCategory::Discovery,
+            message: "Device discovery failed".to_string(),
+            help_text: format!("Could not discover devices on the network. Check firewall settings and ensure devices are powered on.\n\nDetails: {}", error_msg),
+            can_retry: true,
+            retry_action: Some(AppCommand::DiscoverDevices),
+        }
+    }
+
+    /// Create an audio streaming error
+    fn audio_error(device: String, error_msg: String) -> Self {
+        Self {
+            category: ErrorCategory::Audio,
+            message: format!("Could not start audio output to '{}'", device),
+            help_text: format!("The audio device may be in use by another application or disconnected.\n\nDetails: {}", error_msg),
+            can_retry: false,
+            retry_action: None,
+        }
+    }
+
+    /// Create a database error
+    fn database_error(operation: &str, error_msg: String) -> Self {
+        Self {
+            category: ErrorCategory::Database,
+            message: format!("Failed to {}", operation),
+            help_text: format!("Could not access the database. The database file may be corrupted or locked by another process.\n\nDetails: {}", error_msg),
+            can_retry: true,
+            retry_action: None, // Will be set by caller if retry makes sense
+        }
+    }
+
+    /// Create a preset error
+    fn preset_error(preset_name: String, is_wiim_mode: bool) -> Self {
+        let help_text = if is_wiim_mode {
+            format!("The preset '{}' is not available on your WiiM device. You can create this preset on your device, or map this song to a different preset.", preset_name)
+        } else {
+            format!("The preset '{}' could not be loaded. It may have been deleted or corrupted.", preset_name)
+        };
+
+        Self {
+            category: ErrorCategory::Preset,
+            message: format!("Preset '{}' not available", preset_name),
+            help_text,
+            can_retry: false,
+            retry_action: None,
+        }
+    }
+
+    /// Create a general error
+    fn general_error(message: String) -> Self {
+        Self {
+            category: ErrorCategory::General,
+            message: message.clone(),
+            help_text: "An unexpected error occurred.".to_string(),
+            can_retry: false,
+            retry_action: None,
+        }
+    }
+}
+
 /// Commands that can be sent from UI to async worker
+#[derive(Clone, Debug)]
 enum AppCommand {
     ConnectDevice(String),
     DiscoverDevices,
@@ -84,6 +182,7 @@ enum AppCommand {
 /// Responses from async worker to UI
 enum AppResponse {
     Connected(String, Arc<WiimController>), // (host, device)
+    #[allow(dead_code)] // Replaced by ErrorDialog
     ConnectionFailed(String),
     Disconnected(String), // Device went offline during operation
     DevicesDiscovered(Vec<(String, String)>), // Vec<(name, host)>
@@ -93,7 +192,8 @@ enum AppResponse {
     TrackUpdated(TrackMeta, Option<String>),
     BackupCreated(String), // (backup_path)
     DatabaseRestored(String), // (backup_path_used)
-    Error(String),
+    Error(String), // Legacy simple error message
+    ErrorDialog(ErrorInfo), // New structured error with help and retry
     DeviceNotFoundAutoDiscover(SinkType, String), // (sink_type, device_name) - Device not in cache, auto-trigger discovery
     // DSP Responses
     DspDevicesDiscovered(SinkType, Vec<String>),
@@ -186,6 +286,10 @@ pub struct AaeqApp {
     profile_to_rename: Option<i64>,
     profile_to_delete: Option<i64>,
 
+    /// Error dialog state
+    show_error_dialog: bool,
+    current_error: Option<ErrorInfo>,
+
     /// Async communication
     command_tx: mpsc::UnboundedSender<AppCommand>,
     response_rx: mpsc::UnboundedReceiver<AppResponse>,
@@ -253,6 +357,8 @@ impl AaeqApp {
             profile_to_duplicate: None,
             profile_to_rename: None,
             profile_to_delete: None,
+            show_error_dialog: false,
+            current_error: None,
             command_tx,
             response_rx,
             album_art_cache: Arc::new(AlbumArtCache::new()),
@@ -631,7 +737,8 @@ impl AaeqApp {
                         let _ = response_tx.send(AppResponse::Connected(host, device_arc));
                     } else {
                         tracing::warn!("Device at {} is offline", host);
-                        let _ = response_tx.send(AppResponse::ConnectionFailed(host));
+                        let error_info = ErrorInfo::connection_error(host.clone());
+                        let _ = response_tx.send(AppResponse::ErrorDialog(error_info));
                     }
                 }
 
@@ -648,7 +755,8 @@ impl AaeqApp {
                         }
                         Err(e) => {
                             tracing::error!("Device discovery failed: {}", e);
-                            let _ = response_tx.send(AppResponse::Error(format!("Discovery failed: {}", e)));
+                            let error_info = ErrorInfo::discovery_error(e.to_string());
+                            let _ = response_tx.send(AppResponse::ErrorDialog(error_info));
                         }
                     }
                 }
@@ -2293,6 +2401,13 @@ impl eframe::App for AaeqApp {
                     // Clear any pending "starting" state on error
                     self.dsp_view.is_starting = false;
                 }
+                AppResponse::ErrorDialog(error_info) => {
+                    // Show structured error dialog with help and retry options
+                    self.current_error = Some(error_info);
+                    self.show_error_dialog = true;
+                    // Clear any pending "starting" state on error
+                    self.dsp_view.is_starting = false;
+                }
                 AppResponse::DeviceNotFoundAutoDiscover(sink_type, device_name) => {
                     tracing::info!("Device '{}' not found - auto-triggering discovery for {:?}", device_name, sink_type);
                     self.status_message = Some(format!("Device '{}' not found. Discovering devices...", device_name));
@@ -2791,6 +2906,72 @@ impl eframe::App for AaeqApp {
                         }
                     });
                 });
+        }
+
+        // Error dialog with retry and help buttons
+        if self.show_error_dialog {
+            if let Some(error) = &self.current_error.clone() {
+                let error_title = match error.category {
+                    ErrorCategory::Connection => "⚠ Connection Error",
+                    ErrorCategory::Discovery => "⚠ Discovery Error",
+                    ErrorCategory::Audio => "⚠ Audio Error",
+                    ErrorCategory::Database => "⚠ Database Error",
+                    ErrorCategory::Preset => "⚠ Preset Error",
+                    ErrorCategory::General => "⚠ Error",
+                };
+
+                // Clone data before entering closure
+                let error_message = error.message.clone();
+                let error_help_text = error.help_text.clone();
+                let error_can_retry = error.can_retry;
+                let error_retry_action = error.retry_action.clone();
+
+                egui::Window::new(error_title)
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.set_min_width(400.0);
+
+                        // Error message
+                        ui.label(
+                            egui::RichText::new(&error_message)
+                                .size(14.0)
+                                .strong()
+                        );
+
+                        ui.add_space(10.0);
+
+                        // Help text
+                        ui.label(
+                            egui::RichText::new(&error_help_text)
+                                .size(12.0)
+                                .color(egui::Color32::GRAY)
+                        );
+
+                        ui.add_space(15.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        // Buttons
+                        ui.horizontal(|ui| {
+                            // Retry button (if applicable)
+                            if error_can_retry && ui.button("🔄 Retry").clicked() {
+                                if let Some(retry_cmd) = error_retry_action {
+                                    let _ = self.command_tx.send(retry_cmd);
+                                }
+                                self.show_error_dialog = false;
+                                self.current_error = None;
+                            }
+
+                            // Close button
+                            if ui.button("Close").clicked() {
+                                self.show_error_dialog = false;
+                                self.current_error = None;
+                            }
+                        });
+                    });
+            }
         }
 
         // Main content based on current mode
