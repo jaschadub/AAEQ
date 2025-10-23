@@ -108,8 +108,22 @@ pub struct Profile {
     pub id: Option<i64>,
     pub name: String,
     pub is_builtin: bool,
+    /// Icon emoji for visual identification (e.g., "🎧", "🚗", "🏠")
+    #[serde(default = "default_profile_icon")]
+    pub icon: String,
+    /// Color hex code for visual identification (e.g., "#4A90E2")
+    #[serde(default = "default_profile_color")]
+    pub color: String,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+fn default_profile_icon() -> String {
+    "📁".to_string()
+}
+
+fn default_profile_color() -> String {
+    "#808080".to_string() // Gray
 }
 
 /// EQ band configuration for creating/editing presets

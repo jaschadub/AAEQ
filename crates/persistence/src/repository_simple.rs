@@ -799,10 +799,12 @@ impl ProfileRepository {
         let is_builtin = if profile.is_builtin { 1 } else { 0 };
 
         let result = sqlx::query(
-            "INSERT INTO profile (name, is_builtin, created_at, updated_at) VALUES (?, ?, ?, ?)"
+            "INSERT INTO profile (name, is_builtin, icon, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
         )
         .bind(&profile.name)
         .bind(is_builtin)
+        .bind(&profile.icon)
+        .bind(&profile.color)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -814,7 +816,7 @@ impl ProfileRepository {
     /// Get a profile by ID
     pub async fn get_by_id(&self, id: i64) -> Result<Option<Profile>> {
         let row = sqlx::query(
-            "SELECT id, name, is_builtin, created_at, updated_at FROM profile WHERE id = ?"
+            "SELECT id, name, is_builtin, icon, color, created_at, updated_at FROM profile WHERE id = ?"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -827,15 +829,17 @@ impl ProfileRepository {
                 let val: i64 = r.get(2);
                 val != 0
             },
-            created_at: r.get(3),
-            updated_at: r.get(4),
+            icon: r.get(3),
+            color: r.get(4),
+            created_at: r.get(5),
+            updated_at: r.get(6),
         }))
     }
 
     /// Get a profile by name
     pub async fn get_by_name(&self, name: &str) -> Result<Option<Profile>> {
         let row = sqlx::query(
-            "SELECT id, name, is_builtin, created_at, updated_at FROM profile WHERE name = ?"
+            "SELECT id, name, is_builtin, icon, color, created_at, updated_at FROM profile WHERE name = ?"
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -848,15 +852,17 @@ impl ProfileRepository {
                 let val: i64 = r.get(2);
                 val != 0
             },
-            created_at: r.get(3),
-            updated_at: r.get(4),
+            icon: r.get(3),
+            color: r.get(4),
+            created_at: r.get(5),
+            updated_at: r.get(6),
         }))
     }
 
     /// List all profiles
     pub async fn list_all(&self) -> Result<Vec<Profile>> {
         let rows = sqlx::query(
-            "SELECT id, name, is_builtin, created_at, updated_at FROM profile ORDER BY is_builtin DESC, name"
+            "SELECT id, name, is_builtin, icon, color, created_at, updated_at FROM profile ORDER BY is_builtin DESC, name"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -868,8 +874,10 @@ impl ProfileRepository {
                 let val: i64 = r.get(2);
                 val != 0
             },
-            created_at: r.get(3),
-            updated_at: r.get(4),
+            icon: r.get(3),
+            color: r.get(4),
+            created_at: r.get(5),
+            updated_at: r.get(6),
         }).collect();
 
         Ok(profiles)

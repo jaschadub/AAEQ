@@ -3445,6 +3445,8 @@ impl eframe::App for AaeqApp {
                                             id: None,
                                             name: profile_name_clone.clone(),
                                             is_builtin: false,
+                                            icon: "📁".to_string(), // Default folder icon
+                                            color: "#4A90E2".to_string(), // Default blue
                                             created_at: chrono::Utc::now().timestamp(),
                                             updated_at: chrono::Utc::now().timestamp(),
                                         };
