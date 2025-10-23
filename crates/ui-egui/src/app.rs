@@ -92,6 +92,7 @@ enum AppResponse {
     BackupCreated(String), // (backup_path)
     DatabaseRestored(String), // (backup_path_used)
     Error(String),
+    DeviceNotFoundAutoDiscover(SinkType, String), // (sink_type, device_name) - Device not in cache, auto-trigger discovery
     // DSP Responses
     DspDevicesDiscovered(SinkType, Vec<String>),
     DspStreamingStarted,
@@ -1413,7 +1414,12 @@ impl AaeqApp {
                                 tracing::error!("DLNA device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_dlna_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
+                                // Auto-trigger discovery instead of just showing error
+                                let _ = response_tx.send(AppResponse::DeviceNotFoundAutoDiscover(
+                                    SinkType::Dlna,
+                                    device_name.clone()
+                                ));
+                                Err(format!("Device '{}' not found in cache. Starting auto-discovery...", device_name))
                             }
                         }
                         SinkType::AirPlay => {
@@ -1430,7 +1436,12 @@ impl AaeqApp {
                                 tracing::error!("AirPlay device '{}' not found in cache. Available devices: {:?}",
                                     device_name,
                                     discovered_airplay_devices.iter().map(|d| &d.name).collect::<Vec<_>>());
-                                Err(format!("Device '{}' not found. Click '🔍 Discover' to find devices on your network, then try streaming again.", device_name))
+                                // Auto-trigger discovery instead of just showing error
+                                let _ = response_tx.send(AppResponse::DeviceNotFoundAutoDiscover(
+                                    SinkType::AirPlay,
+                                    device_name.clone()
+                                ));
+                                Err(format!("Device '{}' not found in cache. Starting auto-discovery...", device_name))
                             }
                         }
                     };
@@ -2172,6 +2183,21 @@ impl eframe::App for AaeqApp {
                     self.status_message = Some(format!("Error: {}", msg));
                     // Clear any pending "starting" state on error
                     self.dsp_view.is_starting = false;
+                }
+                AppResponse::DeviceNotFoundAutoDiscover(sink_type, device_name) => {
+                    tracing::info!("Device '{}' not found - auto-triggering discovery for {:?}", device_name, sink_type);
+                    self.status_message = Some(format!("Device '{}' not found. Discovering devices...", device_name));
+                    // Clear starting state
+                    self.dsp_view.is_starting = false;
+                    // Trigger discovery automatically
+                    self.dsp_view.show_device_discovery = true;
+                    self.dsp_view.discovering = true;
+                    let fallback_ip = if sink_type == SinkType::Dlna {
+                        Some(self.device_host.clone())
+                    } else {
+                        None
+                    };
+                    let _ = self.command_tx.send(AppCommand::DspDiscoverDevices(sink_type, fallback_ip));
                 }
                 // DSP Responses
                 AppResponse::DspDevicesDiscovered(sink_type, devices) => {

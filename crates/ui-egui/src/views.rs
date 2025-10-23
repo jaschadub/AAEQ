@@ -1425,8 +1425,15 @@ impl DspView {
                     SinkType::AirPlay => &self.available_airplay_devices,
                 };
 
+                // Show appropriate text based on cache state
+                let display_text = if devices_to_show.is_empty() {
+                    "(No devices found - click Discover)"
+                } else {
+                    self.selected_device.as_deref().unwrap_or("(none)")
+                };
+
                 egui::ComboBox::from_id_salt("device_selector")
-                    .selected_text(self.selected_device.as_deref().unwrap_or("(none)"))
+                    .selected_text(display_text)
                     .show_ui(ui, |ui| {
                         for device in devices_to_show.clone() {
                             if ui.selectable_label(
@@ -1446,7 +1453,7 @@ impl DspView {
                 }
             });
 
-            // Show helpful message if device is selected but cache is empty (e.g., after restart)
+            // Show prominent warning if device cache is empty for network devices
             if matches!(self.selected_sink, SinkType::Dlna | SinkType::AirPlay) {
                 let devices_list = match self.selected_sink {
                     SinkType::Dlna => &self.available_dlna_devices,
@@ -1454,27 +1461,40 @@ impl DspView {
                     _ => &Vec::new(),
                 };
 
-                if self.selected_device.is_some() && devices_list.is_empty() {
+                if devices_list.is_empty() {
                     ui.add_space(5.0);
-                    ui.vertical(|ui| {
+                    // Warning box with subtle background color
+                    let warning_bg = egui::Color32::from_rgb(60, 45, 30); // Dark orange/brown
+                    let warning_frame = egui::Frame::none()
+                        .fill(warning_bg)
+                        .inner_margin(egui::Margin::same(8.0))
+                        .rounding(egui::Rounding::same(4.0));
+
+                    warning_frame.show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
-                                egui::RichText::new("⚠")
-                                    .color(egui::Color32::from_rgb(255, 165, 0))
+                                egui::RichText::new("🔍")
+                                    .size(16.0)
                             );
-                            ui.label(
-                                egui::RichText::new("Device cache is empty")
-                                    .color(egui::Color32::from_rgb(255, 165, 0))
-                                    .strong()
-                            );
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("No devices found")
+                                        .color(egui::Color32::from_rgb(255, 180, 100))
+                                        .strong()
+                                );
+                                ui.label(
+                                    egui::RichText::new("Discover devices on your network to start streaming")
+                                        .color(egui::Color32::LIGHT_GRAY)
+                                        .size(10.0)
+                                );
+                            });
+                            ui.add_space(5.0);
+                            if ui.button("Discover Now").clicked() {
+                                self.show_device_discovery = true;
+                                self.discovering = true;
+                                action = Some(DspAction::DiscoverDevices);
+                            }
                         });
-                        ui.add_space(2.0);
-                        ui.label(
-                            egui::RichText::new("  Click '🔍 Discover' to find devices on your network before streaming")
-                                .color(egui::Color32::LIGHT_GRAY)
-                                .italics()
-                                .size(10.0)
-                        );
                     });
                 }
             }
