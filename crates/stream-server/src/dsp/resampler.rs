@@ -176,6 +176,20 @@ impl Resampler {
     pub fn is_active(&self) -> bool {
         self.resampler.is_some()
     }
+
+    /// Get the latency introduced by the resampler in milliseconds
+    ///
+    /// Returns 0.0 if resampling is not active.
+    /// Latency is determined by the chunk size (1024 frames) and input sample rate.
+    pub fn latency_ms(&self) -> f32 {
+        if self.resampler.is_some() {
+            // Chunk size is 1024 frames (defined in new())
+            const CHUNK_SIZE: f32 = 1024.0;
+            (CHUNK_SIZE / self.input_rate as f32) * 1000.0
+        } else {
+            0.0
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1582,6 +1582,9 @@ impl AaeqApp {
                                 tracing::info!("Resampler initialized: enabled={}, quality={:?}, {} Hz -> {} Hz",
                                     dsp_config.resample_enabled, dsp_config.resample_quality, sample_rate, dsp_config.target_sample_rate);
 
+                                // CPU usage tracking - average over last 10 samples
+                                let mut cpu_samples: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(10);
+
                                 // Calculate precise interval for audio blocks
                                 let block_duration_ms = (frames_per_block as f64 / sample_rate as f64 * 1000.0) as u64;
                                 let mut interval = tokio::time::interval(Duration::from_millis(block_duration_ms));
@@ -1618,11 +1621,23 @@ impl AaeqApp {
                                         .cloned()
                                         .unwrap_or(SinkStats::default());
 
+                                    // Initial CPU is 0 (no samples processed yet)
+                                    let initial_cpu = 0.0;
+
+                                    // Get DSP latency from resampler
+                                    let dsp_latency = if dsp_config.resample_enabled {
+                                        resampler.latency_ms()
+                                    } else {
+                                        0.0
+                                    };
+
                                     let status = StreamStatus {
                                         latency_ms: latency,
                                         frames_written: frame_count,
                                         underruns: stats.underruns,
                                         buffer_fill: stats.buffer_fill,
+                                        cpu_usage: initial_cpu,
+                                        dsp_latency_ms: dsp_latency,
                                     };
 
                                     tracing::info!("Sending initial stream status: latency={} ms", latency);
@@ -1680,6 +1695,9 @@ impl AaeqApp {
                                             // Process captured audio samples
                                             // The captured samples are already interleaved stereo f64
 
+                                            // Start timing for CPU usage calculation
+                                            let dsp_start = std::time::Instant::now();
+
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&captured_samples);
 
@@ -1729,6 +1747,18 @@ impl AaeqApp {
 
                                             frame_count += (captured_samples.len() / channels) as u64;
 
+                                            // Calculate CPU usage
+                                            let dsp_elapsed = dsp_start.elapsed();
+                                            let original_sample_count = captured_samples.len() / channels;
+                                            let audio_duration_secs = original_sample_count as f64 / sample_rate as f64;
+                                            let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
+
+                                            // Keep rolling average of last 10 samples for smoother display
+                                            cpu_samples.push_back(dsp_usage);
+                                            if cpu_samples.len() > 10 {
+                                                cpu_samples.pop_front();
+                                            }
+
                                             // Send audio metrics for every audio block (for meters)
                                             let _ = tx.send(AppResponse::DspAudioMetrics {
                                                 pre_eq_rms_l: pre_rms_l,
@@ -1748,11 +1778,27 @@ impl AaeqApp {
                                                     .cloned()
                                                     .unwrap_or(SinkStats::default());
 
+                                                // Calculate average CPU usage
+                                                let avg_cpu = if !cpu_samples.is_empty() {
+                                                    cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
+                                                } else {
+                                                    0.0
+                                                };
+
+                                                // Get DSP latency from resampler
+                                                let dsp_latency = if dsp_config.resample_enabled {
+                                                    resampler.latency_ms()
+                                                } else {
+                                                    0.0
+                                                };
+
                                                 let status = StreamStatus {
                                                     latency_ms: latency,
                                                     frames_written: frame_count,
                                                     underruns: stats.underruns,
                                                     buffer_fill: stats.buffer_fill,
+                                                    cpu_usage: avg_cpu,
+                                                    dsp_latency_ms: dsp_latency,
                                                 };
 
                                                 let _ = tx.send(AppResponse::DspStreamStatus(status));
@@ -1839,11 +1885,27 @@ impl AaeqApp {
                                                     .cloned()
                                                     .unwrap_or(SinkStats::default());
 
+                                                // Calculate average CPU usage
+                                                let avg_cpu = if !cpu_samples.is_empty() {
+                                                    cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
+                                                } else {
+                                                    0.0
+                                                };
+
+                                                // Get DSP latency from resampler
+                                                let dsp_latency = if dsp_config.resample_enabled {
+                                                    resampler.latency_ms()
+                                                } else {
+                                                    0.0
+                                                };
+
                                                 let status = StreamStatus {
                                                     latency_ms: latency,
                                                     frames_written: frame_count,
                                                     underruns: stats.underruns,
                                                     buffer_fill: stats.buffer_fill,
+                                                    cpu_usage: avg_cpu,
+                                                    dsp_latency_ms: dsp_latency,
                                                 };
 
                                                 let _ = tx.send(AppResponse::DspStreamStatus(status));

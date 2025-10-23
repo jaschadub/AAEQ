@@ -949,6 +949,8 @@ pub struct StreamStatus {
     pub frames_written: u64,
     pub underruns: u64,
     pub buffer_fill: f32,
+    pub cpu_usage: f32,      // DSP CPU usage as percentage of real-time (0-100%)
+    pub dsp_latency_ms: f32, // Total DSP processing latency in milliseconds
 }
 
 impl Default for DspView {
@@ -1786,12 +1788,33 @@ impl DspView {
                     );
                 }
 
-                // Buffer fill indicator
+                // Compact metrics display: Buffer | CPU | DSP Latency
                 ui.horizontal(|ui| {
-                    ui.label("Buffer:");
-                    let progress_bar = egui::ProgressBar::new(status.buffer_fill)
-                        .text(format!("{:.0}%", status.buffer_fill * 100.0));
-                    ui.add(progress_bar);
+                    // Buffer fill (narrower)
+                    ui.label("Buf:");
+                    ui.add(egui::ProgressBar::new(status.buffer_fill)
+                        .desired_width(80.0)  // Narrower bar
+                        .text(format!("{:.0}%", status.buffer_fill * 100.0)));
+
+                    ui.separator(); // Visual separator
+
+                    // CPU usage with color coding
+                    let cpu_color = if status.cpu_usage > 80.0 {
+                        egui::Color32::RED
+                    } else if status.cpu_usage > 50.0 {
+                        egui::Color32::YELLOW
+                    } else {
+                        egui::Color32::GREEN
+                    };
+                    ui.label("CPU:");
+                    ui.colored_label(cpu_color, format!("{:.1}%", status.cpu_usage));
+
+                    // DSP latency (only show if > 0.1ms)
+                    if status.dsp_latency_ms > 0.1 {
+                        ui.separator(); // Visual separator
+                        ui.label("DSP:");
+                        ui.label(format!("{:.1} ms", status.dsp_latency_ms));
+                    }
                 });
             }
 
