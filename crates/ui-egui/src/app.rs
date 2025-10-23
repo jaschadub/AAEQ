@@ -1853,6 +1853,9 @@ impl AaeqApp {
                                                 }
                                             }
 
+                                            // Start timing for CPU usage calculation
+                                            let dsp_start = std::time::Instant::now();
+
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&audio_data);
 
@@ -1898,6 +1901,17 @@ impl AaeqApp {
                                             }
 
                                             frame_count += frames_per_block as u64;
+
+                                            // Calculate CPU usage
+                                            let dsp_elapsed = dsp_start.elapsed();
+                                            let audio_duration_secs = frames_per_block as f64 / sample_rate as f64;
+                                            let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
+
+                                            // Keep rolling average of last 10 samples for smoother display
+                                            cpu_samples.push_back(dsp_usage);
+                                            if cpu_samples.len() > 10 {
+                                                cpu_samples.pop_front();
+                                            }
 
                                             // Send audio metrics for every audio block (for meters)
                                             let _ = tx.send(AppResponse::DspAudioMetrics {

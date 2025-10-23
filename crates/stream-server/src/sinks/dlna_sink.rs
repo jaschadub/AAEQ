@@ -493,6 +493,14 @@ impl OutputSink for DlnaSink {
                 0.0
             };
 
+            // Log buffer metrics periodically for debugging
+            tracing::trace!(
+                "DLNA buffer: {} / {} bytes ({:.1}%)",
+                buffer_size,
+                max_buffer_size,
+                buffer_fill * 100.0
+            );
+
             crate::sink::SinkStats {
                 frames_written: 0, // Managed by OutputManager
                 underruns: 0,      // DLNA doesn't track underruns (network buffering handles this)
