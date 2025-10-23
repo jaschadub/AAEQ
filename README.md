@@ -455,3 +455,11 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **Issues**: [GitHub Issues](https://github.com/jaschadub/AAEQ/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/jaschadub/AAEQ/discussions)
+
+---
+
+## ⚖️ Disclaimer
+
+AAEQ is an independent, open-source project and is not affiliated with, endorsed by, sponsored by, or officially connected with WiiM, LinkPlay, Spotify, Tidal, Apple, DLNA, UPnP, AirPlay, or any other companies, products, or services mentioned in this documentation. All product names, logos, brands, trademarks, and registered trademarks are property of their respective owners. Use of these names, logos, and brands does not imply endorsement.
+
+This software is provided "as is" without warranty of any kind. Users are responsible for ensuring their use of this software complies with all applicable terms of service and licensing agreements.
