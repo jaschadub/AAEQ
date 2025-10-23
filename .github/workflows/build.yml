@@ -329,17 +329,19 @@ jobs:
         run: cargo wix --nocapture --output target/wix/aaeq-windows-x64.msi -p aaeq
 
       - name: Upload ZIP artifact
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: aaeq-windows-x64-zip
           path: target/release/aaeq-windows-x64.zip
 
       - name: Upload MSI artifact
-        if: hashFiles('target/wix/aaeq-windows-x64.msi') != ''
+        if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
           name: aaeq-windows-x64-msi
           path: target/wix/aaeq-windows-x64.msi
+          if-no-files-found: warn
 
   sign-artifacts:
     name: Sign Release Artifacts
