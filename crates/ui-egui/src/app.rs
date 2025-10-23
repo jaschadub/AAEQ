@@ -2595,10 +2595,12 @@ impl eframe::App for AaeqApp {
                                             self.profile_to_duplicate = Some(profile_id);
                                         }
 
-                                        if ui.small_button("✏").on_hover_text("Rename profile").clicked() {
+                                        if ui.small_button("✏").on_hover_text("Edit profile").clicked() {
                                             self.show_profile_dialog = true;
                                             self.profile_dialog_mode = ProfileDialogMode::Rename;
                                             self.profile_name_input = profile.name.clone();
+                                            self.profile_icon_input = profile.icon.clone();
+                                            self.profile_color_input = profile.color.clone();
                                             self.profile_to_rename = Some(profile_id);
                                         }
 
@@ -3445,7 +3447,7 @@ impl eframe::App for AaeqApp {
             egui::Window::new(match self.profile_dialog_mode {
                 ProfileDialogMode::Create => "Create Profile",
                 ProfileDialogMode::Duplicate => "Duplicate Profile",
-                ProfileDialogMode::Rename => "Rename Profile",
+                ProfileDialogMode::Rename => "Edit Profile",
                 ProfileDialogMode::Delete => "Delete Profile",
             })
             .collapsible(false)
@@ -3459,8 +3461,8 @@ impl eframe::App for AaeqApp {
 
                         ui.add_space(5.0);
 
-                        // Icon picker (for Create and Duplicate modes)
-                        if self.profile_dialog_mode == ProfileDialogMode::Create || self.profile_dialog_mode == ProfileDialogMode::Duplicate {
+                        // Icon picker (for Create, Duplicate, and Rename modes)
+                        if self.profile_dialog_mode != ProfileDialogMode::Delete {
                             ui.horizontal(|ui| {
                                 ui.label("Icon:");
 
@@ -3551,7 +3553,7 @@ impl eframe::App for AaeqApp {
                             let button_text = match self.profile_dialog_mode {
                                 ProfileDialogMode::Create => "Create",
                                 ProfileDialogMode::Duplicate => "Duplicate",
-                                ProfileDialogMode::Rename => "Rename",
+                                ProfileDialogMode::Rename => "Save",
                                 _ => "OK",
                             };
 
@@ -3598,25 +3600,27 @@ impl eframe::App for AaeqApp {
                                     self.profile_color_input = "#4A90E2".to_string();
                                     self.profile_to_duplicate = None;
                                 } else {
-                                    // Rename existing profile
+                                    // Edit existing profile (name, icon, color)
                                     if let Some(profile_id) = self.profile_to_rename {
                                         let pool = self.pool.clone();
                                         let profile_name_clone = profile_name.clone();
+                                        let profile_icon = self.profile_icon_input.clone();
+                                        let profile_color = self.profile_color_input.clone();
                                         let command_tx = self.command_tx.clone();
                                         tokio::spawn(async move {
                                             let profile_repo = ProfileRepository::new(pool);
-                                            match profile_repo.update_name(profile_id, &profile_name_clone).await {
+                                            match profile_repo.update(profile_id, &profile_name_clone, &profile_icon, &profile_color).await {
                                                 Ok(_) => {
-                                                    tracing::info!("Renamed profile to: {}", profile_name_clone);
+                                                    tracing::info!("Updated profile: {}", profile_name_clone);
                                                     let _ = command_tx.send(AppCommand::ReloadProfiles);
                                                 }
                                                 Err(e) => {
-                                                    tracing::error!("Failed to rename profile: {}", e);
+                                                    tracing::error!("Failed to update profile: {}", e);
                                                 }
                                             }
                                         });
 
-                                        self.status_message = Some(format!("Renaming profile to: {}", profile_name));
+                                        self.status_message = Some(format!("Updating profile: {}", profile_name));
                                     }
                                 }
 

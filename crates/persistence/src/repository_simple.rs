@@ -899,6 +899,24 @@ impl ProfileRepository {
         Ok(())
     }
 
+    /// Update a profile (name, icon, color) (only for user-created profiles)
+    pub async fn update(&self, id: i64, name: &str, icon: &str, color: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE profile SET name = ?, icon = ?, color = ?, updated_at = ? WHERE id = ? AND is_builtin = 0"
+        )
+        .bind(name)
+        .bind(icon)
+        .bind(color)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Delete a profile (only for user-created profiles)
     pub async fn delete(&self, id: i64) -> Result<()> {
         sqlx::query("DELETE FROM profile WHERE id = ? AND is_builtin = 0")
