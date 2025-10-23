@@ -3372,33 +3372,37 @@ impl eframe::App for AaeqApp {
                 self.last_viz_state, viz_enabled, self.last_viz_mode, viz_mode, self.last_meters_state, show_meters, self.last_collapsed_state, is_collapsed);
 
             // Calculate new window height based on visible elements
-            // Base height includes: title bar, menu, Device section, DSP section header
-            let base_height = 250.0;
-            let audio_output_section_height = 350.0; // Audio Output section when expanded
-            let mut new_height = base_height;
+            // More accurate calculation based on actual UI layout
+            let base_height = 180.0; // Title bar, menu bar, Device section minimal
+            let dsp_pipeline_height = 80.0; // DSP Pipeline visualization
+            let audio_output_header_height = 120.0; // Audio Output header + controls (always visible)
+            let audio_output_body_height = 420.0; // Full configuration section (when expanded)
 
-            // Add Audio Output section height (unless collapsed)
+            let mut new_height = base_height + dsp_pipeline_height;
+
+            // Audio Output section - always has header, adds body if not collapsed
+            new_height += audio_output_header_height;
             if !is_collapsed {
-                new_height += audio_output_section_height;
+                new_height += audio_output_body_height;
             }
 
             // Add height for visualization based on mode
             if viz_enabled {
                 match viz_mode {
                     crate::views::VisualizationMode::Waveform => {
-                        // Waveform visualization (~220px)
-                        new_height += 220.0;
+                        // Waveform visualization (~250px including spacing)
+                        new_height += 250.0;
                     }
                     crate::views::VisualizationMode::Spectrum => {
-                        // Spectrum analyzer needs more space (~350px for display + labels + spacing)
-                        new_height += 350.0;
+                        // Spectrum analyzer needs more space (~380px for display + labels + spacing)
+                        new_height += 380.0;
                     }
                 }
             }
 
-            // Add height for audio meters (350px: includes all spacing, separator, labels, and 200px meters with padding)
+            // Add height for audio meters (380px: includes spacing, separator, labels, meters with padding)
             if show_meters {
-                new_height += 350.0;
+                new_height += 380.0;
             }
 
             // Apply window resize
