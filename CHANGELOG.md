@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-10-22
+
+### Fixed
+
+#### DSP Audio Quality 🎵
+- **Resampling Audio Issues**: Fixed garbled/slowed audio and incorrect volume when resampling is enabled
+  - Output sink now correctly configured with target sample rate instead of input rate
+  - Audio plays at proper speed and volume when resampling from 48kHz to 96kHz
+  - Auto-restart stream when resampling settings change output rate (toggle on/off, change target rate)
+  - Quality changes (Fast/Balanced/High/Ultra) update live without restart
+
+- **Dithering Hiss**: Removed profound hiss when using dithering/noise shaping
+  - Disabled DSP dithering in float domain which caused audible artifacts
+  - Dithering now only happens during format conversion (S16LE/S24LE) where appropriate
+  - Proper TPDF dither applied automatically during PCM conversion
+
+#### DLNA Streaming Latency 🚀
+- **EQ Change Responsiveness**: Reduced latency from 10+ seconds to <1 second
+  - Changed from buffering entire audio stream to streaming in 200ms chunks
+  - Reduced polling interval from 50ms to 10ms for faster response
+  - Limited buffer to 1 second of audio (down from 10MB/~30 seconds)
+  - EQ changes now audible almost immediately
+
+### Changed
+
+#### User Interface Improvements 📐
+- **DSP Server Tab**: Reorganized layout for better ergonomics
+  - Moved EQ Status next to Start/Stop Streaming button with separator (always visible)
+  - Arranged Dithering and Resampling sections side-by-side to reduce vertical scrolling
+  - More compact UI with better use of horizontal space
+
+- **Settings Tab Cleanup**: Removed duplicate DSP settings section
+  - DSP settings already available (with more options) in DSP Server tab
+  - All DSP configuration now centralized in one location
+  - Settings tab now focused on app-wide settings (theme, debug logging, database)
+
+#### Technical Improvements 🔧
+- Settings auto-save immediately when changed in DSP Server tab
+- Smart restart logic: only restarts stream when output rate changes
+- Quality adjustments apply live without interruption
+- Improved buffer management for lower latency across all sinks
+
 ## [0.6.1] - 2025-10-22
 
 ### Fixed
