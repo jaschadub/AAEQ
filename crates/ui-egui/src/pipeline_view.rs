@@ -372,36 +372,94 @@ impl PipelineView {
             });
         }
 
-        // Tooltip on hover
+        // Enhanced tooltip on hover with detailed explanations
         click_response.on_hover_ui(|ui| {
             ui.vertical(|ui| {
-                ui.label(egui::RichText::new(stage.name).strong());
+                ui.label(egui::RichText::new(stage.name).strong().size(13.0));
                 ui.separator();
+
+                // Current status
                 ui.label(format!("Status: {}", stage.status_text));
                 ui.label(format!("Enabled: {}", if stage.enabled { "Yes" } else { "No" }));
                 ui.label(format!("Latency: ~{:.1} ms", stage.latency_ms));
 
+                ui.add_space(3.0);
+                ui.separator();
+
+                // Stage-specific explanations
+                let description = match stage.name {
+                    "INPUT" => "Captures audio from your selected input device. Sample rate determines the frequency range and processing precision.",
+                    "HEADROOM" => "Reduces volume to prevent clipping. Digital audio clips at 0 dBFS causing distortion. Headroom provides safety margin for peaks.",
+                    "EQ" => "Parametric equalizer adjusts frequency balance. Applies custom or mapped presets based on currently playing track.",
+                    "RESAMPLE" => "Changes sample rate using high-quality sinc interpolation. Useful for matching DAC requirements or upsampling.",
+                    "DITHER" => "Adds subtle noise when reducing bit depth. Eliminates quantization distortion, essential for 16-bit output.",
+                    "OUTPUT" => "Streams processed audio to selected sink. Can be DLNA device, AirPlay speaker, or local DAC.",
+                    _ => "DSP processing stage"
+                };
+
+                ui.label(
+                    egui::RichText::new(description)
+                        .size(10.0)
+                        .color(Color32::LIGHT_GRAY)
+                );
+
+                // State-specific warnings/tips
                 match stage.state {
                     StageState::Error if stage.name == "HEADROOM" => {
                         ui.add_space(3.0);
                         ui.label(
-                            egui::RichText::new("! Clipping detected!")
+                            egui::RichText::new("⚠ Clipping detected!")
                                 .color(Color32::from_rgb(255, 100, 100))
+                        );
+                        ui.label(
+                            egui::RichText::new("Increase headroom to -6 dB or reduce input volume")
+                                .size(10.0)
+                                .color(Color32::from_rgb(255, 150, 150))
                         );
                     }
                     StageState::Warning if stage.name == "HEADROOM" => {
                         ui.add_space(3.0);
                         ui.label(
-                            egui::RichText::new("! Low headroom")
+                            egui::RichText::new("⚠ Low headroom")
                                 .color(Color32::from_rgb(255, 215, 0))
+                        );
+                        ui.label(
+                            egui::RichText::new("Consider -3 dB or more for EQ adjustments")
+                                .size(10.0)
+                                .color(Color32::from_rgb(255, 215, 0))
+                        );
+                    }
+                    StageState::Bypassed if stage.name == "EQ" => {
+                        ui.add_space(3.0);
+                        ui.label(
+                            egui::RichText::new("💡 Tip: Create mappings to automatically apply EQ per song")
+                                .size(10.0)
+                                .color(Color32::from_rgb(150, 200, 255))
+                        );
+                    }
+                    StageState::Bypassed if stage.name == "RESAMPLE" => {
+                        ui.add_space(3.0);
+                        ui.label(
+                            egui::RichText::new("💡 Tip: Enable for DACs that prefer specific sample rates")
+                                .size(10.0)
+                                .color(Color32::from_rgb(150, 200, 255))
+                        );
+                    }
+                    StageState::Bypassed if stage.name == "DITHER" => {
+                        ui.add_space(3.0);
+                        ui.label(
+                            egui::RichText::new("💡 Tip: Enable TPDF dither for 16-bit output to eliminate distortion")
+                                .size(10.0)
+                                .color(Color32::from_rgb(150, 200, 255))
                         );
                     }
                     _ => {}
                 }
 
-                ui.add_space(3.0);
+                ui.add_space(5.0);
+                ui.separator();
                 ui.label(
-                    egui::RichText::new("Click to focus settings")
+                    egui::RichText::new("🖱 Click to jump to settings")
                         .italics()
                         .size(10.0)
                         .color(Color32::GRAY)

@@ -30,6 +30,10 @@ pub struct SpectrumAnalyzerState {
     pub peak_decay_db: f32,         // Peak hold decay rate (dB per frame)
     pub band_decay_db: f32,         // Band level decay rate when no signal (dB per frame)
 
+    // Peak frequency indicator
+    pub peak_band_idx: Option<usize>, // Index of band with highest energy
+    pub show_peak_freq: bool,       // Toggle for peak frequency indicator
+
     // FFT state
     fft_buffer: Vec<Complex<f32>>,
     sample_accumulator: Vec<f64>,   // Ring buffer to accumulate samples
@@ -71,6 +75,8 @@ impl SpectrumAnalyzerState {
             db_ceil: 10.0,
             peak_decay_db: 0.6,
             band_decay_db: 1.5,  // Faster decay for band levels when no signal
+            peak_band_idx: None,
+            show_peak_freq: true, // Enabled by default
             fft_buffer: vec![Complex::new(0.0, 0.0); fft_size],
             sample_accumulator: vec![0.0; fft_size],
             accumulator_pos: 0,
@@ -171,6 +177,23 @@ impl SpectrumAnalyzerState {
                 }
             }
         }
+
+        // Find the band with the highest current level (peak frequency indicator)
+        if self.show_peak_freq {
+            let mut max_db = self.db_floor;
+            let mut max_idx = None;
+
+            for (idx, &db) in self.bands_db.iter().enumerate() {
+                if db > max_db && db > self.db_floor + 6.0 {  // Only show if significant (above -44 dB)
+                    max_db = db;
+                    max_idx = Some(idx);
+                }
+            }
+
+            self.peak_band_idx = max_idx;
+        } else {
+            self.peak_band_idx = None;
+        }
     }
 
     /// Update meter ballistics - decay bars when no signal
@@ -201,7 +224,11 @@ impl SpectrumAnalyzerState {
         // Update ballistics (decay when no signal)
         self.tick();
 
-        ui.label("Spectrum Analyzer:");
+        ui.horizontal(|ui| {
+            ui.label("Spectrum Analyzer:");
+            ui.checkbox(&mut self.show_peak_freq, "Show Peak Frequency")
+                .on_hover_text("Highlight the frequency band with the highest energy");
+        });
 
         egui::containers::Frame::canvas(ui.style()).show(ui, |ui| {
             ui.ctx().request_repaint();
@@ -317,6 +344,58 @@ impl SpectrumAnalyzerState {
                 pos2(bar_x1, py),
             );
             painter.rect_filled(cap_rect, 0.0, peak_color);
+        }
+
+        // Draw peak frequency indicator
+        if let Some(peak_idx) = self.peak_band_idx {
+            if peak_idx < n && peak_idx < x_positions.len() {
+                // Calculate bar edges for peak band
+                let x0 = if peak_idx > 0 {
+                    (x_positions[peak_idx - 1] + x_positions[peak_idx]) / 2.0
+                } else {
+                    left
+                };
+
+                let x1 = if peak_idx < n - 1 {
+                    (x_positions[peak_idx] + x_positions[peak_idx + 1]) / 2.0
+                } else {
+                    right
+                };
+
+                let gap = 0.5;
+                let bar_x0 = x0 + gap;
+                let bar_x1 = x1 - gap;
+
+                // Draw outline around peak bar
+                let outline_color = Color32::from_rgb(255, 200, 0); // Golden/yellow indicator
+                let stroke = egui::Stroke::new(2.0, outline_color);
+
+                // Draw rectangle outline
+                let bar_bottom = y_for_db(self.db_floor);
+                let bar_top = y_for_db(self.bands_db[peak_idx]);
+                let outline_rect = Rect::from_min_max(
+                    pos2(bar_x0, bar_top),
+                    pos2(bar_x1, bar_bottom),
+                );
+                painter.rect_stroke(outline_rect, 0.0, stroke);
+
+                // Draw label with frequency value
+                let peak_freq = self.freqs_hz[peak_idx];
+                let label = if peak_freq >= 1000.0 {
+                    format!("{:.1}kHz", peak_freq / 1000.0)
+                } else {
+                    format!("{:.0}Hz", peak_freq)
+                };
+
+                let label_pos = pos2((bar_x0 + bar_x1) / 2.0, rect.top() + 5.0);
+                painter.text(
+                    label_pos,
+                    egui::Align2::CENTER_TOP,
+                    label,
+                    egui::FontId::proportional(12.0),
+                    outline_color,
+                );
+            }
         }
 
         // Frequency grid lines and labels (starting at 63Hz)
