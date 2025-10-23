@@ -2142,7 +2142,10 @@ impl AaeqApp {
                         }
                         Err(e) => {
                             tracing::error!("Failed to start streaming: {}", e);
-                            let _ = response_tx.send(AppResponse::Error(e));
+
+                            // Create helpful error dialog for audio device failures
+                            let error_info = ErrorInfo::audio_error(device_name.clone(), e);
+                            let _ = response_tx.send(AppResponse::ErrorDialog(error_info));
                         }
                     }
                 }
@@ -3220,13 +3223,22 @@ impl eframe::App for AaeqApp {
                                     }
                                 });
 
-                                // For now, adjust format based on sink type compatibility as fallback
+                                // For now, adjust format and sample rate based on sink type compatibility as fallback
                                 match sink_type {
                                     SinkType::LocalDac => {
                                         // Local DAC only supports F32 and S16LE
                                         if self.dsp_view.format == FormatOption::S24LE {
                                             self.dsp_view.format = FormatOption::F32;
                                             tracing::info!("Switched to F32 format for Local DAC compatibility");
+                                        }
+
+                                        // Most local audio devices only support 44.1 or 48 kHz
+                                        // Cap sample rate to avoid ALSA errors
+                                        if self.dsp_view.sample_rate > 48000 {
+                                            let old_rate = self.dsp_view.sample_rate;
+                                            self.dsp_view.sample_rate = 48000;
+                                            tracing::warn!("Reduced sample rate from {} Hz to 48000 Hz for Local DAC compatibility. Most audio devices don't support higher rates.", old_rate);
+                                            self.status_message = Some(format!("Sample rate reduced to 48 kHz (Local DAC doesn't support {} kHz)", old_rate / 1000));
                                         }
                                     }
                                     SinkType::Dlna => {

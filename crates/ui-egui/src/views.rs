@@ -1512,6 +1512,14 @@ impl DspView {
                 if self.sample_rate != prev_sample_rate {
                     action = Some(DspAction::SampleRateChanged);
                 }
+
+                // Show hint for Local DAC sample rate limitation
+                if self.selected_sink == SinkType::LocalDac && self.sample_rate > 48000 {
+                    ui.label(
+                        egui::RichText::new("⚠")
+                            .color(egui::Color32::from_rgb(255, 165, 0)) // Orange warning
+                    ).on_hover_text("Warning: Most local audio devices only support up to 48 kHz. Higher rates may cause errors.");
+                }
             });
 
             // Format selector
