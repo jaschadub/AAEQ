@@ -2853,7 +2853,7 @@ impl eframe::App for AaeqApp {
         egui::TopBottomPanel::top("tab_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.current_mode, AppMode::EqManagement, "EQ Management")
-                    .on_hover_text("Manage EQ presets and mappings for WiiM device");
+                    .on_hover_text("Manage EQ presets and mappings for network devices");
                 ui.selectable_value(&mut self.current_mode, AppMode::DspServer, "DSP Server")
                     .on_hover_text("Stream audio with DSP processing to various outputs");
                 ui.selectable_value(&mut self.current_mode, AppMode::Settings, "Settings")

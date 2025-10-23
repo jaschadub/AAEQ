@@ -1056,7 +1056,13 @@ impl DspView {
                     ui.ctx().request_repaint();
                 }
 
-                ui.heading("Audio Output (DSP)");
+                // Dynamic heading based on selected sink type
+                let heading_text = match self.selected_sink {
+                    SinkType::LocalDac => "Audio Output (Local DAC)",
+                    SinkType::Dlna => "Audio Output (DLNA)",
+                    SinkType::AirPlay => "Audio Output (AirPlay)",
+                };
+                ui.heading(heading_text);
 
                 ui.add_space(10.0);
 
