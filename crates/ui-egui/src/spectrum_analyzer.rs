@@ -72,7 +72,7 @@ impl SpectrumAnalyzerState {
             peak_db: vec![-50.0; n_bands],
             freqs_hz,
             db_floor: -50.0,
-            db_ceil: 20.0,  // Extended to +20 dB for bass frequencies
+            db_ceil: 30.0,  // Extended to +30 dB for bass-heavy content
             peak_decay_db: 0.6,
             band_decay_db: 1.5,  // Faster decay for band levels when no signal
             peak_band_idx: None,
@@ -255,16 +255,18 @@ impl SpectrumAnalyzerState {
         }
 
         // Add horizontal padding for labels (30px on each side for dB scale numbers)
-        // Add vertical padding at bottom for frequency labels
+        // Add vertical padding at top for peak frequency label and bottom for frequency labels
         let h_padding = 30.0;
-        let v_padding = 20.0; // Space for frequency labels at bottom
+        let v_padding_top = 20.0; // Space for peak frequency label at top
+        let v_padding_bottom = 20.0; // Space for frequency labels at bottom
         let w = rect.width() - (h_padding * 2.0);
-        let h = rect.height() - v_padding;
+        let h = rect.height() - v_padding_top - v_padding_bottom;
         let left = rect.left() + h_padding;
         let right = rect.right() - h_padding;
-        let bottom = rect.top() + h;
+        let top = rect.top() + v_padding_top;
+        let bottom = top + h;
 
-        // Helper: map dB to y coordinate
+        // Helper: map dB to y coordinate (within the bar area, between top and bottom)
         let y_for_db = |db: f32| {
             let t = (db - self.db_floor) / (self.db_ceil - self.db_floor);
             bottom - t * h
@@ -321,7 +323,9 @@ impl SpectrumAnalyzerState {
             let x1 = if i < n - 1 {
                 (x_positions[i] + x_positions[i + 1]) / 2.0
             } else {
-                right  // Last bar extends to padded right edge
+                // Last bar: extend symmetrically from its center
+                let bar_width = x_positions[i] - x0;
+                x_positions[i] + bar_width
             };
 
             // Add tiny gap between bars for visual separation
@@ -353,7 +357,7 @@ impl SpectrumAnalyzerState {
         // Draw peak frequency indicator
         if let Some(peak_idx) = self.peak_band_idx {
             if peak_idx < n && peak_idx < x_positions.len() {
-                // Calculate bar edges for peak band
+                // Calculate bar edges for peak band (same logic as main bars)
                 let x0 = if peak_idx > 0 {
                     (x_positions[peak_idx - 1] + x_positions[peak_idx]) / 2.0
                 } else {
@@ -363,7 +367,9 @@ impl SpectrumAnalyzerState {
                 let x1 = if peak_idx < n - 1 {
                     (x_positions[peak_idx] + x_positions[peak_idx + 1]) / 2.0
                 } else {
-                    right
+                    // Last bar: extend symmetrically from its center
+                    let bar_width = x_positions[peak_idx] - x0;
+                    x_positions[peak_idx] + bar_width
                 };
 
                 let gap = 0.5;
@@ -391,10 +397,11 @@ impl SpectrumAnalyzerState {
                     format!("{:.0}Hz", peak_freq)
                 };
 
-                let label_pos = pos2((bar_x0 + bar_x1) / 2.0, rect.top() + 5.0);
+                // Position label in the top padding area, centered vertically
+                let label_pos = pos2((bar_x0 + bar_x1) / 2.0, rect.top() + (v_padding_top / 2.0));
                 painter.text(
                     label_pos,
-                    egui::Align2::CENTER_TOP,
+                    egui::Align2::CENTER_CENTER,
                     label,
                     egui::FontId::proportional(12.0),
                     outline_color,
@@ -412,9 +419,9 @@ impl SpectrumAnalyzerState {
             let xt = (fx - log_min) / (log_max - log_min);
             let x = left + xt * w;
 
-            // Vertical grid line - only in bar area, not extending into label space
+            // Vertical grid line - only in bar area, not extending into label spaces
             painter.line_segment(
-                [pos2(x, rect.top()), pos2(x, bottom)],
+                [pos2(x, top), pos2(x, bottom)],
                 egui::Stroke::new(0.3, grid.linear_multiply(0.5)),
             );
 
