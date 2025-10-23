@@ -893,9 +893,24 @@ impl AaeqApp {
 
                 AppCommand::DeleteCustomPreset(preset_name) => {
                     let custom_repo = CustomEqPresetRepository::new(pool.clone());
+                    let mapping_repo = MappingRepository::new(pool.clone());
+
                     match custom_repo.delete(&preset_name).await {
                         Ok(_) => {
                             tracing::info!("Deleted custom preset: {}", preset_name);
+
+                            // Update all song mappings referencing this preset to use "Flat"
+                            match mapping_repo.update_preset_references(&preset_name, "Flat").await {
+                                Ok(count) => {
+                                    if count > 0 {
+                                        tracing::info!("Updated {} song mapping(s) from '{}' to 'Flat'", count, preset_name);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to update song mappings after deleting preset '{}': {}", preset_name, e);
+                                }
+                            }
+
                             let _ = response_tx.send(AppResponse::CustomPresetDeleted(preset_name.clone()));
                             // Reload custom presets list
                             if let Ok(presets) = custom_repo.list_names().await {

@@ -271,6 +271,25 @@ impl MappingRepository {
 
         Ok(())
     }
+
+    /// Update all mappings that reference a specific preset to use a new preset name
+    /// Useful when a preset is deleted and all references should revert to "Flat"
+    pub async fn update_preset_references(&self, old_preset: &str, new_preset: &str) -> Result<usize> {
+        let now = Utc::now().timestamp();
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE mapping SET preset_name = ?, updated_at = ? WHERE preset_name = ?
+            "#,
+            new_preset,
+            now,
+            old_preset
+        )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as usize)
+    }
 }
 
 /// Repository for tracking last applied state
