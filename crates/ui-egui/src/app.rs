@@ -1616,7 +1616,8 @@ impl AaeqApp {
                                     dsp_config.resample_enabled, dsp_config.resample_quality, sample_rate, dsp_config.target_sample_rate);
 
                                 // CPU usage tracking - average over last 10 samples
-                                let mut cpu_samples: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(10);
+                                // TODO: Currently disabled, will revisit later
+                                let _cpu_samples: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(10);
 
                                 // Calculate precise interval for audio blocks
                                 let block_duration_ms = (frames_per_block as f64 / sample_rate as f64 * 1000.0) as u64;
@@ -1727,11 +1728,9 @@ impl AaeqApp {
                                             // Process captured audio samples
                                             // The captured samples are already interleaved stereo f64
 
-                                            // Start timing for CPU usage calculation
-                                            let dsp_start = std::time::Instant::now();
-
-                                            // Store original sample count BEFORE any processing that might change length
-                                            let original_sample_count = captured_samples.len() / channels;
+                                            // TODO: CPU usage calculation - timing disabled for now
+                                            // let dsp_start = std::time::Instant::now();
+                                            // let _original_sample_count = captured_samples.len() / channels;
 
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&captured_samples);
@@ -1782,16 +1781,15 @@ impl AaeqApp {
 
                                             frame_count += (captured_samples.len() / channels) as u64;
 
-                                            // Calculate CPU usage (using original sample count from before resampling)
-                                            let dsp_elapsed = dsp_start.elapsed();
-                                            let audio_duration_secs = original_sample_count as f64 / sample_rate as f64;
-                                            let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
-
-                                            // Keep rolling average of last 10 samples for smoother display
-                                            cpu_samples.push_back(dsp_usage);
-                                            if cpu_samples.len() > 10 {
-                                                cpu_samples.pop_front();
-                                            }
+                                            // TODO: CPU usage calculation - revisit later
+                                            // Currently shows 0%, needs investigation
+                                            // let dsp_elapsed = dsp_start.elapsed();
+                                            // let audio_duration_secs = original_sample_count as f64 / sample_rate as f64;
+                                            // let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
+                                            // cpu_samples.push_back(dsp_usage);
+                                            // if cpu_samples.len() > 10 {
+                                            //     cpu_samples.pop_front();
+                                            // }
 
                                             // Send audio metrics for every audio block (for meters)
                                             let _ = tx.send(AppResponse::DspAudioMetrics {
@@ -1812,11 +1810,13 @@ impl AaeqApp {
                                                     .unwrap_or(SinkStats::default());
 
                                                 // Calculate average CPU usage
-                                                let avg_cpu = if !cpu_samples.is_empty() {
-                                                    cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
-                                                } else {
-                                                    0.0
-                                                };
+                                                // TODO: CPU calculation commented out for now
+                                                let avg_cpu = 0.0;
+                                                // let avg_cpu = if !cpu_samples.is_empty() {
+                                                //     cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
+                                                // } else {
+                                                //     0.0
+                                                // };
 
                                                 // Get DSP latency from resampler
                                                 let dsp_latency = if dsp_config.resample_enabled {
@@ -1853,8 +1853,8 @@ impl AaeqApp {
                                                 }
                                             }
 
-                                            // Start timing for CPU usage calculation
-                                            let dsp_start = std::time::Instant::now();
+                                            // TODO: CPU usage calculation - timing disabled for now
+                                            // let dsp_start = std::time::Instant::now();
 
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&audio_data);
@@ -1902,16 +1902,15 @@ impl AaeqApp {
 
                                             frame_count += frames_per_block as u64;
 
-                                            // Calculate CPU usage
-                                            let dsp_elapsed = dsp_start.elapsed();
-                                            let audio_duration_secs = frames_per_block as f64 / sample_rate as f64;
-                                            let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
-
-                                            // Keep rolling average of last 10 samples for smoother display
-                                            cpu_samples.push_back(dsp_usage);
-                                            if cpu_samples.len() > 10 {
-                                                cpu_samples.pop_front();
-                                            }
+                                            // TODO: CPU usage calculation - revisit later
+                                            // Currently shows 0%, needs investigation
+                                            // let dsp_elapsed = dsp_start.elapsed();
+                                            // let audio_duration_secs = frames_per_block as f64 / sample_rate as f64;
+                                            // let dsp_usage = (dsp_elapsed.as_secs_f64() / audio_duration_secs * 100.0) as f32;
+                                            // cpu_samples.push_back(dsp_usage);
+                                            // if cpu_samples.len() > 10 {
+                                            //     cpu_samples.pop_front();
+                                            // }
 
                                             // Send audio metrics for every audio block (for meters)
                                             let _ = tx.send(AppResponse::DspAudioMetrics {
@@ -1932,11 +1931,13 @@ impl AaeqApp {
                                                     .unwrap_or(SinkStats::default());
 
                                                 // Calculate average CPU usage
-                                                let avg_cpu = if !cpu_samples.is_empty() {
-                                                    cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
-                                                } else {
-                                                    0.0
-                                                };
+                                                // TODO: CPU calculation commented out for now
+                                                let avg_cpu = 0.0;
+                                                // let avg_cpu = if !cpu_samples.is_empty() {
+                                                //     cpu_samples.iter().sum::<f32>() / cpu_samples.len() as f32
+                                                // } else {
+                                                //     0.0
+                                                // };
 
                                                 // Get DSP latency from resampler
                                                 let dsp_latency = if dsp_config.resample_enabled {
