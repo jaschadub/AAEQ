@@ -404,6 +404,37 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added resampling settings columns to dsp_profile_settings table");
     }
 
+    // Migration 013: Add icon and color to profile table
+    let icon_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('profile') WHERE name='icon'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !icon_column_exists {
+        tracing::info!("Adding icon and color columns to profile table");
+
+        sqlx::query("ALTER TABLE profile ADD COLUMN icon TEXT NOT NULL DEFAULT '📁'")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE profile ADD COLUMN color TEXT NOT NULL DEFAULT '#808080'")
+            .execute(pool)
+            .await?;
+
+        // Update built-in profiles with appropriate icons and colors
+        sqlx::query("UPDATE profile SET icon = '🏠', color = '#4A90E2' WHERE name = 'Default'")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("UPDATE profile SET icon = '🎧', color = '#9B59B6' WHERE name = 'Headphones'")
+            .execute(pool)
+            .await?;
+
+        tracing::info!("Added icon and color columns to profile table with defaults");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }
