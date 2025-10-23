@@ -76,6 +76,7 @@ enum AppCommand {
     DspStopStreaming,
     DspChangePreset(String), // Change EQ preset during active streaming (loads from library/database)
     DspApplyPresetData(aaeq_core::EqPreset), // Apply preset data directly (for live preview)
+    DspUpdateResamplerConfig(bool, ResamplerQuality, u32), // Update resampler during streaming (enabled, quality, target_rate)
 }
 
 /// Responses from async worker to UI
@@ -557,6 +558,7 @@ impl AaeqApp {
         let mut stream_shutdown_tx: Option<mpsc::Sender<()>> = None;
         let mut stream_preset_change_tx: Option<mpsc::Sender<String>> = None;
         let mut stream_preset_data_tx: Option<mpsc::Sender<aaeq_core::EqPreset>> = None;
+        let mut stream_resampler_config_tx: Option<mpsc::Sender<(bool, ResamplerQuality, u32)>> = None;
         let mut dsp_is_streaming = false;
 
         // DLNA device cache
@@ -1363,7 +1365,7 @@ impl AaeqApp {
                     }
                 }
 
-                AppCommand::DspStartStreaming(sink_type, device_name, config, use_test_tone, input_device, preset_name, dsp_config) => {
+                AppCommand::DspStartStreaming(sink_type, device_name, config, use_test_tone, input_device, preset_name, mut dsp_config) => {
                     tracing::info!("Starting DSP streaming: {:?} to device '{}' (test_tone: {}, input: {:?}, preset: {:?}, dither: {})",
                         sink_type, device_name, use_test_tone, input_device, preset_name, dsp_config.dither_enabled);
 
@@ -1448,6 +1450,10 @@ impl AaeqApp {
                             // Create preset data channel for live preview (sends full preset, not just name)
                             let (preset_data_tx, mut preset_data_rx) = mpsc::channel::<aaeq_core::EqPreset>(8);
                             stream_preset_data_tx = Some(preset_data_tx);
+
+                            // Create resampler config channel for live updates
+                            let (resampler_config_tx, mut resampler_config_rx) = mpsc::channel::<(bool, ResamplerQuality, u32)>(8);
+                            stream_resampler_config_tx = Some(resampler_config_tx);
 
                             // Setup audio capture if not using test tone
                             let audio_capture_for_task: Option<(mpsc::Receiver<Vec<f64>>, mpsc::Sender<()>)> =
@@ -1557,14 +1563,14 @@ impl AaeqApp {
                                     }
                                 }
 
-                                // Initialize Dither processor
-                                let mut dither = Dither::new(
+                                // Initialize Dither processor (currently unused - see NOTE below)
+                                let _dither = Dither::new(
                                     dsp_config.dither_mode,
                                     dsp_config.noise_shaping,
                                     dsp_config.target_bits,
                                 );
-                                tracing::info!("Dither initialized: enabled={}, mode={:?}, shaping={:?}, bits={}",
-                                    dsp_config.dither_enabled, dsp_config.dither_mode, dsp_config.noise_shaping, dsp_config.target_bits);
+                                tracing::info!("Dither processor initialized but disabled (dithering happens in format conversion): mode={:?}, shaping={:?}, bits={}",
+                                    dsp_config.dither_mode, dsp_config.noise_shaping, dsp_config.target_bits);
 
                                 // Initialize Resampler processor
                                 let mut resampler = Resampler::new(
@@ -1643,6 +1649,26 @@ impl AaeqApp {
                                             eq_processor.load_preset(&preset_data);
                                             tracing::info!("Live EQ preview applied");
                                         }
+                                        Some((enabled, quality, target_rate)) = resampler_config_rx.recv() => {
+                                            tracing::info!("Resampler config update: enabled={}, quality={:?}, target_rate={}", enabled, quality, target_rate);
+
+                                            // Update dsp_config
+                                            dsp_config.resample_enabled = enabled;
+                                            dsp_config.resample_quality = quality;
+                                            dsp_config.target_sample_rate = target_rate;
+
+                                            // Recreate resampler with new settings
+                                            match Resampler::new(quality, sample_rate, target_rate, channels) {
+                                                Ok(new_resampler) => {
+                                                    resampler = new_resampler;
+                                                    tracing::info!("Resampler updated successfully: {} Hz -> {} Hz, quality={:?}",
+                                                        sample_rate, target_rate, quality);
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!("Failed to update resampler: {}", e);
+                                                }
+                                            }
+                                        }
                                         // Audio capture mode - wait for samples
                                         Some(mut captured_samples) = async {
                                             if let Some((rx, _)) = audio_capture.as_mut() {
@@ -1666,10 +1692,13 @@ impl AaeqApp {
                                                     .expect("Failed to resample audio");
                                             }
 
-                                            // Apply dithering (after EQ & resample, before output)
-                                            if dsp_config.dither_enabled {
-                                                dither.process(&mut captured_samples);
-                                            }
+                                            // NOTE: Dithering is applied during format conversion in convert_format()
+                                            // Applying it here in the float domain creates audible artifacts
+                                            // The DSP dither processor is kept for potential future use with
+                                            // proper integration, but disabled for now
+                                            // if dsp_config.dither_enabled {
+                                            //     dither.process(&mut captured_samples);
+                                            // }
 
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&captured_samples);
@@ -1757,10 +1786,11 @@ impl AaeqApp {
                                                     .expect("Failed to resample audio");
                                             }
 
-                                            // Apply dithering (after EQ & resample, before output)
-                                            if dsp_config.dither_enabled {
-                                                dither.process(&mut audio_data);
-                                            }
+                                            // NOTE: Dithering is applied during format conversion in convert_format()
+                                            // Applying it here in the float domain creates audible artifacts
+                                            // if dsp_config.dither_enabled {
+                                            //     dither.process(&mut audio_data);
+                                            // }
 
                                             // Calculate post-EQ metrics
                                             let (post_rms_l, post_rms_r, post_peak_l, post_peak_r) = calculate_metrics(&audio_data);
@@ -1872,6 +1902,7 @@ impl AaeqApp {
                     // Clear preset change channels
                     stream_preset_change_tx = None;
                     stream_preset_data_tx = None;
+                    stream_resampler_config_tx = None;
                     dsp_is_streaming = false;
 
                     let _ = response_tx.send(AppResponse::DspStreamingStopped);
@@ -1912,6 +1943,23 @@ impl AaeqApp {
                         }
                     } else {
                         tracing::warn!("Cannot apply preset data - no active streaming session");
+                    }
+                }
+
+                AppCommand::DspUpdateResamplerConfig(enabled, quality, target_rate) => {
+                    tracing::info!("Updating resampler config: enabled={}, quality={:?}, target_rate={}", enabled, quality, target_rate);
+
+                    if let Some(resampler_tx) = &stream_resampler_config_tx {
+                        match resampler_tx.send((enabled, quality, target_rate)).await {
+                            Ok(_) => {
+                                tracing::info!("Resampler config update sent to streaming task");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send resampler config to streaming task: {}", e);
+                            }
+                        }
+                    } else {
+                        tracing::debug!("Cannot update resampler - no active streaming session");
                     }
                 }
             }
@@ -2092,7 +2140,59 @@ impl eframe::App for AaeqApp {
                     self.dsp_view.stream_status = None;
                     self.dsp_view.clear_buffers(); // Clear visualization buffers when stopping
                     self.dsp_view.reset_auto_delay(); // Reset auto-detection for next session
-                    self.status_message = Some("Streaming stopped".to_string());
+
+                    // Check if we need to auto-restart due to resampling settings change
+                    if self.dsp_view.needs_restart {
+                        tracing::info!("Auto-restarting stream after resampling settings change");
+                        self.dsp_view.needs_restart = false;
+
+                        // Restart streaming with new settings
+                        let format = match self.dsp_view.format {
+                            FormatOption::F32 => SampleFormat::F32,
+                            FormatOption::S24LE => SampleFormat::S24LE,
+                            FormatOption::S16LE => SampleFormat::S16LE,
+                        };
+
+                        // Use target sample rate if resampling is enabled, otherwise use input rate
+                        let output_sample_rate = if self.dsp_view.resample_enabled {
+                            self.dsp_view.target_sample_rate
+                        } else {
+                            self.dsp_view.sample_rate
+                        };
+
+                        let config = OutputConfig {
+                            sample_rate: output_sample_rate,
+                            channels: 2,
+                            format,
+                            buffer_ms: self.dsp_view.buffer_ms,
+                            exclusive: false,
+                        };
+
+                        if let Some(device) = &self.dsp_view.selected_device {
+                            let dsp_config = DspRuntimeConfig {
+                                dither_enabled: self.dsp_view.dither_enabled,
+                                dither_mode: self.dsp_view.dither_mode,
+                                noise_shaping: self.dsp_view.noise_shaping,
+                                target_bits: self.dsp_view.target_bits,
+                                resample_enabled: self.dsp_view.resample_enabled,
+                                resample_quality: self.dsp_view.resample_quality,
+                                target_sample_rate: self.dsp_view.target_sample_rate,
+                            };
+                            let _ = self.command_tx.send(AppCommand::DspStartStreaming(
+                                self.dsp_view.selected_sink,
+                                device.clone(),
+                                config,
+                                self.dsp_view.use_test_tone,
+                                self.dsp_view.selected_input_device.clone(),
+                                None,
+                                dsp_config,
+                            ));
+                            self.dsp_view.is_starting = true;
+                            self.status_message = Some("Restarting stream with new settings...".to_string());
+                        }
+                    } else {
+                        self.status_message = Some("Streaming stopped".to_string());
+                    }
                 }
                 AppResponse::DspStreamStatus(status) => {
                     // Try automatic delay detection on first status update
@@ -2759,8 +2859,15 @@ impl eframe::App for AaeqApp {
                                     FormatOption::S16LE => SampleFormat::S16LE,
                                 };
 
+                                // Use target sample rate if resampling is enabled, otherwise use input rate
+                                let output_sample_rate = if self.dsp_view.resample_enabled {
+                                    self.dsp_view.target_sample_rate
+                                } else {
+                                    self.dsp_view.sample_rate
+                                };
+
                                 let config = OutputConfig {
-                                    sample_rate: self.dsp_view.sample_rate,
+                                    sample_rate: output_sample_rate,
                                     channels: 2,
                                     format,
                                     buffer_ms: self.dsp_view.buffer_ms,
@@ -2804,8 +2911,15 @@ impl eframe::App for AaeqApp {
                                         FormatOption::S16LE => SampleFormat::S16LE,
                                     };
 
+                                    // Use target sample rate if resampling is enabled, otherwise use input rate
+                                    let output_sample_rate = if self.dsp_view.resample_enabled {
+                                        self.dsp_view.target_sample_rate
+                                    } else {
+                                        self.dsp_view.sample_rate
+                                    };
+
                                     let config = OutputConfig {
-                                        sample_rate: self.dsp_view.sample_rate,
+                                        sample_rate: output_sample_rate,
                                         channels: 2,
                                         format,
                                         buffer_ms: self.dsp_view.buffer_ms,
@@ -2913,19 +3027,45 @@ impl eframe::App for AaeqApp {
                                 self.auto_save_dsp_settings();
                             }
                             DspAction::ResampleToggled => {
-                                tracing::info!("Resampling toggled: {} - auto-saving", self.dsp_view.resample_enabled);
+                                tracing::info!("Resampling toggled: {} - auto-saving and restarting stream", self.dsp_view.resample_enabled);
                                 // Auto-save DSP settings
                                 self.auto_save_dsp_settings();
+                                // Toggling resampling changes output rate - must restart stream
+                                if self.dsp_view.is_streaming {
+                                    tracing::info!("Resampling toggled during streaming - restarting stream to apply new output rate");
+                                    // Stop and restart stream with new settings
+                                    let _ = self.command_tx.send(AppCommand::DspStopStreaming);
+                                    // Queue restart with new settings (will happen after stop completes)
+                                    self.dsp_view.needs_restart = true;
+                                    self.status_message = Some("Restarting stream with new resampling settings...".to_string());
+                                }
                             }
                             DspAction::ResampleQualityChanged => {
-                                tracing::info!("Resample quality changed to: {:?} - auto-saving", self.dsp_view.resample_quality);
+                                tracing::info!("Resample quality changed to: {:?} - auto-saving and updating live", self.dsp_view.resample_quality);
                                 // Auto-save DSP settings
                                 self.auto_save_dsp_settings();
+                                // Quality change doesn't affect output rate - can update live
+                                if self.dsp_view.is_streaming && self.dsp_view.resample_enabled {
+                                    let _ = self.command_tx.send(AppCommand::DspUpdateResamplerConfig(
+                                        self.dsp_view.resample_enabled,
+                                        self.dsp_view.resample_quality,
+                                        self.dsp_view.target_sample_rate,
+                                    ));
+                                }
                             }
                             DspAction::TargetSampleRateChanged => {
-                                tracing::info!("Target sample rate changed to: {} Hz - auto-saving", self.dsp_view.target_sample_rate);
+                                tracing::info!("Target sample rate changed to: {} Hz - auto-saving and restarting stream", self.dsp_view.target_sample_rate);
                                 // Auto-save DSP settings
                                 self.auto_save_dsp_settings();
+                                // Changing target rate changes output rate - must restart stream
+                                if self.dsp_view.is_streaming && self.dsp_view.resample_enabled {
+                                    tracing::info!("Target sample rate changed during streaming - restarting stream to apply new output rate");
+                                    // Stop and restart stream with new settings
+                                    let _ = self.command_tx.send(AppCommand::DspStopStreaming);
+                                    // Queue restart with new settings (will happen after stop completes)
+                                    self.dsp_view.needs_restart = true;
+                                    self.status_message = Some("Restarting stream with new sample rate...".to_string());
+                                }
                             }
                         }
                     }

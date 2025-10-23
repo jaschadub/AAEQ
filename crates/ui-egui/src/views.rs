@@ -854,6 +854,7 @@ pub struct DspView {
     pub buffer_ms: u32,
     pub is_streaming: bool,
     pub is_starting: bool, // True while waiting for streaming to start (for loading spinner)
+    pub needs_restart: bool, // True when stream needs to be restarted after settings change
     pub stream_status: Option<StreamStatus>,
     pub show_device_discovery: bool,
     pub discovering: bool,
@@ -969,6 +970,7 @@ impl Default for DspView {
             buffer_ms: 150,
             is_streaming: false,
             is_starting: false,
+            needs_restart: false,
             stream_status: None,
             show_device_discovery: false,
             discovering: false,

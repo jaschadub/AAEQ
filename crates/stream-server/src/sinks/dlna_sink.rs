@@ -174,14 +174,20 @@ async fn stream_handler(State(state): State<AppState>) -> Response {
         // Send WAV header first
         yield Ok::<Bytes, std::io::Error>(Bytes::from(header));
 
-        // Stream audio data
+        // Stream audio data in small chunks for low latency
         loop {
-            // Read from buffer
+            // Read from buffer in smaller chunks (max 200ms worth)
+            // This reduces latency when EQ changes
             let data = {
                 let mut buffer = state.buffer.lock().unwrap();
                 if !buffer.is_empty() {
-                    let chunk = buffer.clone();
-                    buffer.clear();
+                    // Calculate max chunk size (200ms of audio)
+                    let bytes_per_sample = state.config.format.bytes_per_sample();
+                    let samples_per_sec = state.config.sample_rate * state.config.channels as u32;
+                    let max_chunk_size = (samples_per_sec / 5) as usize * bytes_per_sample; // 200ms
+
+                    let chunk_size = buffer.len().min(max_chunk_size);
+                    let chunk: Vec<u8> = buffer.drain(..chunk_size).collect();
                     chunk
                 } else {
                     Vec::new()
@@ -192,7 +198,7 @@ async fn stream_handler(State(state): State<AppState>) -> Response {
                 yield Ok(Bytes::from(data));
             } else {
                 // No data available, wait a bit
-                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
         }
     };
@@ -378,11 +384,18 @@ impl OutputSink for DlnaSink {
         let mut buffer = self.buffer.lock().unwrap();
         buffer.extend_from_slice(&converted);
 
-        // Limit buffer size to prevent memory issues
-        const MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10MB
-        if buffer.len() > MAX_BUFFER_SIZE {
-            warn!("DLNA buffer overflow, dropping old data");
-            let excess = buffer.len() - MAX_BUFFER_SIZE;
+        // Limit buffer size to prevent excessive latency
+        // Calculate max buffer size for ~1 second of audio
+        let bytes_per_sample = cfg.format.bytes_per_sample();
+        let samples_per_sec = cfg.sample_rate * cfg.channels as u32;
+        const MAX_BUFFER_MS: u32 = 1000; // 1 second max to minimize EQ change latency
+        let max_buffer_size = (samples_per_sec * MAX_BUFFER_MS / 1000) as usize * bytes_per_sample;
+
+        if buffer.len() > max_buffer_size {
+            debug!("DLNA buffer has {} bytes (max {}), dropping old data to reduce latency",
+                   buffer.len(), max_buffer_size);
+            // Drop old data to keep latency low
+            let excess = buffer.len() - max_buffer_size;
             buffer.drain(0..excess);
         }
 
