@@ -3,8 +3,6 @@
   WiX configuration for AAEQ Windows MSI installer
 -->
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
-  <WixVariable Id='WixUILicenseRtf' Value='License.rtf'/>
-
   <Product
     Id='*'
     Name='AAEQ - Adaptive Audio Equalizer'
@@ -13,6 +11,8 @@
     Language='1033'
     Codepage='1252'
     Version='$(var.Version)'>
+
+    <WixVariable Id='WixUILicenseRtf' Value='License.rtf'/>
 
     <Package
       Id='*'
