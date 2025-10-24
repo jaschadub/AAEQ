@@ -346,7 +346,7 @@ mod tests {
         // Test corners
         let norm_pos = Pos2::new(0.0, 0.0); // Min freq, 0 dB
         let screen = editor.to_screen(norm_pos, rect);
-        let back = editor.from_screen(screen, rect);
+        let back = editor.screen_to_norm(screen, rect);
 
         assert!((back.x - norm_pos.x).abs() < 0.01);
         assert!((back.y - norm_pos.y).abs() < 0.1);
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_constrain_points() {
-        let mut editor = BezierEqEditor::new();
+        let editor = BezierEqEditor::new();
         let rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 300.0));
 
         // Try to move second point before first
