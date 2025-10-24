@@ -94,7 +94,11 @@ pub async fn discover_devices(timeout_secs: u64) -> Result<Vec<AirPlayDevice>> {
         }
     }
 
-    mdns.shutdown()?;
+    // Shutdown may log a harmless "sending on a closed channel" error
+    // This is a known mdns_sd library issue and can be safely ignored
+    if let Err(e) = mdns.shutdown() {
+        debug!("mDNS shutdown error (harmless): {}", e);
+    }
 
     info!("Discovery complete. Found {} device(s)", devices.len());
     Ok(devices)
