@@ -1311,8 +1311,10 @@ impl AaeqApp {
                                 track.device_genre = track.genre.clone();
 
                                 // Load genre override if exists (check on every poll, not just on track change)
+                                // Use song_key (artist-title) to lookup genre override to avoid genre in the lookup key
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
-                                if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
+                                let song_key = track.song_key();
+                                if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
                                     track.genre = genre_override;
                                 }
 
@@ -1415,8 +1417,10 @@ impl AaeqApp {
                                 track.device_genre = track.genre.clone();
 
                                 // Load genre override if exists (check on every poll, not just on track change)
+                                // Use song_key (artist-title) to lookup genre override to avoid genre in the lookup key
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
-                                if let Ok(Some(genre_override)) = genre_repo.get(&track_key).await {
+                                let song_key = track.song_key();
+                                if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
                                     track.genre = genre_override;
                                 }
 
@@ -3137,7 +3141,7 @@ impl eframe::App for AaeqApp {
                                 NowPlayingAction::UpdateGenre(genre) => {
                                     // Update genre for current track
                                     if let Some(track) = &self.current_track {
-                                        let track_key = track.track_key();
+                                        let track_key = track.song_key(); // Use song_key (artist-title) instead of track_key to avoid genre in key
                                         let _ = self.command_tx.send(AppCommand::UpdateGenre(track_key, genre.clone()));
 
                                         // Update the current track's genre locally
