@@ -204,6 +204,7 @@ mod tests {
                 EqBand { frequency: 1000, gain: -2.0 },
                 EqBand { frequency: 10000, gain: 1.5 },
             ],
+            curve_data: None,
         };
 
         processor.load_preset(&preset);
@@ -222,6 +223,7 @@ mod tests {
             bands: vec![
                 EqBand { frequency: 1000, gain: 6.0 },
             ],
+            curve_data: None,
         };
 
         processor.load_preset(&preset);
@@ -247,6 +249,7 @@ mod tests {
             bands: vec![
                 EqBand { frequency: 1000, gain: 6.0 },
             ],
+            curve_data: None,
         };
 
         processor.load_preset(&preset);
