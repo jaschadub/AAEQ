@@ -1007,33 +1007,6 @@ impl DspView {
         let spectrum_colors = theme.spectrum_colors();
 
         ScrollArea::vertical().show(ui, |ui| {
-        // Mode info panel
-        let info_bg = egui::Color32::from_rgb(40, 50, 60);
-        let info_frame = egui::Frame::none()
-            .fill(info_bg)
-            .inner_margin(egui::Margin::same(10.0))
-            .rounding(egui::Rounding::same(4.0));
-
-        info_frame.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("ℹ").size(16.0).color(egui::Color32::from_rgb(100, 180, 255)));
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new("DSP Server Mode")
-                            .strong()
-                            .color(egui::Color32::from_rgb(220, 230, 255))
-                    );
-                    ui.label(
-                        egui::RichText::new("Stream audio from input devices with real-time DSP processing (EQ, dithering, resampling) to network or local outputs.")
-                            .size(10.0)
-                            .color(egui::Color32::LIGHT_GRAY)
-                    );
-                });
-            });
-        });
-
-        ui.add_space(10.0);
-
         // Update and display pipeline visualization
         self.update_pipeline_view();
         if let Some(pipeline_action) = self.pipeline_view.show(ui, theme) {
