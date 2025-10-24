@@ -1155,3 +1155,198 @@ impl DspSinkSettingsRepository {
         }).collect())
     }
 }
+
+/// Repository for managed device operations (per-profile device management)
+pub struct ManagedDeviceRepository {
+    pool: SqlitePool,
+}
+
+impl ManagedDeviceRepository {
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
+    }
+
+    /// Create a new managed device
+    pub async fn create(&self, device: &aaeq_core::ManagedDevice) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let favorite = if device.favorite { 1 } else { 0 };
+
+        let result = sqlx::query(
+            r#"INSERT INTO managed_devices
+               (profile_id, name, protocol, address, source, favorite, last_seen, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"#
+        )
+        .bind(device.profile_id)
+        .bind(&device.name)
+        .bind(&device.protocol)
+        .bind(&device.address)
+        .bind(&device.source)
+        .bind(favorite)
+        .bind(device.last_seen)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.last_insert_rowid())
+    }
+
+    /// Get a managed device by ID
+    pub async fn get_by_id(&self, id: i64) -> Result<Option<aaeq_core::ManagedDevice>> {
+        let row = sqlx::query(
+            r#"SELECT id, profile_id, name, protocol, address, source, favorite, last_seen, created_at, updated_at
+               FROM managed_devices WHERE id = ?"#
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|r| aaeq_core::ManagedDevice {
+            id: Some(r.get(0)),
+            profile_id: r.get(1),
+            name: r.get(2),
+            protocol: r.get(3),
+            address: r.get(4),
+            source: r.get(5),
+            favorite: r.get::<i32, _>(6) != 0,
+            last_seen: r.get(7),
+            created_at: r.get(8),
+            updated_at: r.get(9),
+        }))
+    }
+
+    /// List all managed devices for a specific profile
+    pub async fn list_by_profile(&self, profile_id: i64) -> Result<Vec<aaeq_core::ManagedDevice>> {
+        let rows = sqlx::query(
+            r#"SELECT id, profile_id, name, protocol, address, source, favorite, last_seen, created_at, updated_at
+               FROM managed_devices WHERE profile_id = ?
+               ORDER BY favorite DESC, name"#
+        )
+        .bind(profile_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| aaeq_core::ManagedDevice {
+            id: Some(r.get(0)),
+            profile_id: r.get(1),
+            name: r.get(2),
+            protocol: r.get(3),
+            address: r.get(4),
+            source: r.get(5),
+            favorite: r.get::<i32, _>(6) != 0,
+            last_seen: r.get(7),
+            created_at: r.get(8),
+            updated_at: r.get(9),
+        }).collect())
+    }
+
+    /// List all managed devices for a specific profile and protocol
+    pub async fn list_by_profile_and_protocol(&self, profile_id: i64, protocol: &str) -> Result<Vec<aaeq_core::ManagedDevice>> {
+        let rows = sqlx::query(
+            r#"SELECT id, profile_id, name, protocol, address, source, favorite, last_seen, created_at, updated_at
+               FROM managed_devices WHERE profile_id = ? AND protocol = ?
+               ORDER BY favorite DESC, name"#
+        )
+        .bind(profile_id)
+        .bind(protocol)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(|r| aaeq_core::ManagedDevice {
+            id: Some(r.get(0)),
+            profile_id: r.get(1),
+            name: r.get(2),
+            protocol: r.get(3),
+            address: r.get(4),
+            source: r.get(5),
+            favorite: r.get::<i32, _>(6) != 0,
+            last_seen: r.get(7),
+            created_at: r.get(8),
+            updated_at: r.get(9),
+        }).collect())
+    }
+
+    /// Update managed device (upsert by profile_id + protocol + address)
+    pub async fn upsert(&self, device: &aaeq_core::ManagedDevice) -> Result<i64> {
+        let now = Utc::now().timestamp();
+        let favorite = if device.favorite { 1 } else { 0 };
+
+        let result = sqlx::query(
+            r#"INSERT INTO managed_devices
+               (profile_id, name, protocol, address, source, favorite, last_seen, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(profile_id, protocol, address) DO UPDATE SET
+                   name = excluded.name,
+                   source = excluded.source,
+                   favorite = excluded.favorite,
+                   last_seen = excluded.last_seen,
+                   updated_at = ?
+               RETURNING id"#
+        )
+        .bind(device.profile_id)
+        .bind(&device.name)
+        .bind(&device.protocol)
+        .bind(&device.address)
+        .bind(&device.source)
+        .bind(favorite)
+        .bind(device.last_seen)
+        .bind(now)
+        .bind(now)
+        .bind(now) // For UPDATE SET updated_at
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(result.get(0))
+    }
+
+    /// Update last_seen timestamp for a device
+    pub async fn update_last_seen(&self, id: i64, last_seen: i64) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE managed_devices SET last_seen = ?, updated_at = ? WHERE id = ?"
+        )
+        .bind(last_seen)
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Toggle favorite status for a device
+    pub async fn toggle_favorite(&self, id: i64) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE managed_devices SET favorite = NOT favorite, updated_at = ? WHERE id = ?"
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Delete a managed device
+    pub async fn delete(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM managed_devices WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Delete all devices for a specific profile (called on profile deletion via CASCADE)
+    pub async fn delete_by_profile(&self, profile_id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM managed_devices WHERE profile_id = ?")
+            .bind(profile_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+}

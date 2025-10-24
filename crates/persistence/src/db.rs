@@ -515,6 +515,56 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Created dsp_sink_settings table with default settings for LocalDac, Dlna, and AirPlay");
     }
 
+    // Migration 015: Add managed_devices table for per-profile device management
+    let managed_devices_table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='managed_devices'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !managed_devices_table_exists {
+        tracing::info!("Creating managed_devices table for per-profile device management");
+
+        sqlx::query(r#"
+            CREATE TABLE managed_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                protocol TEXT NOT NULL,
+                address TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'Manual',
+                favorite INTEGER NOT NULL DEFAULT 0,
+                last_seen INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (profile_id) REFERENCES profile(id) ON DELETE CASCADE
+            )
+        "#)
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX idx_managed_devices_profile ON managed_devices(profile_id)"
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX idx_managed_devices_protocol ON managed_devices(protocol)"
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_managed_devices_unique ON managed_devices(profile_id, protocol, address)"
+        )
+        .execute(pool)
+        .await?;
+
+        tracing::info!("Created managed_devices table with indexes");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

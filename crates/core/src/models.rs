@@ -185,6 +185,22 @@ pub struct DspSinkSettings {
     pub updated_at: i64,
 }
 
+/// Managed device for manual entry and favorites (per profile)
+/// Supports WiiM API, DLNA, AirPlay, Local DAC, and future ANP protocol
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManagedDevice {
+    pub id: Option<i64>,
+    pub profile_id: i64,
+    pub name: String,          // User-friendly device name
+    pub protocol: String,      // "WiimApi", "LocalDac", "Dlna", "AirPlay", "AnpNode"
+    pub address: String,       // IP address, hostname, or UUID
+    pub source: String,        // "Discovered", "Manual", "Database"
+    pub favorite: bool,        // Whether this is a favorite device
+    pub last_seen: Option<i64>, // Timestamp of last successful connection
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 impl DspSinkSettings {
     /// Create default settings for LocalDac
     pub fn default_local_dac() -> Self {

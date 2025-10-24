@@ -834,6 +834,9 @@ pub struct DspView {
     pub stream_status: Option<StreamStatus>,
     pub show_device_discovery: bool,
     pub discovering: bool,
+    pub show_add_device_dialog: bool, // Show manual device entry dialog
+    pub add_device_name: String, // Device name input for manual entry
+    pub add_device_address: String, // Device address/IP input for manual entry
     pub use_test_tone: bool, // Toggle between captured audio and test tone
     pub audio_viz: AudioVizState, // Audio waveform visualization
     pub spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState, // Spectrum analyzer
@@ -961,6 +964,9 @@ impl Default for DspView {
             stream_status: None,
             show_device_discovery: false,
             discovering: false,
+            show_add_device_dialog: false, // Dialog hidden by default
+            add_device_name: String::new(), // Empty device name
+            add_device_address: String::new(), // Empty address
             use_test_tone: false, // Default to captured audio
             audio_viz: AudioVizState::new(),
             spectrum_analyzer: crate::spectrum_analyzer::SpectrumAnalyzerState::new(),
@@ -1001,6 +1007,33 @@ impl DspView {
         let spectrum_colors = theme.spectrum_colors();
 
         ScrollArea::vertical().show(ui, |ui| {
+        // Mode info panel
+        let info_bg = egui::Color32::from_rgb(40, 50, 60);
+        let info_frame = egui::Frame::none()
+            .fill(info_bg)
+            .inner_margin(egui::Margin::same(10.0))
+            .rounding(egui::Rounding::same(4.0));
+
+        info_frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("ℹ").size(16.0).color(egui::Color32::from_rgb(100, 180, 255)));
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new("DSP Server Mode")
+                            .strong()
+                            .color(egui::Color32::from_rgb(220, 230, 255))
+                    );
+                    ui.label(
+                        egui::RichText::new("Stream audio from input devices with real-time DSP processing (EQ, dithering, resampling) to network or local outputs.")
+                            .size(10.0)
+                            .color(egui::Color32::LIGHT_GRAY)
+                    );
+                });
+            });
+        });
+
+        ui.add_space(10.0);
+
         // Update and display pipeline visualization
         self.update_pipeline_view();
         if let Some(pipeline_action) = self.pipeline_view.show(ui, theme) {
@@ -1439,6 +1472,16 @@ impl DspView {
                     self.show_device_discovery = true;
                     self.discovering = true;
                     action = Some(DspAction::DiscoverDevices);
+                }
+
+                // Add manual device entry button (not for Local DAC since those are system devices)
+                if !matches!(self.selected_sink, SinkType::LocalDac)
+                    && ui.button("➕ Add Device").on_hover_text("Manually add a device").clicked()
+                {
+                    self.show_add_device_dialog = true;
+                    // Clear previous inputs
+                    self.add_device_name.clear();
+                    self.add_device_address.clear();
                 }
             });
 
@@ -2012,6 +2055,72 @@ impl DspView {
                 });
         }
 
+        // Manual device entry dialog
+        if self.show_add_device_dialog {
+            egui::Window::new("Add Device Manually")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label("Enter device details:");
+                    ui.separator();
+
+                    // Device name input
+                    ui.horizontal(|ui| {
+                        ui.label("Name:");
+                        ui.text_edit_singleline(&mut self.add_device_name);
+                    });
+
+                    // Device address/IP input
+                    ui.horizontal(|ui| {
+                        ui.label("Address:");
+                        ui.text_edit_singleline(&mut self.add_device_address)
+                            .on_hover_text("Enter IP address or hostname (e.g., 192.168.1.100)");
+                    });
+
+                    // Show protocol info
+                    let protocol_str = match self.selected_sink {
+                        SinkType::LocalDac => "Local DAC",
+                        SinkType::Dlna => "DLNA/UPnP",
+                        SinkType::AirPlay => "AirPlay",
+                    };
+                    ui.label(format!("Protocol: {}", protocol_str));
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        // Add button - enabled only if both name and address are filled
+                        let can_add = !self.add_device_name.trim().is_empty()
+                            && !self.add_device_address.trim().is_empty();
+
+                        if ui.add_enabled(can_add, egui::Button::new("Add")).clicked() {
+                            let protocol = match self.selected_sink {
+                                SinkType::LocalDac => "LocalDac",
+                                SinkType::Dlna => "Dlna",
+                                SinkType::AirPlay => "AirPlay",
+                            };
+
+                            action = Some(DspAction::AddManualDevice {
+                                name: self.add_device_name.clone(),
+                                address: self.add_device_address.clone(),
+                                protocol: protocol.to_string(),
+                            });
+
+                            // Close dialog and clear inputs
+                            self.show_add_device_dialog = false;
+                            self.add_device_name.clear();
+                            self.add_device_address.clear();
+                        }
+
+                        if ui.button("Cancel").clicked() {
+                            self.show_add_device_dialog = false;
+                            // Clear inputs on cancel
+                            self.add_device_name.clear();
+                            self.add_device_address.clear();
+                        }
+                    });
+                });
+        }
+
         action
     }
 
@@ -2272,6 +2381,7 @@ pub enum DspAction {
     SinkTypeChanged(SinkType),
     DeviceSelected(String),
     DiscoverDevices,
+    AddManualDevice { name: String, address: String, protocol: String },
     ToggleTestTone,
     InputDeviceSelected(String),
     DiscoverInputDevices,

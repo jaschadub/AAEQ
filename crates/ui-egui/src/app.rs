@@ -2672,7 +2672,7 @@ impl eframe::App for AaeqApp {
         // Device connection panel
         egui::TopBottomPanel::top("device_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Device IP:");
+                ui.label("WiiM Device IP:");
                 ui.text_edit_singleline(&mut self.device_host);
 
                 // Show Connect or Disconnect button based on connection state
@@ -3124,6 +3124,33 @@ impl eframe::App for AaeqApp {
 
                     // Central panel for now playing
                     egui::CentralPanel::default().show(ctx, |ui| {
+                        // Mode info panel
+                        let info_bg = egui::Color32::from_rgb(40, 50, 60);
+                        let info_frame = egui::Frame::none()
+                            .fill(info_bg)
+                            .inner_margin(egui::Margin::same(10.0))
+                            .rounding(egui::Rounding::same(4.0));
+
+                        info_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("ℹ").size(16.0).color(egui::Color32::from_rgb(100, 180, 255)));
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("EQ Management Mode")
+                                            .strong()
+                                            .color(egui::Color32::from_rgb(220, 230, 255))
+                                    );
+                                    ui.label(
+                                        egui::RichText::new("Control WiiM device EQ using the device's API. Changes are applied to the device itself.")
+                                            .size(10.0)
+                                            .color(egui::Color32::LIGHT_GRAY)
+                                    );
+                                });
+                            });
+                        });
+
+                        ui.add_space(10.0);
+
                         if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone()) {
                             match action {
                                 NowPlayingAction::SaveMapping(scope) => {
@@ -3287,6 +3314,38 @@ impl eframe::App for AaeqApp {
                             }
                             DspAction::DiscoverDevices => {
                                 let _ = self.command_tx.send(AppCommand::DspDiscoverDevices(self.dsp_view.selected_sink, Some(self.device_host.clone())));
+                            }
+                            DspAction::AddManualDevice { name, address, protocol } => {
+                                tracing::info!("Adding manual device: {} ({}) - {}", name, address, protocol);
+
+                                // TODO: Save to database via ManagedDeviceRepository
+                                // For now, just add to the appropriate device list
+                                let device_display = format!("{} ({})", name, address);
+
+                                match protocol.as_str() {
+                                    "LocalDac" => {
+                                        if !self.dsp_view.available_local_devices.contains(&device_display) {
+                                            self.dsp_view.available_local_devices.push(device_display.clone());
+                                        }
+                                    }
+                                    "Dlna" => {
+                                        if !self.dsp_view.available_dlna_devices.contains(&device_display) {
+                                            self.dsp_view.available_dlna_devices.push(device_display.clone());
+                                        }
+                                    }
+                                    "AirPlay" => {
+                                        if !self.dsp_view.available_airplay_devices.contains(&device_display) {
+                                            self.dsp_view.available_airplay_devices.push(device_display.clone());
+                                        }
+                                    }
+                                    _ => {
+                                        tracing::warn!("Unknown protocol: {}", protocol);
+                                    }
+                                }
+
+                                // Auto-select the newly added device
+                                self.dsp_view.selected_device = Some(device_display);
+                                self.status_message = Some(format!("Added device: {}", name));
                             }
                             DspAction::StartStreaming => {
                                 // Convert FormatOption to SampleFormat
