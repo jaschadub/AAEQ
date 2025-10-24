@@ -108,6 +108,7 @@ fn get_known_preset_curve(preset_name: &str) -> Option<EqPreset> {
     Some(EqPreset {
         name: preset_name.to_string(),
         bands,
+        curve_data: None,
     })
 }
 
@@ -194,5 +195,6 @@ fn generate_default_curve(preset_name: &str) -> Option<EqPreset> {
     Some(EqPreset {
         name: preset_name.to_string(),
         bands,
+        curve_data: None,
     })
 }

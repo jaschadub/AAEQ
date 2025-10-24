@@ -1,5 +1,7 @@
 pub mod app;
 pub mod audio_viz;
+pub mod bezier_eq_editor;
+pub mod eq_fitting;
 pub mod spectrum_analyzer;
 pub mod views;
 pub mod widgets;

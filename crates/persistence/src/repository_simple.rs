@@ -757,6 +757,7 @@ impl CustomEqPresetRepository {
         Ok(Some(aaeq_core::EqPreset {
             name: preset_name,
             bands,
+            curve_data: None,
         }))
     }
 

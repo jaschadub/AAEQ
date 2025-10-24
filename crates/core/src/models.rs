@@ -133,11 +133,24 @@ pub struct EqBand {
     pub gain: f32,       // dB, typically -12.0 to +12.0
 }
 
+/// Bezier curve control points for graphical EQ editing
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BezierCurveData {
+    /// Control points in normalized space (x: 0-1 log freq, y: -12 to +12 dB)
+    pub control_points: Vec<(f32, f32)>,
+    /// Sample rate this curve was fitted at (for refit detection)
+    #[serde(default)]
+    pub fitted_at_sample_rate: u32,
+}
+
 /// A complete EQ preset with all bands
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EqPreset {
     pub name: String,
     pub bands: Vec<EqBand>,
+    /// Optional Bezier curve representation for graphical editing
+    #[serde(default)]
+    pub curve_data: Option<BezierCurveData>,
 }
 
 impl Default for EqPreset {
@@ -157,6 +170,7 @@ impl Default for EqPreset {
                 EqBand { frequency: 8000, gain: 0.0 },
                 EqBand { frequency: 16000, gain: 0.0 },
             ],
+            curve_data: None,
         }
     }
 }

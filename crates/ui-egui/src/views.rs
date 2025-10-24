@@ -2,13 +2,20 @@ use aaeq_core::{EqPreset, TrackMeta, Scope};
 use crate::audio_viz::AudioVizState;
 use crate::widgets::VerticalSlider;
 use crate::album_art::{AlbumArtCache, AlbumArtState};
-use egui::{Context, ScrollArea, Ui};
+use egui::{Color32, Context, ScrollArea, Ui};
 use std::sync::Arc;
 
 // Import dithering and resampling types from stream-server
 pub use stream_server::dsp::{DitherMode, NoiseShaping, ResamplerQuality};
 
 /// View for creating/editing EQ presets with vertical sliders
+/// EQ editing mode
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EqEditMode {
+    Bands,  // Traditional vertical sliders
+    Curve,  // Bezier curve editor
+}
+
 pub struct EqEditorView {
     pub preset: EqPreset,
     pub preset_name: String,
@@ -17,6 +24,8 @@ pub struct EqEditorView {
     pub edit_mode: bool,               // True if editing existing preset, false if creating new
     pub original_name: Option<String>, // Original preset name when editing (for validation)
     last_live_update: std::time::Instant, // Timestamp of last live update (for throttling)
+    pub eq_mode: EqEditMode,           // Bands or Curve mode
+    pub bezier_editor: crate::bezier_eq_editor::BezierEqEditor, // Bezier curve editor
 }
 
 impl Default for EqEditorView {
@@ -29,35 +38,63 @@ impl Default for EqEditorView {
             edit_mode: false,
             original_name: None,
             last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            eq_mode: EqEditMode::Bands,
+            bezier_editor: crate::bezier_eq_editor::BezierEqEditor::new(),
         }
     }
 }
 
 impl EqEditorView {
     pub fn new(preset: EqPreset) -> Self {
-        Self {
+        let mut editor = Self {
             preset_name: preset.name.clone(),
-            preset,
+            preset: preset.clone(),
             existing_presets: vec![],
             name_error: None,
             edit_mode: false,
             original_name: None,
             last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            eq_mode: EqEditMode::Bands,
+            bezier_editor: crate::bezier_eq_editor::BezierEqEditor::new(),
+        };
+
+        // Initialize Bezier editor from preset if curve data exists
+        if let Some(curve_data) = &preset.curve_data {
+            editor.bezier_editor.set_control_points(&curve_data.control_points);
+        } else {
+            // Generate curve from bands
+            let curve_data = crate::eq_fitting::bands_to_curve(&preset);
+            editor.bezier_editor.set_control_points(&curve_data.control_points);
         }
+
+        editor
     }
 
     /// Create an editor for editing an existing preset
     pub fn new_for_edit(preset: EqPreset) -> Self {
         let original_name = preset.name.clone();
-        Self {
+        let mut editor = Self {
             preset_name: preset.name.clone(),
-            preset,
+            preset: preset.clone(),
             existing_presets: vec![],
             name_error: None,
             edit_mode: true,
             original_name: Some(original_name),
             last_live_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
+            eq_mode: EqEditMode::Bands,
+            bezier_editor: crate::bezier_eq_editor::BezierEqEditor::new(),
+        };
+
+        // Initialize Bezier editor from preset if curve data exists
+        if let Some(curve_data) = &preset.curve_data {
+            editor.bezier_editor.set_control_points(&curve_data.control_points);
+        } else {
+            // Generate curve from bands
+            let curve_data = crate::eq_fitting::bands_to_curve(&preset);
+            editor.bezier_editor.set_control_points(&curve_data.control_points);
         }
+
+        editor
     }
 
     /// Find a unique name by appending a number if the base name already exists
@@ -173,8 +210,73 @@ impl EqEditorView {
 
             ui.add_space(10.0);
 
-            // EQ sliders in a horizontal layout
-            ScrollArea::horizontal().show(ui, |ui| {
+            // Mode toggle
+            ui.horizontal(|ui| {
+                ui.label("Edit Mode:");
+                ui.radio_value(&mut self.eq_mode, EqEditMode::Bands, "Bands");
+                ui.radio_value(&mut self.eq_mode, EqEditMode::Curve, "Curve");
+            });
+
+            ui.add_space(10.0);
+
+            // Show either bands or curve editor based on mode
+            match self.eq_mode {
+                EqEditMode::Bands => {
+                    // Traditional band sliders
+                    self.show_bands_editor(ui, &mut action);
+                }
+                EqEditMode::Curve => {
+                    // Bezier curve editor
+                    self.show_curve_editor(ui, &mut action);
+                }
+            }
+
+            ui.add_space(20.0);
+            ui.separator();
+
+            // Action buttons
+            ui.horizontal(|ui| {
+                if ui.button("Reset to Flat").clicked() {
+                    for band in &mut self.preset.bands {
+                        band.gain = 0.0;
+                    }
+                    // Reset curve too
+                    let curve_data = crate::eq_fitting::bands_to_curve(&self.preset);
+                    self.bezier_editor.set_control_points(&curve_data.control_points);
+                    action = Some(EqEditorAction::Modified);
+                }
+
+                // Disable Save button if name is invalid
+                let can_save = self.name_error.is_none();
+
+                ui.add_enabled_ui(can_save, |ui| {
+                    if ui.button("Save Preset").on_hover_text_at_pointer(
+                        if can_save {
+                            "Save preset to database (already applied via live preview)"
+                        } else {
+                            "Fix name errors before saving"
+                        }
+                    ).clicked() {
+                        self.preset.name = self.preset_name.clone();
+                        // Save curve data if in curve mode
+                        if self.eq_mode == EqEditMode::Curve {
+                            self.preset.curve_data = Some(aaeq_core::BezierCurveData {
+                                control_points: self.bezier_editor.get_control_points(),
+                                fitted_at_sample_rate: self.bezier_editor.sample_rate,
+                            });
+                        }
+                        action = Some(EqEditorAction::Save(self.preset.clone()));
+                    }
+                });
+            });
+        });
+
+        action
+    }
+
+    /// Show traditional band sliders editor
+    fn show_bands_editor(&mut self, ui: &mut Ui, action: &mut Option<EqEditorAction>) {
+        ScrollArea::horizontal().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let mut slider_changed = false;
                     for band in &mut self.preset.bands {
@@ -203,43 +305,70 @@ impl EqEditorView {
                             self.last_live_update = now;
                             let mut preview_preset = self.preset.clone();
                             preview_preset.name = self.preset_name.clone();
-                            action = Some(EqEditorAction::LiveUpdate(preview_preset));
+                            *action = Some(EqEditorAction::LiveUpdate(preview_preset));
                         }
                     }
                 });
             });
+    }
 
-            ui.add_space(20.0);
-            ui.separator();
+    /// Show Bezier curve editor
+    fn show_curve_editor(&mut self, ui: &mut Ui, action: &mut Option<EqEditorAction>) {
+        // Show Bezier editor
+        let points_changed = self.bezier_editor.show(ui, &self.preset);
 
-            // Action buttons
-            ui.horizontal(|ui| {
-                if ui.button("Reset to Flat").clicked() {
-                    for band in &mut self.preset.bands {
-                        band.gain = 0.0;
-                    }
-                    action = Some(EqEditorAction::Modified);
-                }
+        // Show fit error
+        ui.add_space(5.0);
+        let error_db = self.bezier_editor.get_fit_error();
+        let error_color = if error_db > 1.5 {
+            Color32::from_rgb(255, 150, 100) // Warning: high error
+        } else {
+            Color32::from_rgb(150, 150, 150) // Normal
+        };
 
-                // Disable Save button if name is invalid
-                let can_save = self.name_error.is_none();
+        ui.horizontal(|ui| {
+            ui.label("Fit Error:");
+            ui.label(
+                egui::RichText::new(format!("{:.2} dB RMS", error_db))
+                    .color(error_color)
+            );
 
-                ui.add_enabled_ui(can_save, |ui| {
-                    if ui.button("Save Preset").on_hover_text_at_pointer(
-                        if can_save {
-                            "Save preset to database (already applied via live preview)"
-                        } else {
-                            "Fix name errors before saving"
-                        }
-                    ).clicked() {
-                        self.preset.name = self.preset_name.clone();
-                        action = Some(EqEditorAction::Save(self.preset.clone()));
-                    }
-                });
-            });
+            if error_db > 1.5 {
+                ui.label("⚠").on_hover_text(
+                    "High fit error: 4-point Bezier curves work best for smooth, \
+                    broad EQ shapes. Complex multi-peak curves are better suited \
+                    for the Bands editor."
+                );
+            }
         });
 
-        action
+        // If control points changed, fit to bands and trigger live update
+        if points_changed {
+            let now = std::time::Instant::now();
+            let elapsed = now.duration_since(self.last_live_update);
+
+            if elapsed >= std::time::Duration::from_millis(100) {
+                self.last_live_update = now;
+
+                // Sample curve
+                let control_points_tuple = self.bezier_editor.get_control_points();
+                let samples = crate::eq_fitting::sample_bezier_curve(&control_points_tuple, 2048);
+
+                // Fit to bands
+                let fitted_bands = crate::eq_fitting::fit_to_bands(&samples);
+
+                // Update preset bands
+                self.preset.bands = fitted_bands.clone();
+
+                // Update bezier editor's fitted bands for realized response
+                self.bezier_editor.update_fit(fitted_bands);
+
+                // Trigger live update
+                let mut preview_preset = self.preset.clone();
+                preview_preset.name = self.preset_name.clone();
+                *action = Some(EqEditorAction::LiveUpdate(preview_preset));
+            }
+        }
     }
 }
 
