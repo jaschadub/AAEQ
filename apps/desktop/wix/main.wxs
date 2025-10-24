@@ -23,8 +23,6 @@
       InstallScope='perMachine'
       SummaryCodepage='1252' />
 
-    <WixVariable Id='WixUILicenseRtf' Value='License.rtf'/>
-
     <MajorUpgrade
       Schedule='afterInstallInitialize'
       DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.' />
