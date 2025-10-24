@@ -1006,7 +1006,9 @@ impl DspView {
         let meter_colors = theme.meter_colors();
         let spectrum_colors = theme.spectrum_colors();
 
-        ScrollArea::vertical().show(ui, |ui| {
+        ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
         // Update and display pipeline visualization
         self.update_pipeline_view();
         if let Some(pipeline_action) = self.pipeline_view.show(ui, theme) {
