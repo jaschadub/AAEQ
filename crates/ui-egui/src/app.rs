@@ -3318,8 +3318,40 @@ impl eframe::App for AaeqApp {
                             DspAction::AddManualDevice { name, address, protocol } => {
                                 tracing::info!("Adding manual device: {} ({}) - {}", name, address, protocol);
 
-                                // TODO: Save to database via ManagedDeviceRepository
-                                // For now, just add to the appropriate device list
+                                // Save to database
+                                let pool = self.pool.clone();
+                                let profile_id = self.active_profile_id;
+                                let device_name = name.clone();
+                                let device_address = address.clone();
+                                let device_protocol = protocol.clone();
+
+                                tokio::spawn(async move {
+                                    use chrono::Utc;
+                                    let repo = aaeq_persistence::ManagedDeviceRepository::new(pool);
+                                    let managed_device = aaeq_core::ManagedDevice {
+                                        id: None,
+                                        profile_id,
+                                        name: device_name.clone(),
+                                        protocol: device_protocol,
+                                        address: device_address,
+                                        source: "Manual".to_string(),
+                                        favorite: false,
+                                        last_seen: None,
+                                        created_at: Utc::now().timestamp(),
+                                        updated_at: Utc::now().timestamp(),
+                                    };
+
+                                    match repo.upsert(&managed_device).await {
+                                        Ok(_) => {
+                                            tracing::info!("Saved managed device to database: {}", device_name);
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("Failed to save managed device: {}", e);
+                                        }
+                                    }
+                                });
+
+                                // Add to UI device list
                                 let device_display = format!("{} ({})", name, address);
 
                                 match protocol.as_str() {
