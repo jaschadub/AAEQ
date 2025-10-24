@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
 
     // Initialize logging with optional file output
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info,aaeq=debug".into());
+        .unwrap_or_else(|_| "info".into());
 
     if enable_debug_logging {
         // Set up logging with both console and file output
