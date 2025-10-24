@@ -765,6 +765,11 @@ impl PresetsView {
                                 action = Some(PresetAction::EditCustom(preset.clone()));
                             }
 
+                            // Edit button
+                            if ui.small_button("✏").on_hover_text("Edit preset").clicked() {
+                                action = Some(PresetAction::EditCustom(preset.clone()));
+                            }
+
                             // Delete button
                             if ui.small_button("🗑").on_hover_text("Delete this preset").clicked() {
                                 action = Some(PresetAction::DeleteCustom(preset.clone()));

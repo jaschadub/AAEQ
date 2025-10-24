@@ -2364,6 +2364,11 @@ impl eframe::App for AaeqApp {
                     // Check if preset changed
                     let preset_changed = self.current_preset != preset;
 
+                    // Check if genre changed (for genre override scenario)
+                    let genre_changed = self.current_track.as_ref()
+                        .map(|t| t.genre != track.genre)
+                        .unwrap_or(false);
+
                     // Only update genre_edit if track changed (to avoid overwriting user edits)
                     if track_changed {
                         // When track changes, reset genre_edit to match new track
@@ -2371,7 +2376,7 @@ impl eframe::App for AaeqApp {
                     }
                     // If track didn't change but genre changed (e.g., override was applied),
                     // update genre_edit only if it matches the old genre (preserve user edits in textbox)
-                    else if self.current_track.as_ref().map(|t| t.genre.clone()) != Some(track.genre.clone()) {
+                    else if genre_changed {
                         // Genre changed on same track (likely from override being applied)
                         // Only update if genre_edit matches the old genre (not a pending user edit)
                         if let Some(old_track) = &self.current_track {
@@ -2384,7 +2389,12 @@ impl eframe::App for AaeqApp {
                     self.current_track = Some(track.clone());
                     self.current_preset = preset;
                     self.dsp_view.current_active_preset = self.current_preset.clone(); // Sync to DSP view
-                    self.now_playing_view.track = Some(track.clone());
+
+                    // Only update view's track if track or genre actually changed
+                    // This prevents unnecessary album art processing on every poll for the same track
+                    if track_changed || genre_changed {
+                        self.now_playing_view.track = Some(track.clone());
+                    }
                     self.now_playing_view.current_preset = self.current_preset.clone();
 
                     // Load preset curve if preset changed
