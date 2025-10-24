@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2025-10-24
+
+### Added
+
+#### Custom EQ Editor Enhancements 🎨
+- **Bezier Curve EQ Editor**: New graphical editing mode for creating smooth, flowing EQ curves
+  - Toggle between traditional Bands and new Curve editing modes
+  - Interactive 4-point cubic Bezier curve with draggable control points
+  - Logarithmic frequency axis (20Hz-20kHz) with grid and labels
+  - Real-time visualization of both target curve (orange) and realized frequency response (green)
+  - Fit error metric with warning when complex shapes exceed curve capability
+  - Bidirectional conversion between curve and band representations
+  - Full backward compatibility with existing presets
+  - Best for smooth, broad EQ adjustments (gentle bass boost, treble roll-off, etc.)
+  - Traditional Bands mode recommended for complex multi-peak/valley shapes
+
+#### UI/UX Improvements 📐
+- **Edit Button for Custom EQs**: Added explicit edit button (✏) alongside existing double-click functionality in DSP Server mode
+  - Matches the UI pattern used for profile editing
+  - Provides clearer, more discoverable editing workflow
+
+### Fixed
+
+#### Genre Override System 🐛
+- **Genre Reset Bug**: Fixed genre reverting to old value when clicking refresh icon
+  - Changed genre override lookup to use `song_key` (artist-title) instead of `track_key` which included genre
+  - Prevents cascading key issues where resetting genre created duplicate database entries
+  - Genre refresh now properly resets to device's original genre value
+
+#### Album Art Performance 🚀
+- **Reduced API Throttling Risk**: Optimized album art fetching to prevent unnecessary lookups
+  - Only updates Now Playing view's track when track or genre actually changes
+  - Prevents repeated album art processing on every 1-2 second poll cycle
+  - Significantly reduces iTunes API calls for the same playing track
+
+### Changed
+
+#### Technical Improvements 🔧
+- Clean warning-free build with all clippy checks passing
+- Improved curve fitting algorithm uses strategic frequency points (62Hz, 250Hz, 2kHz, 8kHz)
+- Helper tooltip explains curve editor limitations for complex EQ shapes
+
 ## [0.6.2] - 2025-10-22
 
 ### Fixed
@@ -460,7 +502,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/jaschadub/AAEQ/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/jaschadub/AAEQ/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/jaschadub/AAEQ/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jaschadub/AAEQ/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/jaschadub/AAEQ/compare/v0.5.0...v0.5.1

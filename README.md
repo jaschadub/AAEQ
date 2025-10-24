@@ -43,7 +43,7 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 ### DSP Streaming Mode
 - 🎚️ **Real-Time Audio Processing** - Capture system audio with professional DSP chain
 - 🎛️ **Custom EQ Presets** - Create, save, and manage unlimited custom EQ presets in database
-- 🎯 **10-Band Parametric EQ** - Precise control over frequency, gain, and Q factor per band
+- 🎯 **10-Band Parametric EQ** - Precise control with traditional sliders or graphical Bezier curve editor
 - 🔄 **High-Quality Resampling** - Professional sinc-based sample rate conversion with 4 quality presets (Fast, Balanced, High, Ultra)
 - 🎚️ **Dithering & Noise Shaping** - Industry-standard TPDF dithering with 4 noise shaping algorithms for pristine bit depth reduction
 - 🎨 **Pipeline Visualization** - Real-time DSP pipeline display showing all processing stages (Input → Headroom → EQ → Resample → Dither → Output)
