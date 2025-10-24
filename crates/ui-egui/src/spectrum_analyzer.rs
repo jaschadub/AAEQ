@@ -86,6 +86,19 @@ impl SpectrumAnalyzerState {
         }
     }
 
+    /// Reset the spectrum analyzer to silence (all bands at floor)
+    pub fn reset(&mut self) {
+        // Reset all bands to floor level
+        self.bands_db.fill(self.db_floor);
+        self.peak_db.fill(self.db_floor);
+        self.peak_band_idx = None;
+        // Clear sample accumulator
+        self.sample_accumulator.fill(0.0);
+        self.accumulator_pos = 0;
+        // Clear FFT buffer
+        self.fft_buffer.fill(Complex::new(0.0, 0.0));
+    }
+
     /// Process audio samples and update spectrum bands
     pub fn process_samples(&mut self, samples: &[f64]) {
         if !self.enabled {

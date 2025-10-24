@@ -2212,6 +2212,9 @@ impl DspView {
     pub fn clear_buffers(&mut self) {
         self.viz_sample_buffer.clear();
         self.viz_metrics_buffer.clear();
+        // Reset visualizations to flat/silent state
+        self.audio_viz.reset();
+        self.spectrum_analyzer.reset();
     }
 
     /// Auto-set delay from stream latency

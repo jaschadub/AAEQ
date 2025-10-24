@@ -53,6 +53,15 @@ impl AudioVizState {
         }
     }
 
+    /// Reset the audio visualization to a flat line (zeros)
+    pub fn reset(&mut self) {
+        // Clear audio buffer to zeros
+        self.audio_buffer.fill(0.0);
+        self.buffer_pos = 0;
+        // Reset peak to minimum value
+        self.current_peak = 0.01;
+    }
+
     /// Update the audio buffer with new samples and track peak amplitude
     pub fn push_samples(&mut self, samples: &[f64]) {
         // Track peak in incoming samples for auto-gain
