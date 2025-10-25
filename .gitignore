@@ -29,3 +29,6 @@ target/
 
 # Local TODO notes
 TODO.md
+
+# Project-specific Claude instructions
+CLAUDE.md

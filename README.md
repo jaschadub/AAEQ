@@ -26,47 +26,47 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
   </tr>
 </table>
 
-## ✨ Features
+## Features
 
 ### EQ Management Mode
-- 🎵 **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → default priority
-- 🎛️ **Manual Genre Editing** - Add genres to tracks that don't have metadata
-- 🔌 **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
-- 📡 **DLNA Support** - Discover and control DLNA/UPnP media renderers
-- 🎯 **Now Playing Detection** - Cross-platform support for all major streaming services
+- **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → default priority
+- **Manual Genre Editing** - Add genres to tracks that don't have metadata
+- **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
+- **DLNA Support** - Discover and control DLNA/UPnP media renderers
+- **Now Playing Detection** - Cross-platform support for all major streaming services
   - **Linux**: MPRIS (Spotify, Strawberry, VLC, browsers, etc.)
   - **Windows**: SMTC (Spotify, Tidal, iTunes, browsers, etc.)
   - **macOS**: All apps with `nowplayingctl` (Spotify, Tidal, YouTube Music, etc.)
-- 🎨 **Album Art Display** - Shows album artwork for the currently playing track with default fallback icon
-- 📊 **EQ Curve Visualization** - View exact EQ curves for both built-in and custom presets
+- **Album Art Display** - Shows album artwork for the currently playing track with default fallback icon
+- **EQ Curve Visualization** - View exact EQ curves for both built-in and custom presets
 
 ### DSP Streaming Mode
-- 🎚️ **Real-Time Audio Processing** - Capture system audio with professional DSP chain
-- 🎛️ **Custom EQ Presets** - Create, save, and manage unlimited custom EQ presets in database
-- 🎯 **10-Band Parametric EQ** - Precise control with traditional sliders or graphical Bezier curve editor
-- 🔄 **High-Quality Resampling** - Professional sinc-based sample rate conversion with 4 quality presets (Fast, Balanced, High, Ultra)
-- 🎚️ **Dithering & Noise Shaping** - Industry-standard TPDF dithering with 4 noise shaping algorithms for pristine bit depth reduction
-- 🎨 **Pipeline Visualization** - Real-time DSP pipeline display showing all processing stages (Input → Headroom → EQ → Resample → Dither → Output)
-- 📤 **Multi-Format Streaming** - Stream to DLNA devices (with album art), local DAC, or AirPlay (experimental)
-- 🎵 **Format Conversion** - Supports S16LE, S24LE, F32 with configurable sample rates (44.1kHz - 192kHz)
-- 📊 **Real-Time Visualization** - Live waveform or spectrum analyzer with FFT-based frequency analysis
-- 📈 **Audio Meters** - Professional VU-style meters with peak hold showing pre/post-EQ levels in dBFS
-- 🎙️ **Now Playing Integration** - Cross-platform detection of currently playing media (all streaming services supported)
-- 🔄 **Device Persistence** - Remembers last used input/output devices and DSP settings between sessions
-- 👤 **Profile-Based DSP Settings** - Each profile can have its own DSP configuration (headroom, EQ, resampling, dithering)
-- 🪟 **Auto-Resize Window** - Window automatically adjusts to fit visualization and meters when enabled
+- **Real-Time Audio Processing** - Capture system audio with professional DSP chain
+- **Custom EQ Presets** - Create, save, and manage unlimited custom EQ presets in database
+- **10-Band Parametric EQ** - Precise control with traditional sliders or graphical Bezier curve editor
+- **High-Quality Resampling** - Professional sinc-based sample rate conversion with 4 quality presets (Fast, Balanced, High, Ultra)
+- **Dithering & Noise Shaping** - Industry-standard TPDF dithering with 4 noise shaping algorithms for pristine bit depth reduction
+- **Pipeline Visualization** - Real-time DSP pipeline display showing all processing stages (Input → Headroom → EQ → Resample → Dither → Output)
+- **Multi-Format Streaming** - Stream to DLNA devices (with album art), local DAC, or AirPlay (experimental)
+- **Format Conversion** - Supports S16LE, S24LE, F32 with configurable sample rates (44.1kHz - 192kHz)
+- **Real-Time Visualization** - Live waveform or spectrum analyzer with FFT-based frequency analysis
+- **Audio Meters** - Professional VU-style meters with peak hold showing pre/post-EQ levels in dBFS
+- **Now Playing Integration** - Cross-platform detection of currently playing media (all streaming services supported)
+- **Device Persistence** - Remembers last used input/output devices and DSP settings between sessions
+- **Profile-Based DSP Settings** - Each profile can have its own DSP configuration (headroom, EQ, resampling, dithering)
+- **Auto-Resize Window** - Window automatically adjusts to fit visualization and meters when enabled
 
 ### General
-- 👤 **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Living Room")
-- 🔄 **Profile Switching** - Instantly switch between profiles to apply different EQ settings for the same songs
-- 🎨 **Theme System** - 5 color themes: Dark, Light, WinAmp, Vintage, and Studio
-- ⚙️ **Settings Tab** - Theme selection, database backup/restore, and about information
-- 💾 **Local-First** - All data stored locally in SQLite, no cloud required
-- 🚀 **Fast & Lightweight** - Built in Rust with minimal resource usage
-- 🖥️ **Cross-Platform** - Runs on Linux, macOS, and Windows
-- 🔌 **Smart Connection Management** - Toggle between Connect/Disconnect states with auto-reconnect
+- **Multiple Profiles** - Create separate EQ mapping profiles (e.g., "Headphones", "Speakers", "Living Room")
+- **Profile Switching** - Instantly switch between profiles to apply different EQ settings for the same songs
+- **Theme System** - 5 color themes: Dark, Light, WinAmp, Vintage, and Studio
+- **Settings Tab** - Theme selection, database backup/restore, and about information
+- **Local-First** - All data stored locally in SQLite, no cloud required
+- **Fast & Lightweight** - Built in Rust with minimal resource usage
+- **Cross-Platform** - Runs on Linux, macOS, and Windows
+- **Smart Connection Management** - Toggle between Connect/Disconnect states with auto-reconnect
 
-## 🎵 Streaming Service Support
+## Streaming Service Support
 
 AAEQ supports **all major streaming services** across all platforms:
 
@@ -88,7 +88,7 @@ Without this tool, only Music.app and Spotify are supported via AppleScript fall
 
 📖 See [Streaming Service Support Guide](docs/STREAMING_SERVICE_SUPPORT.md) for detailed compatibility information.
 
-## 📥 Installation
+## Installation
 
 ### Download Pre-built Binaries
 
@@ -148,7 +148,7 @@ cargo build --release
 ./target/release/aaeq
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Using EQ Management Mode (WiiM API)
 
@@ -201,44 +201,9 @@ cargo build --release
    - EQ mappings work in DSP mode too!
    - The app detects what's playing locally and applies the mapped preset
 
-## 📖 How It Works
+For technical details on how AAEQ works, see [How It Works](docs/how-it-works.md).
 
-### EQ Management Mode
-
-AAEQ polls your WiiM device every second to check what's currently playing. When a track changes, it:
-
-1. Checks for a **song-specific** mapping (`Artist - Title`)
-2. Falls back to **album mapping** (`Artist - Album`)
-3. Falls back to **genre mapping** (if genre is set)
-4. Falls back to **default preset** (usually "Flat")
-
-The resolved preset is only applied if it's different from the currently active one, preventing unnecessary device commands.
-
-### DSP Streaming Mode
-
-In DSP mode, AAEQ processes audio through a professional-grade signal chain:
-
-1. **INPUT** - Captures audio from your selected input device (microphone, line-in, or system audio loopback)
-2. **HEADROOM** - Applies configurable headroom reduction (e.g., -3 dB) with clip detection
-3. **EQ** - Applies 10-band parametric EQ with custom or built-in presets
-4. **RESAMPLE** (optional) - High-quality sinc-based sample rate conversion
-   - Four quality presets: Fast, Balanced, High, Ultra
-   - Supports common sample rates: 44.1kHz, 48kHz, 88.2kHz, 96kHz, 192kHz
-5. **DITHER** (optional) - Professional dithering and noise shaping for bit depth reduction
-   - Four dither modes: None, Rectangular, TPDF (Triangular), Gaussian
-   - Four noise shaping algorithms: None, First Order, Second Order, Gesemann
-   - Configurable target bit depth (8-24 bits)
-6. **OUTPUT** - Streams to network device via DLNA/UPnP protocol, or outputs to local DAC
-
-Additional features:
-- **Visual Pipeline Display** - Real-time status of all processing stages with clickable controls
-- **Profile-Based Settings** - Each profile can have unique DSP settings (different headroom, resampling, dithering per profile)
-- **Cross-Platform Now Playing** - Detects currently playing media on Linux (MPRIS), Windows (SMTC), and macOS (system-wide with `nowplayingctl`)
-- **Automatic EQ Mapping** - Applies EQ presets based on detected track (same mapping logic as WiiM API mode)
-
-The DSP mode works independently of WiiM devices - you can stream any audio source to any DLNA-compatible device with professional-quality processing.
-
-## 🎛️ Manual Genre Support
+## Manual Genre Support
 
 Since many streaming services don't provide genre metadata via the WiiM API, AAEQ includes a manual genre editor:
 
@@ -247,7 +212,7 @@ Since many streaming services don't provide genre metadata via the WiiM API, AAE
 3. Press Enter to save - the genre persists across app restarts
 4. Use the ↻ button to reset to device-provided genre (if available)
 
-## 👤 Multiple Profiles
+## Multiple Profiles
 
 AAEQ supports multiple EQ profiles, allowing you to maintain different EQ mappings for different listening scenarios:
 
@@ -287,73 +252,11 @@ When you switch profiles:
 3. The new preset is applied automatically
 4. Your active profile persists across app restarts
 
-## 📁 Project Structure
+For development instructions and project structure, see [Development Guide](docs/development.md).
 
-```
-AAEQ/
-├── apps/
-│   └── desktop/          # Main desktop application
-├── crates/
-│   ├── core/             # Core logic and models
-│   ├── device-wiim/      # WiiM device integration
-│   ├── media-session/    # Cross-platform Now Playing detection
-│   ├── persistence/      # SQLite database layer
-│   ├── stream-server/    # DSP engine and streaming
-│   └── ui-egui/          # egui-based UI with DSP controls
-├── docs/                 # Implementation documentation
-├── migrations/           # Database migrations
-└── setup-audio-loopback.sh  # Audio capture setup script
-```
+For configuration details, see [Configuration](docs/configuration.md).
 
-## 🛠️ Development
-
-### Prerequisites
-
-- Rust 1.75+ (stable)
-- SQLite development libraries
-- **Linux only**: GTK3, libxdo, and libappindicator3 (see Build from Source section)
-
-### Running in Development
-
-```bash
-cargo run
-```
-
-### Running Tests
-
-```bash
-cargo test
-```
-
-### Code Style
-
-```bash
-cargo fmt
-cargo clippy
-```
-
-## 🔧 Configuration
-
-AAEQ stores its configuration and database in:
-
-- **Linux**: `~/.local/share/aaeq/`
-- **macOS**: `~/Library/Application Support/aaeq/`
-- **Windows**: `%APPDATA%\aaeq\`
-
-### Database Schema
-
-- `device` - Connected devices
-- `device_preset` - Cached presets from devices
-- `profile` - User-created EQ profiles (e.g., "Headphones", "Speakers")
-- `mapping` - Song/album/genre → preset mappings (scoped per profile)
-- `genre_override` - Manual genre assignments
-- `last_applied` - Tracking state for debouncing
-- `app_settings` - Application settings (last connected device, last input/output devices, active profile, theme)
-- `custom_eq_preset` - User-created custom EQ presets
-- `custom_eq_band` - EQ band definitions for custom presets
-- `dsp_profile_settings` - DSP configuration per profile (sample rate, buffer size, headroom, dithering, resampling)
-
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please:
 
@@ -363,7 +266,7 @@ Contributions are welcome! Please:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 🐛 Known Limitations
+## Known Limitations
 
 ### WiiM API Mode
 - **WiiM API Constraints**:
@@ -425,41 +328,35 @@ Contributions are welcome! Please:
   - The "Notification Area" (systray) plugin only supports legacy XEMBED icons, not libappindicator
   - Works out-of-box on GNOME, KDE, and other desktop environments with native indicator support
 
-## 📝 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Additional Documentation
 
-- Built with [egui](https://github.com/emilk/egui) for the UI
-- Audio processing powered by [cpal](https://github.com/RustAudio/cpal) and custom DSP algorithms
-- High-quality resampling using [rubato](https://github.com/HEnquist/rubato) - professional sinc interpolation
-- DLNA/UPnP discovery and control implementation
-- Cross-platform media detection:
-  - Linux: MPRIS via D-Bus
-  - Windows: System Media Transport Controls (SMTC)
-  - macOS: [nowplayingctl](https://github.com/davidwernhart/nowplayingctl) for universal support
-- WiiM/LinkPlay API documentation
-- Rust community for excellent crates and tools
-
-## 📚 Additional Documentation
-
+- [How It Works](docs/how-it-works.md) - Technical details on EQ management and DSP processing
+- [Development Guide](docs/development.md) - Build instructions and project structure
+- [Configuration](docs/configuration.md) - Data directory and database schema
 - [AUDIO_CAPTURE_SETUP.md](AUDIO_CAPTURE_SETUP.md) - Detailed audio capture setup guide for Linux
-- [docs/STREAMING_SERVICE_SUPPORT.md](docs/STREAMING_SERVICE_SUPPORT.md) - **Streaming service compatibility guide (Tidal, YouTube Music, etc.)**
-- [docs/CROSS_PLATFORM_MEDIA_DETECTION.md](docs/CROSS_PLATFORM_MEDIA_DETECTION.md) - Technical details on cross-platform Now Playing detection
-- [docs/STREAM_SERVER_IMPLEMENTATION.md](docs/STREAM_SERVER_IMPLEMENTATION.md) - DSP engine architecture
-- [docs/M2_DLNA_IMPLEMENTATION.md](docs/M2_DLNA_IMPLEMENTATION.md) - DLNA/UPnP implementation details
-- [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) - Testing and debugging guide
+- [Streaming Service Support](docs/STREAMING_SERVICE_SUPPORT.md) - Streaming service compatibility guide (Tidal, YouTube Music, etc.)
+- [Cross-Platform Media Detection](docs/CROSS_PLATFORM_MEDIA_DETECTION.md) - Technical details on cross-platform Now Playing detection
+- [Stream Server Implementation](docs/STREAM_SERVER_IMPLEMENTATION.md) - DSP engine architecture
+- [DLNA Implementation](docs/M2_DLNA_IMPLEMENTATION.md) - DLNA/UPnP implementation details
+- [Testing Guide](docs/TESTING_GUIDE.md) - Testing and debugging guide
 
-## 📞 Support
+## Support
 
 - **Issues**: [GitHub Issues](https://github.com/jaschadub/AAEQ/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/jaschadub/AAEQ/discussions)
 
 ---
 
-## ⚖️ Disclaimer
+## Disclaimer
 
 AAEQ is an independent, open-source project and is not affiliated with, endorsed by, sponsored by, or officially connected with WiiM, LinkPlay, Spotify, Tidal, Apple, DLNA, UPnP, AirPlay, or any other companies, products, or services mentioned in this documentation. All product names, logos, brands, trademarks, and registered trademarks are property of their respective owners. Use of these names, logos, and brands does not imply endorsement.
 
 This software is provided "as is" without warranty of any kind. Users are responsible for ensuring their use of this software complies with all applicable terms of service and licensing agreements.
+
+---
+
+
