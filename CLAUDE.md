@@ -1,2 +1,0 @@
-- If I send you "todo:" followed by a text note like "todo: add new submit button" add that note to a file called TODO.md in root of project if not already there.
-- Never try to add or commit TODO.md to git
