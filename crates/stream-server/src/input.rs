@@ -122,11 +122,17 @@ impl LocalDacInput {
                 let lower_name = name.to_lowercase();
 
                 // Mark monitor/loopback devices that capture system audio
+                // Include common macOS virtual audio devices
                 if lower_name.contains("monitor")
                     || lower_name.contains("loopback")
                     || lower_name.contains("stereo mix")
                     || lower_name.contains("wave out mix")
                     || lower_name.contains("what u hear")
+                    || lower_name.contains("blackhole")
+                    || lower_name.contains("soundflower")
+                    || lower_name.contains("virtual audio")
+                    || lower_name.contains("multi-output")
+                    || lower_name.contains("aggregate")
                 {
                     devices.push(format!("🔊 {} (system audio)", name));
                 } else {

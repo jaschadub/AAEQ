@@ -267,6 +267,23 @@ jobs:
           cp target/universal/release/aaeq "AAEQ.app/Contents/MacOS/"
           chmod +x "AAEQ.app/Contents/MacOS/aaeq"
 
+          # Convert PNG icon to ICNS format for macOS
+          # Create iconset directory
+          mkdir -p aaeq.iconset
+          # Generate different sizes (macOS needs specific sizes)
+          sips -z 16 16     aaeq-icon.png --out aaeq.iconset/icon_16x16.png
+          sips -z 32 32     aaeq-icon.png --out aaeq.iconset/icon_16x16@2x.png
+          sips -z 32 32     aaeq-icon.png --out aaeq.iconset/icon_32x32.png
+          sips -z 64 64     aaeq-icon.png --out aaeq.iconset/icon_32x32@2x.png
+          sips -z 128 128   aaeq-icon.png --out aaeq.iconset/icon_128x128.png
+          sips -z 256 256   aaeq-icon.png --out aaeq.iconset/icon_128x128@2x.png
+          sips -z 256 256   aaeq-icon.png --out aaeq.iconset/icon_256x256.png
+          sips -z 512 512   aaeq-icon.png --out aaeq.iconset/icon_256x256@2x.png
+          sips -z 512 512   aaeq-icon.png --out aaeq.iconset/icon_512x512.png
+          cp aaeq-icon.png aaeq.iconset/icon_512x512@2x.png
+          # Convert to ICNS
+          iconutil -c icns aaeq.iconset -o "AAEQ.app/Contents/Resources/aaeq.icns"
+
           # Create Info.plist
           cat > "AAEQ.app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -279,6 +296,8 @@ jobs:
               <string>com.jaschadub.aaeq</string>
               <key>CFBundleName</key>
               <string>AAEQ</string>
+              <key>CFBundleIconFile</key>
+              <string>aaeq</string>
               <key>CFBundleVersion</key>
               <string>0.1.0</string>
               <key>CFBundleShortVersionString</key>
