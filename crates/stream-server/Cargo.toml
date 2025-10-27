@@ -35,6 +35,8 @@ serde_json = { workspace = true }
 reqwest = { version = "0.12", features = ["blocking"] }
 quick-xml = "0.36"
 socket2 = "0.5"
+uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
+hostname = "0.4"
 
 # AirPlay / mDNS
 mdns-sd = { workspace = true }

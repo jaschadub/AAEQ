@@ -30,15 +30,14 @@ cargo clippy
 ```
 AAEQ/
 ├── apps/
-│   └── desktop/          # Main desktop application
+│   └── desktop/          # Main desktop application binary
 ├── crates/
-│   ├── core/             # Core logic and models
-│   ├── device-wiim/      # WiiM device integration
-│   ├── media-session/    # Cross-platform Now Playing detection
-│   ├── persistence/      # SQLite database layer
-│   ├── stream-server/    # DSP engine and streaming
-│   └── ui-egui/          # egui-based UI with DSP controls
-├── docs/                 # Implementation documentation
-├── migrations/           # Database migrations
-└── setup-audio-loopback.sh  # Audio capture setup script
+│   ├── core/             # Core domain logic and models
+│   ├── device-wiim/      # WiiM/LinkPlay device integration
+│   ├── media-session/    # Cross-platform Now Playing detection (MPRIS, SMTC, macOS)
+│   ├── persistence/      # SQLite database layer with migrations
+│   ├── stream-server/    # DSP engine, audio streaming, DLNA/AirPlay/DAC sinks
+│   └── ui-egui/          # egui-based UI with DSP controls and visualization
+├── docs/                 # User and developer documentation
+└── setup-audio-loopback.sh  # Linux audio capture setup helper script
 ```

@@ -4,7 +4,6 @@
 ///
 /// This will discover AirPlay devices and stream a test tone to the specified device.
 /// If no device name is provided, it will list available devices.
-
 use anyhow::Result;
 use stream_server::*;
 use std::env;

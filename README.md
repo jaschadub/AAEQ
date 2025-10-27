@@ -340,9 +340,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [AUDIO_CAPTURE_SETUP.md](AUDIO_CAPTURE_SETUP.md) - Detailed audio capture setup guide for Linux
 - [Streaming Service Support](docs/STREAMING_SERVICE_SUPPORT.md) - Streaming service compatibility guide (Tidal, YouTube Music, etc.)
 - [Cross-Platform Media Detection](docs/CROSS_PLATFORM_MEDIA_DETECTION.md) - Technical details on cross-platform Now Playing detection
-- [Stream Server Implementation](docs/STREAM_SERVER_IMPLEMENTATION.md) - DSP engine architecture
-- [DLNA Implementation](docs/M2_DLNA_IMPLEMENTATION.md) - DLNA/UPnP implementation details
-- [Testing Guide](docs/TESTING_GUIDE.md) - Testing and debugging guide
+- [Testing Guide](docs/TESTING_GUIDE.md) - Testing and debugging guide for stream server and DSP features
 
 ## Support
 

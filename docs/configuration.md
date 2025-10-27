@@ -10,13 +10,14 @@ AAEQ stores its configuration and database in:
 
 ## Database Schema
 
-- `device` - Connected devices
-- `device_preset` - Cached presets from devices
-- `profile` - User-created EQ profiles (e.g., "Headphones", "Speakers")
+- `device` - Connected WiiM/LinkPlay devices
+- `device_preset` - Cached EQ presets from connected devices
+- `profile` - User-created profiles for different listening scenarios (e.g., "Headphones", "Speakers")
 - `mapping` - Song/album/genre → preset mappings (scoped per profile)
-- `genre_override` - Manual genre assignments
-- `last_applied` - Tracking state for debouncing
-- `app_settings` - Application settings (last connected device, last input/output devices, active profile, theme)
-- `custom_eq_preset` - User-created custom EQ presets
-- `custom_eq_band` - EQ band definitions for custom presets
-- `dsp_profile_settings` - DSP configuration per profile (sample rate, buffer size, headroom, dithering, resampling)
+- `genre_override` - Manual genre assignments for tracks without metadata
+- `last_applied` - Tracking state for debouncing EQ changes
+- `app_settings` - Application settings (connected device, input/output devices, active profile, theme, hotkey, debug logging)
+- `custom_eq_preset` - User-created custom EQ presets (for DSP mode)
+- `custom_eq_band` - EQ band definitions (frequency, gain, Q) for custom presets
+- `dsp_profile_settings` - DSP configuration per profile (sample rate, buffer size, headroom, dithering, resampling, sink settings)
+- `managed_devices` - Discovered and configured DLNA/AirPlay devices for streaming

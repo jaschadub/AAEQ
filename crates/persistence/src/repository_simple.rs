@@ -577,6 +577,70 @@ impl AppSettingsRepository {
 
         Ok(())
     }
+
+    // Global hotkey settings
+    pub async fn get_hotkey_enabled(&self) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT hotkey_enabled FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let value: Option<i32> = r.get(0);
+            value.map(|v| v != 0)
+        }).unwrap_or(true)) // Default to enabled
+    }
+
+    pub async fn set_hotkey_enabled(&self, enabled: bool) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let value = if enabled { 1 } else { 0 };
+
+        sqlx::query(
+            "UPDATE app_settings SET hotkey_enabled = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    pub async fn get_hotkey_modifiers(&self) -> Result<String> {
+        let row = sqlx::query(
+            "SELECT hotkey_modifiers FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)).unwrap_or_else(|| "Ctrl+Shift".to_string()))
+    }
+
+    pub async fn get_hotkey_key(&self) -> Result<String> {
+        let row = sqlx::query(
+            "SELECT hotkey_key FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| r.get(0)).unwrap_or_else(|| "A".to_string()))
+    }
+
+    pub async fn set_hotkey(&self, modifiers: &str, key: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "UPDATE app_settings SET hotkey_modifiers = ?, hotkey_key = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(modifiers)
+        .bind(key)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
 }
 
 /// Repository for tracking last applied state

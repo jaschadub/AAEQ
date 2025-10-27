@@ -168,6 +168,8 @@ enum AppCommand {
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
     SaveEnableDebugLogging(bool), // Save debug logging preference to database
+    SaveHotkeyEnabled(bool), // Save hotkey enabled preference to database
+    SaveHotkey(String, String), // Save hotkey configuration (modifiers, key) to database
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
     SaveDspSinkSettings(aaeq_core::DspSinkSettings), // Save DSP settings for a specific sink type
     // DSP Commands
@@ -263,6 +265,9 @@ pub struct AaeqApp {
     current_mode: AppMode,
     current_theme: crate::theme::Theme,
     enable_debug_logging: bool,
+    hotkey_enabled: bool,
+    hotkey_modifiers: String,
+    hotkey_key: String,
     show_eq_editor: bool,
     show_delete_confirmation: bool, // Show delete preset confirmation dialog
     preset_to_delete: Option<String>, // Preset name pending deletion
@@ -335,6 +340,9 @@ impl AaeqApp {
             current_mode: AppMode::EqManagement,
             current_theme: crate::theme::Theme::default(), // Will be loaded in initialize()
             enable_debug_logging: false, // Will be loaded in initialize()
+            hotkey_enabled: true, // Will be loaded in initialize()
+            hotkey_modifiers: "Ctrl+Shift".to_string(), // Will be loaded in initialize()
+            hotkey_key: "A".to_string(), // Will be loaded in initialize()
             show_eq_editor: false,
             show_delete_confirmation: false,
             preset_to_delete: None,
@@ -530,6 +538,20 @@ impl AaeqApp {
         if let Ok(enabled) = settings_repo.get_enable_debug_logging().await {
             self.enable_debug_logging = enabled;
             tracing::info!("Debug logging enabled: {}", enabled);
+        }
+
+        // Load hotkey settings
+        if let Ok(enabled) = settings_repo.get_hotkey_enabled().await {
+            self.hotkey_enabled = enabled;
+            tracing::info!("Hotkey enabled: {}", enabled);
+        }
+        if let Ok(modifiers) = settings_repo.get_hotkey_modifiers().await {
+            self.hotkey_modifiers = modifiers.clone();
+            tracing::info!("Hotkey modifiers: {}", modifiers);
+        }
+        if let Ok(key) = settings_repo.get_hotkey_key().await {
+            self.hotkey_key = key.clone();
+            tracing::info!("Hotkey key: {}", key);
         }
 
         // Trigger device discovery on startup for Local DAC (fast, populates device lists)
@@ -969,6 +991,24 @@ impl AaeqApp {
                         tracing::error!("Failed to save debug logging setting: {}", e);
                     } else {
                         tracing::info!("Debug logging setting saved: {}", enabled);
+                    }
+                }
+
+                AppCommand::SaveHotkeyEnabled(enabled) => {
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_hotkey_enabled(enabled).await {
+                        tracing::error!("Failed to save hotkey enabled setting: {}", e);
+                    } else {
+                        tracing::info!("Hotkey enabled setting saved: {}", enabled);
+                    }
+                }
+
+                AppCommand::SaveHotkey(modifiers, key) => {
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_hotkey(&modifiers, &key).await {
+                        tracing::error!("Failed to save hotkey: {}", e);
+                    } else {
+                        tracing::info!("Hotkey saved: {} + {}", modifiers, key);
                     }
                 }
 
@@ -3610,33 +3650,48 @@ impl eframe::App for AaeqApp {
                 // Settings Mode: Show application settings
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.add_space(10.0);
                     ui.heading("Settings");
+                    ui.add_space(5.0);
+                    ui.label(egui::RichText::new("Configure application preferences and options")
+                        .color(ui.visuals().weak_text_color())
+                        .size(12.0));
                     ui.add_space(20.0);
 
                     // Theme selection
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Theme").strong().size(16.0));
-                        ui.add_space(10.0);
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Appearance").heading().size(15.0));
+                        ui.add_space(15.0);
 
-                        egui::ComboBox::new("theme_selector", "")
-                            .selected_text(self.current_theme.display_name())
-                            .show_ui(ui, |ui| {
-                                for theme in crate::theme::Theme::all() {
-                                    if ui.selectable_value(&mut self.current_theme, *theme, theme.display_name()).clicked() {
-                                        tracing::info!("Theme changed to: {:?}", theme);
-                                        // Save theme to database
-                                        let _ = self.command_tx.send(AppCommand::SaveTheme(theme.as_str().to_string()));
+                        ui.horizontal(|ui| {
+                            ui.label("Theme:");
+                            ui.add_space(10.0);
+                            egui::ComboBox::new("theme_selector", "")
+                                .selected_text(self.current_theme.display_name())
+                                .width(150.0)
+                                .show_ui(ui, |ui| {
+                                    for theme in crate::theme::Theme::all() {
+                                        if ui.selectable_value(&mut self.current_theme, *theme, theme.display_name()).clicked() {
+                                            tracing::info!("Theme changed to: {:?}", theme);
+                                            // Save theme to database
+                                            let _ = self.command_tx.send(AppCommand::SaveTheme(theme.as_str().to_string()));
+                                        }
                                     }
-                                }
-                            });
+                                });
+                        });
+                        ui.add_space(5.0);
                     });
 
-                    ui.add_space(20.0);
+                    ui.add_space(15.0);
 
                     // Debug logging option
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Debug Logging").strong().size(16.0));
-                        ui.add_space(10.0);
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Diagnostics").heading().size(15.0));
+                        ui.add_space(15.0);
 
                         let prev_debug_logging = self.enable_debug_logging;
                         ui.checkbox(&mut self.enable_debug_logging, "Enable debug logging to file")
@@ -3648,7 +3703,7 @@ impl eframe::App for AaeqApp {
                             let _ = self.command_tx.send(AppCommand::SaveEnableDebugLogging(self.enable_debug_logging));
                         }
 
-                        ui.add_space(5.0);
+                        ui.add_space(10.0);
 
                         // Show log file location
                         if self.enable_debug_logging {
@@ -3656,33 +3711,157 @@ impl eframe::App for AaeqApp {
                                 .map(|p| p.display().to_string())
                                 .unwrap_or_else(|| "unknown".to_string());
 
-                            ui.label(
-                                egui::RichText::new(format!("📁 Log file: {}/debug.log", log_dir))
-                                    .color(egui::Color32::GRAY)
-                                    .size(10.0)
-                            );
-                            ui.label(
-                                egui::RichText::new("⚠️ Changes take effect after restarting the application")
-                                    .color(egui::Color32::from_rgb(255, 140, 0))
-                                    .italics()
-                                    .size(10.0)
-                            );
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("📁").size(12.0));
+                                ui.label(
+                                    egui::RichText::new(format!("Log file: {}/debug.log", log_dir))
+                                        .color(ui.visuals().weak_text_color())
+                                        .size(11.0)
+                                );
+                            });
+                            ui.add_space(5.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("⚠").size(12.0).color(egui::Color32::from_rgb(255, 140, 0)));
+                                ui.label(
+                                    egui::RichText::new("Changes take effect after restarting the application")
+                                        .color(egui::Color32::from_rgb(255, 140, 0))
+                                        .italics()
+                                        .size(11.0)
+                                );
+                            });
                         }
+                        ui.add_space(5.0);
                     });
 
+                    ui.add_space(15.0);
+
+                    // Global Hotkey settings
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Keyboard Shortcuts").heading().size(15.0));
+                        ui.add_space(15.0);
+
+                        let prev_hotkey_enabled = self.hotkey_enabled;
+                        ui.checkbox(&mut self.hotkey_enabled, "Enable global hotkey to show/restore window")
+                            .on_hover_text("Press the configured hotkey from anywhere to restore the AAEQ window");
+
+                        if self.hotkey_enabled != prev_hotkey_enabled {
+                            tracing::info!("Global hotkey enabled changed to: {}", self.hotkey_enabled);
+                            let _ = self.command_tx.send(AppCommand::SaveHotkeyEnabled(self.hotkey_enabled));
+                        }
+
+                        if self.hotkey_enabled {
+                            ui.add_space(15.0);
+                            ui.separator();
+                            ui.add_space(15.0);
+
+                            ui.label(egui::RichText::new("Hotkey Configuration").strong());
+                            ui.add_space(10.0);
+
+                            ui.horizontal(|ui| {
+                                ui.label("Modifiers:");
+                                ui.add_space(5.0);
+
+                                let prev_modifiers = self.hotkey_modifiers.clone();
+                                egui::ComboBox::new("hotkey_modifiers", "")
+                                    .selected_text(&self.hotkey_modifiers)
+                                    .width(120.0)
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut self.hotkey_modifiers, "Ctrl".to_string(), "Ctrl");
+                                        ui.selectable_value(&mut self.hotkey_modifiers, "Alt".to_string(), "Alt");
+                                        ui.selectable_value(&mut self.hotkey_modifiers, "Ctrl+Shift".to_string(), "Ctrl+Shift");
+                                        ui.selectable_value(&mut self.hotkey_modifiers, "Ctrl+Alt".to_string(), "Ctrl+Alt");
+                                        ui.selectable_value(&mut self.hotkey_modifiers, "Alt+Shift".to_string(), "Alt+Shift");
+                                    });
+
+                                ui.add_space(5.0);
+                                ui.label(egui::RichText::new("+").strong().size(14.0));
+                                ui.add_space(5.0);
+
+                                ui.label("Key:");
+                                ui.add_space(5.0);
+
+                                let prev_key = self.hotkey_key.clone();
+                                egui::ComboBox::new("hotkey_key", "")
+                                    .selected_text(&self.hotkey_key)
+                                    .width(100.0)
+                                    .show_ui(ui, |ui| {
+                                        // Letters
+                                        for letter in 'A'..='Z' {
+                                            let key = letter.to_string();
+                                            ui.selectable_value(&mut self.hotkey_key, key.clone(), &key);
+                                        }
+                                        // Common keys
+                                        ui.separator();
+                                        ui.selectable_value(&mut self.hotkey_key, "Space".to_string(), "Space");
+                                        // Function keys
+                                        ui.separator();
+                                        for i in 1..=12 {
+                                            let key = format!("F{}", i);
+                                            ui.selectable_value(&mut self.hotkey_key, key.clone(), &key);
+                                        }
+                                    });
+
+                                if self.hotkey_modifiers != prev_modifiers || self.hotkey_key != prev_key {
+                                    tracing::info!("Hotkey changed to: {}+{}", self.hotkey_modifiers, self.hotkey_key);
+                                    let _ = self.command_tx.send(AppCommand::SaveHotkey(
+                                        self.hotkey_modifiers.clone(),
+                                        self.hotkey_key.clone(),
+                                    ));
+                                }
+                            });
+
+                            ui.add_space(10.0);
+
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("⌨").size(12.0));
+                                ui.label(
+                                    egui::RichText::new(format!("Current hotkey: {} + {}", self.hotkey_modifiers, self.hotkey_key))
+                                        .color(ui.visuals().weak_text_color())
+                                        .size(11.0)
+                                );
+                            });
+                            ui.add_space(5.0);
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new("⚠").size(12.0).color(egui::Color32::from_rgb(255, 140, 0)));
+                                ui.label(
+                                    egui::RichText::new("Changes take effect after restarting the application")
+                                        .color(egui::Color32::from_rgb(255, 140, 0))
+                                        .italics()
+                                        .size(11.0)
+                                );
+                            });
+                        }
+                        ui.add_space(5.0);
+                    });
+
+                    ui.add_space(15.0);
 
                     // Database management
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("Database Management").strong().size(16.0));
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Data Management").heading().size(15.0));
                         ui.add_space(10.0);
+                        ui.label(egui::RichText::new("Backup and restore your EQ presets, mappings, and settings")
+                            .color(ui.visuals().weak_text_color())
+                            .size(11.0));
+                        ui.add_space(15.0);
 
                         ui.horizontal(|ui| {
-                            if ui.button("📦 Backup Database").clicked() {
+                            let backup_button = egui::Button::new(egui::RichText::new("📦 Backup Database").size(13.0))
+                                .min_size(egui::vec2(150.0, 32.0));
+                            if ui.add(backup_button).on_hover_text("Create a timestamped backup file").clicked() {
                                 let db_path = self.db_path.display().to_string();
                                 let _ = self.command_tx.send(AppCommand::BackupDatabase(db_path));
                             }
 
-                            if ui.button("📥 Restore Database").clicked() {
+                            ui.add_space(10.0);
+
+                            let restore_button = egui::Button::new(egui::RichText::new("📥 Restore Database").size(13.0))
+                                .min_size(egui::vec2(150.0, 32.0));
+                            if ui.add(restore_button).on_hover_text("Restore from a backup file").clicked() {
                                 // Open file picker for .zip files
                                 if let Some(path) = rfd::FileDialog::new()
                                     .add_filter("AAEQ Backup", &["zip"])
@@ -3695,46 +3874,65 @@ impl eframe::App for AaeqApp {
                             }
                         });
 
+                        ui.add_space(10.0);
+                        ui.label(egui::RichText::new("ℹ Backup creates a timestamped .zip file")
+                            .color(ui.visuals().weak_text_color())
+                            .size(11.0));
+                        ui.label(egui::RichText::new("ℹ Restore automatically backs up current database before restoring")
+                            .color(ui.visuals().weak_text_color())
+                            .size(11.0));
                         ui.add_space(5.0);
-                        ui.label("Backup creates a timestamped .zip file.");
-                        ui.label("Restore automatically backs up current database before restoring.");
                     });
 
-                    ui.add_space(20.0);
+                    ui.add_space(15.0);
 
                     // About section
                     ui.group(|ui| {
-                        ui.label(egui::RichText::new("About").strong().size(16.0));
-                        ui.add_space(10.0);
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("About").heading().size(15.0));
+                        ui.add_space(15.0);
 
+                        // Version
                         ui.horizontal(|ui| {
-                            ui.label("Version:");
-                            ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).strong());
+                            ui.label(egui::RichText::new("Version:").strong().size(12.0));
+                            ui.add_space(10.0);
+                            ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).size(12.0));
                         });
 
-                        ui.add_space(5.0);
+                        ui.add_space(8.0);
 
+                        // Author
                         ui.horizontal(|ui| {
-                            ui.label("Author:");
+                            ui.label(egui::RichText::new("Author:").strong().size(12.0));
+                            ui.add_space(10.0);
                             ui.hyperlink_to("Jascha Wanger", "https://jascha.me");
-                            ui.label("/");
+                            ui.label(egui::RichText::new("/").weak());
                             ui.hyperlink_to("Tarnover, LLC", "https://tarnover.com");
                         });
 
-                        ui.add_space(5.0);
+                        ui.add_space(8.0);
 
+                        // License
                         ui.horizontal(|ui| {
-                            ui.label("License:");
+                            ui.label(egui::RichText::new("License:").strong().size(12.0));
+                            ui.add_space(10.0);
                             ui.label("MIT");
                         });
 
-                        ui.add_space(5.0);
+                        ui.add_space(8.0);
 
+                        // Project
                         ui.horizontal(|ui| {
-                            ui.label("Project:");
+                            ui.label(egui::RichText::new("Project:").strong().size(12.0));
+                            ui.add_space(10.0);
                             ui.hyperlink_to("https://github.com/jaschadub/AAEQ", "https://github.com/jaschadub/AAEQ");
                         });
+
+                        ui.add_space(5.0);
                     });
+
+                    ui.add_space(20.0);
                     }); // End of ScrollArea
                 });
             }

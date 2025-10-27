@@ -9,7 +9,6 @@
 /// curl http://localhost:8080/v1/health
 /// curl http://localhost:8080/v1/outputs
 /// curl http://localhost:8080/v1/capabilities
-
 use anyhow::Result;
 use std::sync::Arc;
 use stream_server::*;

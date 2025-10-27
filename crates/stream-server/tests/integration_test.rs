@@ -90,7 +90,7 @@ async fn test_soft_limiter() {
 
     // All samples should be within [-1.0, 1.0]
     for &sample in &output {
-        assert!(sample >= -1.0 && sample <= 1.0);
+        assert!((-1.0..=1.0).contains(&sample));
     }
 
     // Quiet samples should be mostly unchanged

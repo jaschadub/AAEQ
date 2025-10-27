@@ -4,7 +4,6 @@
 ///
 /// This will discover DLNA devices, connect to the specified device,
 /// and automatically start streaming using AVTransport control.
-
 use anyhow::Result;
 use std::env;
 use std::f64::consts::PI;

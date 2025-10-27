@@ -1,7 +1,14 @@
 use crate::convert::convert_format;
 use crate::sink::OutputSink;
 use crate::sinks::dlna::{
-    avtransport::AVTransport, didl::{generate_didl_lite, MediaMetadata}, discovery::DlnaDevice,
+    avtransport::AVTransport,
+    device_description::{
+        generate_av_transport_scpd, generate_connection_manager_scpd, generate_content_directory_scpd,
+        generate_device_description, generate_device_uuid,
+    },
+    didl::{generate_didl_lite, MediaMetadata},
+    discovery::DlnaDevice,
+    ssdp_server::SsdpServer,
 };
 use crate::types::{AudioBlock, OutputConfig, SampleFormat};
 use anyhow::{anyhow, Result};
@@ -53,12 +60,16 @@ pub struct DlnaSink {
     shutdown_tx: Option<mpsc::Sender<()>>,
     buffer: Arc<Mutex<Vec<u8>>>,
     avtransport: Option<AVTransport>,
+    ssdp_server: Option<SsdpServer>,
+    device_uuid: String,
     is_open: bool,
 }
 
 impl DlnaSink {
     /// Create a new DLNA sink in pull mode
     pub fn new(device_name: String, bind_addr: SocketAddr) -> Self {
+        let device_uuid = generate_device_uuid().unwrap_or_else(|_| format!("uuid:{}", uuid::Uuid::new_v4()));
+
         Self {
             device_name,
             device: None,
@@ -68,6 +79,8 @@ impl DlnaSink {
             shutdown_tx: None,
             buffer: Arc::new(Mutex::new(Vec::new())),
             avtransport: None,
+            ssdp_server: None,
+            device_uuid,
             is_open: false,
         }
     }
@@ -75,6 +88,7 @@ impl DlnaSink {
     /// Create a new DLNA sink with a discovered device (supports both modes)
     pub fn with_device(device: DlnaDevice, bind_addr: SocketAddr, mode: DlnaMode) -> Self {
         let device_name = device.name.clone();
+        let device_uuid = generate_device_uuid().unwrap_or_else(|_| format!("uuid:{}", uuid::Uuid::new_v4()));
 
         Self {
             device_name,
@@ -85,6 +99,8 @@ impl DlnaSink {
             shutdown_tx: None,
             buffer: Arc::new(Mutex::new(Vec::new())),
             avtransport: None,
+            ssdp_server: None,
+            device_uuid,
             is_open: false,
         }
     }
@@ -119,18 +135,27 @@ impl DlnaSink {
         addr: SocketAddr,
         buffer: Arc<Mutex<Vec<u8>>>,
         config: OutputConfig,
+        device_uuid: String,
+        device_name: String,
     ) -> Result<mpsc::Sender<()>> {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
         let app_state = AppState {
             buffer: buffer.clone(),
             config: config.clone(),
+            device_uuid: device_uuid.clone(),
+            device_name: device_name.clone(),
+            port: addr.port(),
         };
 
         let app = Router::new()
             .route("/stream.wav", get(stream_handler))
             .route("/status", get(status_handler))
             .route("/album_art.png", get(album_art_handler))
+            .route("/device.xml", get(device_description_handler))
+            .route("/upnp/ContentDirectory.xml", get(content_directory_handler))
+            .route("/upnp/ConnectionManager.xml", get(connection_manager_handler))
+            .route("/upnp/AVTransport.xml", get(av_transport_handler))
             .with_state(app_state);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -159,6 +184,9 @@ impl DlnaSink {
 struct AppState {
     buffer: Arc<Mutex<Vec<u8>>>,
     config: OutputConfig,
+    device_uuid: String,
+    device_name: String,
+    port: u16,
 }
 
 async fn stream_handler(State(state): State<AppState>) -> Response {
@@ -251,6 +279,54 @@ async fn album_art_handler() -> Response {
     }
 }
 
+async fn device_description_handler(State(state): State<AppState>) -> Response {
+    match generate_device_description(&state.device_uuid, &state.device_name, state.port) {
+        Ok(xml) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/xml; charset=utf-8")
+            .header(header::CACHE_CONTROL, "public, max-age=1800")
+            .body(Body::from(xml))
+            .unwrap(),
+        Err(e) => {
+            error!("Failed to generate device description: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap()
+        }
+    }
+}
+
+async fn content_directory_handler() -> Response {
+    let xml = generate_content_directory_scpd();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header(header::CACHE_CONTROL, "public, max-age=1800")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+async fn connection_manager_handler() -> Response {
+    let xml = generate_connection_manager_scpd();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header(header::CACHE_CONTROL, "public, max-age=1800")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
+async fn av_transport_handler() -> Response {
+    let xml = generate_av_transport_scpd();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/xml; charset=utf-8")
+        .header(header::CACHE_CONTROL, "public, max-age=1800")
+        .body(Body::from(xml))
+        .unwrap()
+}
+
 fn create_wav_header_for_config(cfg: &OutputConfig) -> Vec<u8> {
     let sample_rate = cfg.sample_rate;
     let channels = cfg.channels;
@@ -300,8 +376,14 @@ impl OutputSink for DlnaSink {
         }
 
         // Start HTTP server (required for both modes)
-        let shutdown_tx =
-            Self::start_server(self.server_addr, self.buffer.clone(), cfg.clone()).await?;
+        let shutdown_tx = Self::start_server(
+            self.server_addr,
+            self.buffer.clone(),
+            cfg.clone(),
+            self.device_uuid.clone(),
+            self.device_name.clone(),
+        )
+        .await?;
 
         self.config = Some(cfg.clone());
         self.shutdown_tx = Some(shutdown_tx);
@@ -309,6 +391,19 @@ impl OutputSink for DlnaSink {
 
         let stream_url = self.stream_url().unwrap();
         info!("DLNA stream available at: {}", stream_url);
+
+        // Start SSDP server for automatic device discovery
+        let mut ssdp_server = SsdpServer::new(
+            self.device_uuid.clone(),
+            self.device_name.clone(),
+            self.server_addr.port(),
+        );
+        if let Err(e) = ssdp_server.start().await {
+            warn!("Failed to start SSDP server: {}", e);
+        } else {
+            info!("SSDP server started - AAEQ is now discoverable on the network");
+            self.ssdp_server = Some(ssdp_server);
+        }
 
         // If in push mode, set up AVTransport control
         if self.mode == DlnaMode::Push {
@@ -422,6 +517,14 @@ impl OutputSink for DlnaSink {
 
     async fn close(&mut self) -> Result<()> {
         debug!("Closing DLNA sink");
+
+        // Stop SSDP server
+        if let Some(mut ssdp_server) = self.ssdp_server.take() {
+            info!("Stopping SSDP server");
+            if let Err(e) = ssdp_server.stop().await {
+                warn!("Failed to stop SSDP server: {}", e);
+            }
+        }
 
         // Stop playback if in push mode
         if let Some(avtransport) = &self.avtransport {

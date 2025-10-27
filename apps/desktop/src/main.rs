@@ -1,9 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod single_instance;
+
 use aaeq_ui_egui::AaeqApp;
 use anyhow::Result;
 use clap::Parser;
-use single_instance::SingleInstance;
+use global_hotkey::{
+    hotkey::{Code, HotKey, Modifiers},
+    GlobalHotKeyEvent, GlobalHotKeyManager,
+};
+use single_instance::SingleInstanceGuard;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tray_icon::{
@@ -51,6 +57,11 @@ async fn main() -> Result<()> {
     let settings_repo = aaeq_persistence::AppSettingsRepository::new(pool.clone());
     let enable_debug_logging = settings_repo.get_enable_debug_logging().await.unwrap_or(false);
 
+    // Load hotkey settings from database
+    let hotkey_enabled = settings_repo.get_hotkey_enabled().await.unwrap_or(true);
+    let hotkey_modifiers = settings_repo.get_hotkey_modifiers().await.unwrap_or_else(|_| "Ctrl+Shift".to_string());
+    let hotkey_key = settings_repo.get_hotkey_key().await.unwrap_or_else(|_| "A".to_string());
+
     // Initialize logging with optional file output
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "info".into());
@@ -90,17 +101,23 @@ async fn main() -> Result<()> {
     tracing::info!("Database path: {}", db_path.display());
 
     // Ensure only one instance is running
-    let _instance = SingleInstance::new("aaeq-app-instance")?;
-    if !_instance.is_single() {
-        eprintln!("Another instance of AAEQ is already running.");
-        tracing::error!("Another instance of AAEQ is already running");
-        std::process::exit(1);
-    }
-    tracing::info!("Single instance check passed");
+    // The guard will automatically clean up the lock file when dropped (on normal exit)
+    // or be cleaned up on next start if the process crashed
+    let _instance_guard = match SingleInstanceGuard::acquire("aaeq-app-instance") {
+        Ok(guard) => {
+            tracing::info!("Single instance check passed");
+            guard
+        }
+        Err(e) => {
+            eprintln!("Another instance of AAEQ is already running.");
+            tracing::error!("Another instance of AAEQ is already running: {}", e);
+            std::process::exit(1);
+        }
+    };
 
-    // Keep the instance lock in a static location so it persists for the app lifetime
+    // Keep the instance lock alive for the entire application lifetime
     // We leak it intentionally to keep the lock held until process exit
-    let _instance_guard = Box::leak(Box::new(_instance));
+    let _instance_guard = Box::leak(Box::new(_instance_guard));
 
     // Create app
     let mut app = AaeqApp::new(pool, db_path.clone());
@@ -174,6 +191,39 @@ async fn main() -> Result<()> {
     let window_visible = Arc::new(Mutex::new(true));
     let window_visible_clone = window_visible.clone();
 
+    // Set up global hotkey to show window (if enabled)
+    let hotkey_manager = GlobalHotKeyManager::new().expect("Failed to create hotkey manager");
+    let mut show_hotkey_id: Option<u32> = None;
+
+    if hotkey_enabled {
+        // Parse modifiers and key from settings
+        let modifiers = parse_modifiers(&hotkey_modifiers);
+        let key_code = parse_key_code(&hotkey_key);
+
+        if let (Some(mods), Some(code)) = (modifiers, key_code) {
+            let show_hotkey = HotKey::new(Some(mods), code);
+            tracing::info!("Registering global hotkey: {} + {}...", hotkey_modifiers, hotkey_key);
+
+            if let Err(e) = hotkey_manager.register(show_hotkey) {
+                tracing::warn!("Failed to register global hotkey: {}", e);
+                tracing::warn!("You can still show the window using the system tray icon");
+            } else {
+                show_hotkey_id = Some(show_hotkey.id());
+                tracing::info!("Global hotkey registered successfully: {} + {}", hotkey_modifiers, hotkey_key);
+            }
+        } else {
+            tracing::warn!("Invalid hotkey configuration: {} + {}", hotkey_modifiers, hotkey_key);
+            tracing::warn!("Global hotkey disabled. You can still show the window using the system tray icon");
+        }
+    } else {
+        tracing::info!("Global hotkey disabled in settings");
+    }
+
+    // Keep the hotkey manager alive for the lifetime of the application
+    let _hotkey_manager = Box::leak(Box::new(hotkey_manager));
+
+    let hotkey_receiver = GlobalHotKeyEvent::receiver();
+
     // Handle tray icon events
     let tray_channel = MenuEvent::receiver();
 
@@ -201,8 +251,12 @@ async fn main() -> Result<()> {
         "AAEQ",
         native_options,
         Box::new(move |cc| {
-            // Handle tray events in the app
+            // Handle tray events and hotkey events in the app
             let ctx = cc.egui_ctx.clone();
+            let ctx_hotkey = ctx.clone();
+            let window_visible_hotkey = window_visible_clone.clone();
+
+            // Spawn thread for tray icon events
             std::thread::spawn(move || {
                 loop {
                     if let Ok(event) = tray_channel.try_recv() {
@@ -262,6 +316,40 @@ async fn main() -> Result<()> {
                 }
             });
 
+            // Spawn thread for global hotkey events
+            std::thread::spawn(move || {
+                loop {
+                    if let Ok(event) = hotkey_receiver.try_recv() {
+                        if let Some(expected_id) = show_hotkey_id {
+                            if event.id == expected_id {
+                                tracing::info!("Global hotkey pressed - showing window");
+                                *window_visible_hotkey.lock().unwrap() = true;
+
+                            // On Windows, we need to be more aggressive to restore the window
+                            #[cfg(target_os = "windows")]
+                            {
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+                                std::thread::sleep(std::time::Duration::from_millis(10));
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::Focus);
+                                ctx_hotkey.request_repaint();
+                            }
+
+                            // On other platforms, simpler approach works
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                                ctx_hotkey.send_viewport_cmd(egui::ViewportCommand::Focus);
+                            }
+                            }
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            });
+
             Ok(Box::new(app))
         }),
     )
@@ -309,6 +397,65 @@ fn load_window_icon() -> egui::IconData {
         rgba: rgba_data,
         width,
         height,
+    }
+}
+
+/// Parse modifiers string into global-hotkey Modifiers
+fn parse_modifiers(modifiers_str: &str) -> Option<Modifiers> {
+    match modifiers_str {
+        "Ctrl" => Some(Modifiers::CONTROL),
+        "Alt" => Some(Modifiers::ALT),
+        "Shift" => Some(Modifiers::SHIFT),
+        "Ctrl+Shift" => Some(Modifiers::CONTROL | Modifiers::SHIFT),
+        "Ctrl+Alt" => Some(Modifiers::CONTROL | Modifiers::ALT),
+        "Alt+Shift" => Some(Modifiers::ALT | Modifiers::SHIFT),
+        _ => None,
+    }
+}
+
+/// Parse key string into global-hotkey Code
+fn parse_key_code(key_str: &str) -> Option<Code> {
+    match key_str {
+        "A" => Some(Code::KeyA),
+        "B" => Some(Code::KeyB),
+        "C" => Some(Code::KeyC),
+        "D" => Some(Code::KeyD),
+        "E" => Some(Code::KeyE),
+        "F" => Some(Code::KeyF),
+        "G" => Some(Code::KeyG),
+        "H" => Some(Code::KeyH),
+        "I" => Some(Code::KeyI),
+        "J" => Some(Code::KeyJ),
+        "K" => Some(Code::KeyK),
+        "L" => Some(Code::KeyL),
+        "M" => Some(Code::KeyM),
+        "N" => Some(Code::KeyN),
+        "O" => Some(Code::KeyO),
+        "P" => Some(Code::KeyP),
+        "Q" => Some(Code::KeyQ),
+        "R" => Some(Code::KeyR),
+        "S" => Some(Code::KeyS),
+        "T" => Some(Code::KeyT),
+        "U" => Some(Code::KeyU),
+        "V" => Some(Code::KeyV),
+        "W" => Some(Code::KeyW),
+        "X" => Some(Code::KeyX),
+        "Y" => Some(Code::KeyY),
+        "Z" => Some(Code::KeyZ),
+        "Space" => Some(Code::Space),
+        "F1" => Some(Code::F1),
+        "F2" => Some(Code::F2),
+        "F3" => Some(Code::F3),
+        "F4" => Some(Code::F4),
+        "F5" => Some(Code::F5),
+        "F6" => Some(Code::F6),
+        "F7" => Some(Code::F7),
+        "F8" => Some(Code::F8),
+        "F9" => Some(Code::F9),
+        "F10" => Some(Code::F10),
+        "F11" => Some(Code::F11),
+        "F12" => Some(Code::F12),
+        _ => None,
     }
 }
 

@@ -3,7 +3,6 @@
 /// Usage: cargo run --example test_local_dac
 ///
 /// This will play a 1kHz sine wave through your default audio device
-
 use anyhow::Result;
 use stream_server::*;
 use std::f64::consts::PI;

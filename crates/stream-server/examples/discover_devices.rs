@@ -3,7 +3,6 @@
 /// Usage: cargo run --example discover_devices
 ///
 /// This will discover local DACs and AirPlay devices on your network
-
 use anyhow::Result;
 use stream_server::*;
 

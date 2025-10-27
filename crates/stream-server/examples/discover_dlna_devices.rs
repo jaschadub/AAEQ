@@ -3,7 +3,6 @@
 /// Usage: cargo run -p stream-server --example discover_dlna_devices
 ///
 /// This will discover DLNA MediaRenderer devices on your network
-
 use anyhow::Result;
 use stream_server::sinks::dlna::discover_devices;
 

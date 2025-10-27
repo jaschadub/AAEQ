@@ -4,7 +4,6 @@
 ///
 /// This will start a DLNA server and stream a test tone.
 /// Access the stream at: http://localhost:8090/stream.wav
-
 use anyhow::Result;
 use stream_server::*;
 use std::f64::consts::PI;

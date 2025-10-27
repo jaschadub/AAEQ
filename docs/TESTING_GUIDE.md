@@ -395,7 +395,7 @@ sudo tcpdump -i wlan0 port 6000  # AirPlay RTP
 cargo test -p stream-server
 ```
 
-**Expected**: 56 tests pass (48 unit + 8 integration)
+**Expected**: All tests pass
 
 ### Run Integration Tests
 
@@ -403,7 +403,7 @@ cargo test -p stream-server
 cargo test -p stream-server --test integration_test
 ```
 
-**Expected**: 8 tests pass
+**Expected**: All integration tests pass
 
 ### Run All Tests
 
@@ -597,13 +597,8 @@ Use this checklist to verify everything works:
 - [ ] Audio plays on AirPlay receiver
 
 **General:**
-- [ ] All 56 tests pass (`cargo test -p stream-server`)
+- [ ] All tests pass (`cargo test -p stream-server`)
 - [ ] No memory leaks during long playback
 - [ ] CPU usage is reasonable (< 10%)
 - [ ] Audio quality is acceptable
 - [ ] Latency is within expected ranges for each sink type
-
----
-
-**Last Updated**: 2025-10-12
-**Version**: 1.1 (M2 DLNA features added)
