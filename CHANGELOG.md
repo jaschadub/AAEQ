@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2025-10-30
+
+### Added
+
+#### DLNA Device Discovery 🔍
+- **SSDP Server**: New DLNA device discovery server for improved network device detection
+  - UPnP/SSDP protocol implementation for device advertisement
+  - Device description XML generation for DLNA compatibility
+  - Enhanced DLNA sink with better device discovery capabilities
+  - Supports standard DLNA MediaRenderer device detection
+
+#### Single Instance & Global Hotkeys ⌨️
+- **Single Instance Support**: Prevents multiple app instances from running simultaneously
+  - Automatic focus on existing instance when launching second time
+  - Platform-specific implementation for proper window management
+  - Clean shutdown handling and instance detection
+- **Global Hotkey System**: Control AAEQ with keyboard shortcuts even when minimized
+  - Database persistence for custom hotkey configurations
+  - New migration: `016_global_hotkey_settings.sql`
+  - Extensible framework for future hotkey bindings
+
+### Fixed
+
+#### macOS Platform Fixes 🍎
+- **DMG App Icon**: Fixed missing application icon in macOS DMG installer
+  - Proper icon bundling in GitHub Actions build workflow
+  - Enhanced macOS build process with correct asset paths
+- **Virtual Audio Device Detection**: Improved detection of virtual audio devices on macOS
+  - Better compatibility with BlackHole, Loopback, and other virtual audio tools
+  - Fixed input device enumeration to include all available virtual devices
+
+#### Build & Release 🔧
+- **Default Log Level**: Changed default log level from debug to info for releases
+  - Reduces log noise in production builds
+  - Debug logging still available via environment variable or settings
+  - Cleaner console output for end users
+
+### Changed
+
+#### Documentation Improvements 📚
+- **Reorganized Documentation**: Moved detailed content from README to dedicated doc files
+  - New `docs/configuration.md`: Comprehensive configuration guide
+  - New `docs/development.md`: Development setup and contribution guidelines
+  - New `docs/how-it-works.md`: Architecture and design documentation
+  - README now focused on quick start and essential information
+- **Removed Stale Documentation**: Cleaned up outdated and redundant documentation
+  - Removed obsolete `BUILD_SUMMARY.md`, `DEVELOPMENT.md`, `DOCKER.md`
+  - Removed outdated implementation docs (M2, M4, SINK_ADAPTERS, STREAM_SERVER, v2_ROADMAP)
+  - Updated `TESTING_GUIDE.md` with current best practices
+  - Streamlined `CROSS_PLATFORM_MEDIA_DETECTION.md`
+
+#### Technical Improvements
+- Enhanced DLNA sink architecture with device discovery capabilities
+- Improved application lifecycle management with single instance control
+- Better macOS build integration in CI/CD pipeline
+- Cleaner codebase with removal of stale documentation artifacts
+
 ## [0.6.3] - 2025-10-24
 
 ### Added
@@ -502,7 +559,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/jaschadub/AAEQ/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/jaschadub/AAEQ/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/jaschadub/AAEQ/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/jaschadub/AAEQ/compare/v0.6.0...v0.6.1
