@@ -374,7 +374,11 @@ fn send_msearch_response(
 fn extract_search_target(request: &str) -> String {
     for line in request.lines() {
         if line.to_uppercase().starts_with("ST:") {
-            return line.split(':').nth(1).unwrap_or("").trim().to_string();
+            // Split only on the first colon to separate header from value
+            return line
+                .split_once(':')
+                .map(|(_, value)| value.trim().to_string())
+                .unwrap_or_default();
         }
     }
     String::new()

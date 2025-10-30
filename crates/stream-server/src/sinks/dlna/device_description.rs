@@ -353,15 +353,15 @@ mod tests {
     #[test]
     fn test_generate_service_descriptions() {
         let content_dir = generate_content_directory_scpd();
-        assert!(content_dir.contains("ContentDirectory"));
         assert!(content_dir.contains("Browse"));
+        assert!(content_dir.contains("A_ARG_TYPE_ObjectID"));
 
         let conn_mgr = generate_connection_manager_scpd();
-        assert!(conn_mgr.contains("ConnectionManager"));
         assert!(conn_mgr.contains("GetProtocolInfo"));
+        assert!(conn_mgr.contains("SourceProtocolInfo"));
 
         let av_transport = generate_av_transport_scpd();
-        assert!(av_transport.contains("AVTransport"));
         assert!(av_transport.contains("Play"));
+        assert!(av_transport.contains("Stop"));
     }
 }
