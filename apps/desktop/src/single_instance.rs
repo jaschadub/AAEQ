@@ -105,7 +105,7 @@ fn is_process_running(pid: u32) -> bool {
 
 #[cfg(target_os = "windows")]
 fn is_process_running(pid: u32) -> bool {
-    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 
     unsafe {
@@ -113,7 +113,7 @@ fn is_process_running(pid: u32) -> bool {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
 
         if let Ok(handle) = handle {
-            if handle.0 != 0 {
+            if !handle.is_invalid() {
                 let _ = CloseHandle(handle);
                 true
             } else {
