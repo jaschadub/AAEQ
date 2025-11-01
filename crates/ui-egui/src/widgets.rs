@@ -1,4 +1,113 @@
-use egui::{Response, Ui, Widget, Vec2, Rect, Pos2, Color32, Stroke, Sense};
+use egui::{Response, Ui, Widget, Vec2, Rect, Pos2, Color32, Stroke, Sense, TextureHandle};
+
+/// Toggle button widget for DSP effects enable/disable
+pub struct ToggleButton<'a> {
+    value: &'a mut bool,
+    text: String,
+    icon: Option<&'a TextureHandle>,
+}
+
+impl<'a> ToggleButton<'a> {
+    pub fn new(value: &'a mut bool, text: impl Into<String>) -> Self {
+        Self {
+            value,
+            text: text.into(),
+            icon: None,
+        }
+    }
+
+    pub fn with_icon(mut self, icon: &'a TextureHandle) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
+
+impl<'a> Widget for ToggleButton<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let desired_size = if self.icon.is_some() {
+            Vec2::new(80.0, 80.0) // Larger for icon + text
+        } else {
+            Vec2::new(80.0, 40.0) // Text only
+        };
+
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
+
+        if response.clicked() {
+            *self.value = !*self.value;
+            response.mark_changed();
+        }
+
+        if ui.is_rect_visible(rect) {
+            let visuals = ui.style().interact(&response);
+
+            // Determine colors based on state
+            let (bg_color, border_color) = if *self.value {
+                // Enabled - green tint
+                (Color32::from_rgb(30, 70, 30), Color32::from_rgb(60, 180, 60))
+            } else {
+                // Disabled - gray
+                (ui.visuals().extreme_bg_color, visuals.bg_stroke.color)
+            };
+
+            // Draw background
+            ui.painter().rect_filled(
+                rect.shrink(2.0),
+                4.0,
+                bg_color,
+            );
+
+            // Draw border
+            ui.painter().rect_stroke(
+                rect.shrink(2.0),
+                4.0,
+                Stroke::new(2.0, border_color),
+            );
+
+            // Draw icon if provided
+            if let Some(icon) = self.icon {
+                let icon_size = Vec2::new(32.0, 32.0);
+                let icon_rect = Rect::from_center_size(
+                    Pos2::new(rect.center().x, rect.top() + 20.0),
+                    icon_size,
+                );
+
+                let tint = if *self.value {
+                    Color32::WHITE
+                } else {
+                    Color32::from_gray(128)
+                };
+
+                ui.painter().image(
+                    icon.id(),
+                    icon_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    tint,
+                );
+
+                // Draw text below icon
+                let text_pos = Pos2::new(rect.center().x, rect.bottom() - 15.0);
+                ui.painter().text(
+                    text_pos,
+                    egui::Align2::CENTER_CENTER,
+                    &self.text,
+                    egui::FontId::proportional(10.0),
+                    if *self.value { Color32::WHITE } else { Color32::GRAY },
+                );
+            } else {
+                // Draw text centered
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    &self.text,
+                    egui::FontId::proportional(12.0),
+                    if *self.value { Color32::WHITE } else { Color32::GRAY },
+                );
+            }
+        }
+
+        response
+    }
+}
 
 /// Vertical slider widget for EQ band control
 pub struct VerticalSlider<'a> {

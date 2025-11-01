@@ -565,6 +565,67 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Created managed_devices table with indexes");
     }
 
+    // Migration 017: Add DSP Enhancers columns to dsp_profile_settings
+    let tube_warmth_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('dsp_profile_settings') WHERE name='tube_warmth_enabled'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !tube_warmth_column_exists {
+        tracing::info!("Adding DSP enhancer columns to dsp_profile_settings table");
+
+        // Tone/Character Enhancers
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN tube_warmth_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN tape_saturation_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN transformer_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN exciter_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN transient_enhancer_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        // Dynamic Processors
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN compressor_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN limiter_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN expander_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        // Spatial/Psychoacoustic Effects
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN stereo_width_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN crossfeed_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        sqlx::query("ALTER TABLE dsp_profile_settings ADD COLUMN room_ambience_enabled INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+
+        tracing::info!("Added 11 DSP enhancer columns to dsp_profile_settings table");
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

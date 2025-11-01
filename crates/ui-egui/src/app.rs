@@ -10,6 +10,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use stream_server::{OutputConfig, SampleFormat, LocalDacSink, DlnaSink, OutputManager, AudioBlock, SinkStats, EqProcessor};
 use stream_server::dsp::{Dither, DitherMode, NoiseShaping, Resampler, ResamplerQuality};
+use stream_server::dsp::{
+    TubeWarmth, TapeSaturation, Transformer, Exciter, TransientEnhancer,
+    Compressor, Limiter, Expander,
+    StereoWidth, Crossfeed, RoomAmbience,
+    HeadroomControl,
+};
 
 /// Application mode tabs
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -46,6 +52,35 @@ struct DspRuntimeConfig {
     resample_enabled: bool,
     resample_quality: ResamplerQuality,
     target_sample_rate: u32,
+    // DSP Enhancers
+    headroom_db: f32,
+    tube_warmth_enabled: bool,
+    tape_saturation_enabled: bool,
+    transformer_enabled: bool,
+    exciter_enabled: bool,
+    transient_enhancer_enabled: bool,
+    compressor_enabled: bool,
+    limiter_enabled: bool,
+    expander_enabled: bool,
+    stereo_width_enabled: bool,
+    crossfeed_enabled: bool,
+    room_ambience_enabled: bool,
+}
+
+/// DSP enhancer states for live updates during streaming
+#[derive(Clone, Debug)]
+struct DspEnhancerStates {
+    tube_warmth_enabled: bool,
+    tape_saturation_enabled: bool,
+    transformer_enabled: bool,
+    exciter_enabled: bool,
+    transient_enhancer_enabled: bool,
+    compressor_enabled: bool,
+    limiter_enabled: bool,
+    expander_enabled: bool,
+    stereo_width_enabled: bool,
+    crossfeed_enabled: bool,
+    room_ambience_enabled: bool,
 }
 
 /// Error categories for user-friendly error handling
@@ -179,6 +214,7 @@ enum AppCommand {
     DspChangePreset(String), // Change EQ preset during active streaming (loads from library/database)
     DspApplyPresetData(aaeq_core::EqPreset), // Apply preset data directly (for live preview)
     DspUpdateResamplerConfig(bool, ResamplerQuality, u32), // Update resampler during streaming (enabled, quality, target_rate)
+    DspUpdateEnhancers(DspEnhancerStates), // Update DSP enhancer enable/disable states during streaming
 }
 
 /// Responses from async worker to UI
@@ -224,6 +260,22 @@ enum AppResponse {
     DspSettingsSaved, // DSP settings saved successfully
 }
 
+/// DSP effect icons
+#[derive(Default)]
+pub struct DspIcons {
+    pub tube: Option<egui::TextureHandle>,
+    pub tape: Option<egui::TextureHandle>,
+    pub transformer: Option<egui::TextureHandle>,
+    pub exciter: Option<egui::TextureHandle>,
+    pub transient: Option<egui::TextureHandle>,
+    pub compressor: Option<egui::TextureHandle>,
+    pub limiter: Option<egui::TextureHandle>,
+    pub expander: Option<egui::TextureHandle>,
+    pub stereo: Option<egui::TextureHandle>,
+    pub crossfeed: Option<egui::TextureHandle>,
+    pub room: Option<egui::TextureHandle>,
+}
+
 /// Main application state
 pub struct AaeqApp {
     /// Database connection pool
@@ -235,6 +287,9 @@ pub struct AaeqApp {
     #[allow(dead_code)]
     device_id: Option<i64>,
     device_host: String,
+
+    /// DSP effect icons
+    dsp_icons: DspIcons,
 
     /// UI Views
     now_playing_view: NowPlayingView,
@@ -323,6 +378,7 @@ impl AaeqApp {
             device: None,
             device_id: None,
             device_host: "192.168.1.100".to_string(), // Default, user can change
+            dsp_icons: DspIcons::default(),
             now_playing_view: NowPlayingView::default(),
             presets_view: PresetsView::default(),
             eq_editor_view: None,
@@ -436,6 +492,28 @@ impl AaeqApp {
                     "Ultra" => ResamplerQuality::Ultra,
                     _ => ResamplerQuality::Balanced, // Default to Balanced if unknown
                 };
+
+                // Load DSP enhancers settings
+                self.dsp_view.tube_warmth_enabled = settings.tube_warmth_enabled;
+                self.dsp_view.tape_saturation_enabled = settings.tape_saturation_enabled;
+                self.dsp_view.transformer_enabled = settings.transformer_enabled;
+                self.dsp_view.exciter_enabled = settings.exciter_enabled;
+                self.dsp_view.transient_enhancer_enabled = settings.transient_enhancer_enabled;
+                self.dsp_view.compressor_enabled = settings.compressor_enabled;
+                self.dsp_view.limiter_enabled = settings.limiter_enabled;
+                self.dsp_view.expander_enabled = settings.expander_enabled;
+                self.dsp_view.stereo_width_enabled = settings.stereo_width_enabled;
+                self.dsp_view.crossfeed_enabled = settings.crossfeed_enabled;
+                self.dsp_view.room_ambience_enabled = settings.room_ambience_enabled;
+
+                tracing::info!("Loaded DSP enhancers - tone:{}, dynamics:{}, spatial:{}",
+                    self.dsp_view.tube_warmth_enabled || self.dsp_view.tape_saturation_enabled ||
+                    self.dsp_view.transformer_enabled || self.dsp_view.exciter_enabled ||
+                    self.dsp_view.transient_enhancer_enabled,
+                    self.dsp_view.compressor_enabled || self.dsp_view.limiter_enabled || self.dsp_view.expander_enabled,
+                    self.dsp_view.stereo_width_enabled || self.dsp_view.crossfeed_enabled ||
+                    self.dsp_view.room_ambience_enabled
+                );
             }
             Ok(None) => {
                 tracing::info!("No DSP settings found for active profile, using defaults");
@@ -728,6 +806,7 @@ impl AaeqApp {
         let mut stream_preset_change_tx: Option<mpsc::Sender<String>> = None;
         let mut stream_preset_data_tx: Option<mpsc::Sender<aaeq_core::EqPreset>> = None;
         let mut stream_resampler_config_tx: Option<mpsc::Sender<(bool, ResamplerQuality, u32)>> = None;
+        let mut stream_dsp_enhancer_tx: Option<mpsc::Sender<DspEnhancerStates>> = None;
         let mut dsp_is_streaming = false;
 
         // DLNA device cache
@@ -1688,6 +1767,10 @@ impl AaeqApp {
                             let (resampler_config_tx, mut resampler_config_rx) = mpsc::channel::<(bool, ResamplerQuality, u32)>(8);
                             stream_resampler_config_tx = Some(resampler_config_tx);
 
+                            // Create DSP enhancer update channel for live updates
+                            let (dsp_enhancer_tx, mut dsp_enhancer_rx) = mpsc::channel::<DspEnhancerStates>(8);
+                            stream_dsp_enhancer_tx = Some(dsp_enhancer_tx);
+
                             // Setup audio capture if not using test tone
                             let audio_capture_for_task: Option<(mpsc::Receiver<Vec<f64>>, mpsc::Sender<()>)> =
                                 if !use_test_tone {
@@ -1815,6 +1898,47 @@ impl AaeqApp {
                                 tracing::info!("Resampler initialized: enabled={}, quality={:?}, {} Hz -> {} Hz",
                                     dsp_config.resample_enabled, dsp_config.resample_quality, sample_rate, dsp_config.target_sample_rate);
 
+                                // Initialize DSP Enhancers
+                                let mut headroom = HeadroomControl::new();
+                                headroom.set_headroom_db(dsp_config.headroom_db);
+                                // HeadroomControl is always active when set
+
+                                // Tone enhancers (mutually exclusive)
+                                let mut tube_warmth = TubeWarmth::new();
+                                tube_warmth.set_enabled(dsp_config.tube_warmth_enabled);
+                                let mut tape_saturation = TapeSaturation::new();
+                                tape_saturation.set_enabled(dsp_config.tape_saturation_enabled);
+                                let mut transformer = Transformer::new();
+                                transformer.set_enabled(dsp_config.transformer_enabled);
+                                let mut transient_enhancer = TransientEnhancer::new();
+                                transient_enhancer.set_enabled(dsp_config.transient_enhancer_enabled);
+
+                                // Dynamic processors (mutually exclusive)
+                                let mut compressor = Compressor::new();
+                                compressor.set_enabled(dsp_config.compressor_enabled);
+                                let mut limiter = Limiter::new();
+                                limiter.set_enabled(dsp_config.limiter_enabled);
+                                let mut expander = Expander::new();
+                                expander.set_enabled(dsp_config.expander_enabled);
+
+                                // Spatial effects (can stack)
+                                let mut stereo_width = StereoWidth::new();
+                                stereo_width.set_enabled(dsp_config.stereo_width_enabled);
+                                let mut crossfeed = Crossfeed::new();
+                                crossfeed.set_enabled(dsp_config.crossfeed_enabled);
+                                let mut room_ambience = RoomAmbience::new();
+                                room_ambience.set_enabled(dsp_config.room_ambience_enabled);
+
+                                // Exciter
+                                let mut exciter = Exciter::new();
+                                exciter.set_enabled(dsp_config.exciter_enabled);
+
+                                tracing::info!("DSP Enhancers initialized: tube={}, tape={}, transformer={}, exciter={}, transient={}, compressor={}, limiter={}, expander={}, stereo={}, crossfeed={}, room={}",
+                                    dsp_config.tube_warmth_enabled, dsp_config.tape_saturation_enabled, dsp_config.transformer_enabled,
+                                    dsp_config.exciter_enabled, dsp_config.transient_enhancer_enabled,
+                                    dsp_config.compressor_enabled, dsp_config.limiter_enabled, dsp_config.expander_enabled,
+                                    dsp_config.stereo_width_enabled, dsp_config.crossfeed_enabled, dsp_config.room_ambience_enabled);
+
                                 // CPU usage tracking - average over last 10 samples
                                 // TODO: Currently disabled, will revisit later
                                 let _cpu_samples: std::collections::VecDeque<f32> = std::collections::VecDeque::with_capacity(10);
@@ -1917,6 +2041,28 @@ impl AaeqApp {
                                                 }
                                             }
                                         }
+                                        Some(states) = dsp_enhancer_rx.recv() => {
+                                            tracing::info!("DSP enhancer states update received");
+
+                                            // Update all processor enable states
+                                            tube_warmth.set_enabled(states.tube_warmth_enabled);
+                                            tape_saturation.set_enabled(states.tape_saturation_enabled);
+                                            transformer.set_enabled(states.transformer_enabled);
+                                            exciter.set_enabled(states.exciter_enabled);
+                                            transient_enhancer.set_enabled(states.transient_enhancer_enabled);
+                                            compressor.set_enabled(states.compressor_enabled);
+                                            limiter.set_enabled(states.limiter_enabled);
+                                            expander.set_enabled(states.expander_enabled);
+                                            stereo_width.set_enabled(states.stereo_width_enabled);
+                                            crossfeed.set_enabled(states.crossfeed_enabled);
+                                            room_ambience.set_enabled(states.room_ambience_enabled);
+
+                                            tracing::info!("DSP enhancer states applied: tube={}, tape={}, transformer={}, exciter={}, transient={}, compressor={}, limiter={}, expander={}, stereo={}, crossfeed={}, room={}",
+                                                states.tube_warmth_enabled, states.tape_saturation_enabled, states.transformer_enabled,
+                                                states.exciter_enabled, states.transient_enhancer_enabled,
+                                                states.compressor_enabled, states.limiter_enabled, states.expander_enabled,
+                                                states.stereo_width_enabled, states.crossfeed_enabled, states.room_ambience_enabled);
+                                        }
                                         // Audio capture mode - wait for samples
                                         Some(mut captured_samples) = async {
                                             if let Some((rx, _)) = audio_capture.as_mut() {
@@ -1935,8 +2081,34 @@ impl AaeqApp {
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&captured_samples);
 
-                                            // Apply EQ processing
+                                            // Apply DSP enhancers in fixed order
+
+                                            // 1. Expander (gate/noise reduction before processing)
+                                            expander.process(&mut captured_samples);
+
+                                            // 2. Headroom (volume reduction to prevent clipping)
+                                            headroom.process(&mut captured_samples);
+
+                                            // 3. Tone enhancers (mutually exclusive - only one should be enabled)
+                                            tube_warmth.process(&mut captured_samples);
+                                            tape_saturation.process(&mut captured_samples);
+                                            transformer.process(&mut captured_samples);
+                                            transient_enhancer.process(&mut captured_samples);
+
+                                            // 4. Apply EQ processing
                                             eq_processor.process(&mut captured_samples);
+
+                                            // 5. Dynamics (compressor/limiter after EQ)
+                                            compressor.process(&mut captured_samples);
+                                            limiter.process(&mut captured_samples);
+
+                                            // 6. Spatial effects (stereo processing)
+                                            stereo_width.process_stereo(&mut captured_samples);
+                                            crossfeed.process_stereo(&mut captured_samples);
+                                            room_ambience.process(&mut captured_samples);
+
+                                            // 7. Exciter (high frequency enhancement)
+                                            exciter.process(&mut captured_samples);
 
                                             // Apply resampling (after EQ, before dither)
                                             if dsp_config.resample_enabled {
@@ -2059,8 +2231,34 @@ impl AaeqApp {
                                             // Calculate pre-EQ metrics
                                             let (pre_rms_l, pre_rms_r, pre_peak_l, pre_peak_r) = calculate_metrics(&audio_data);
 
-                                            // Apply EQ processing
+                                            // Apply DSP enhancers in fixed order
+
+                                            // 1. Expander (gate/noise reduction before processing)
+                                            expander.process(&mut audio_data);
+
+                                            // 2. Headroom (volume reduction to prevent clipping)
+                                            headroom.process(&mut audio_data);
+
+                                            // 3. Tone enhancers (mutually exclusive - only one should be enabled)
+                                            tube_warmth.process(&mut audio_data);
+                                            tape_saturation.process(&mut audio_data);
+                                            transformer.process(&mut audio_data);
+                                            transient_enhancer.process(&mut audio_data);
+
+                                            // 4. Apply EQ processing
                                             eq_processor.process(&mut audio_data);
+
+                                            // 5. Dynamics (compressor/limiter after EQ)
+                                            compressor.process(&mut audio_data);
+                                            limiter.process(&mut audio_data);
+
+                                            // 6. Spatial effects (stereo processing)
+                                            stereo_width.process_stereo(&mut audio_data);
+                                            crossfeed.process_stereo(&mut audio_data);
+                                            room_ambience.process(&mut audio_data);
+
+                                            // 7. Exciter (high frequency enhancement)
+                                            exciter.process(&mut audio_data);
 
                                             // Apply resampling (after EQ, before dither)
                                             if dsp_config.resample_enabled {
@@ -2215,6 +2413,7 @@ impl AaeqApp {
                     stream_preset_change_tx = None;
                     stream_preset_data_tx = None;
                     stream_resampler_config_tx = None;
+                    stream_dsp_enhancer_tx = None;
                     dsp_is_streaming = false;
 
                     let _ = response_tx.send(AppResponse::DspStreamingStopped);
@@ -2274,6 +2473,23 @@ impl AaeqApp {
                         tracing::debug!("Cannot update resampler - no active streaming session");
                     }
                 }
+
+                AppCommand::DspUpdateEnhancers(states) => {
+                    tracing::info!("Updating DSP enhancer states");
+
+                    if let Some(enhancer_tx) = &stream_dsp_enhancer_tx {
+                        match enhancer_tx.send(states).await {
+                            Ok(_) => {
+                                tracing::info!("DSP enhancer states sent to streaming task");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to send DSP enhancer states to streaming task: {}", e);
+                            }
+                        }
+                    } else {
+                        tracing::debug!("Cannot update DSP enhancers - no active streaming session");
+                    }
+                }
             }
         }
     }
@@ -2320,6 +2536,18 @@ impl AaeqApp {
             resample_enabled: self.dsp_view.resample_enabled,
             resample_quality: self.dsp_view.resample_quality.as_str().to_string(),
             target_sample_rate: self.dsp_view.target_sample_rate,
+            // DSP Enhancers
+            tube_warmth_enabled: self.dsp_view.tube_warmth_enabled,
+            tape_saturation_enabled: self.dsp_view.tape_saturation_enabled,
+            transformer_enabled: self.dsp_view.transformer_enabled,
+            exciter_enabled: self.dsp_view.exciter_enabled,
+            transient_enhancer_enabled: self.dsp_view.transient_enhancer_enabled,
+            compressor_enabled: self.dsp_view.compressor_enabled,
+            limiter_enabled: self.dsp_view.limiter_enabled,
+            expander_enabled: self.dsp_view.expander_enabled,
+            stereo_width_enabled: self.dsp_view.stereo_width_enabled,
+            crossfeed_enabled: self.dsp_view.crossfeed_enabled,
+            room_ambience_enabled: self.dsp_view.room_ambience_enabled,
             created_at: 0,
             updated_at: 0,
         };
@@ -2329,12 +2557,69 @@ impl AaeqApp {
 
         let _ = self.command_tx.send(AppCommand::SaveDspSettings(settings));
     }
+
+    /// Load DSP effect icons from assets directory
+    fn load_dsp_icons(&mut self, ctx: &egui::Context) {
+        let icons_dir = std::path::Path::new("assets/icons/dsp");
+
+        // Helper closure to load a single icon
+        let load_icon = |path: &str| -> Option<egui::TextureHandle> {
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    match image::load_from_memory(&bytes) {
+                        Ok(img) => {
+                            let size = [img.width() as usize, img.height() as usize];
+                            let rgba_image = img.to_rgba8();
+                            let pixels = rgba_image.as_flat_samples();
+                            let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                                size,
+                                pixels.as_slice(),
+                            );
+                            let name = std::path::Path::new(path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("icon");
+                            Some(ctx.load_texture(name, color_image, Default::default()))
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to decode image {}: {}", path, e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load icon {}: {}", path, e);
+                    None
+                }
+            }
+        };
+
+        // Load all DSP icons
+        self.dsp_icons.tube = load_icon(&icons_dir.join("tube.png").to_string_lossy());
+        self.dsp_icons.tape = load_icon(&icons_dir.join("tape.png").to_string_lossy());
+        self.dsp_icons.transformer = load_icon(&icons_dir.join("transformer.png").to_string_lossy());
+        self.dsp_icons.exciter = load_icon(&icons_dir.join("exciter.png").to_string_lossy());
+        self.dsp_icons.transient = load_icon(&icons_dir.join("transient.png").to_string_lossy());
+        self.dsp_icons.compressor = load_icon(&icons_dir.join("compressor.png").to_string_lossy());
+        self.dsp_icons.limiter = load_icon(&icons_dir.join("limiter.png").to_string_lossy());
+        self.dsp_icons.expander = load_icon(&icons_dir.join("expander.png").to_string_lossy());
+        self.dsp_icons.stereo = load_icon(&icons_dir.join("stereo.png").to_string_lossy());
+        self.dsp_icons.crossfeed = load_icon(&icons_dir.join("crossfeed.png").to_string_lossy());
+        self.dsp_icons.room = load_icon(&icons_dir.join("room.png").to_string_lossy());
+
+        tracing::info!("Loaded DSP icons");
+    }
 }
 
 impl eframe::App for AaeqApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Apply current theme
         ctx.set_visuals(self.current_theme.to_visuals());
+
+        // Load DSP icons on first render
+        if self.dsp_icons.tube.is_none() {
+            self.load_dsp_icons(ctx);
+        }
 
         // Handle window close button (X) - hide to tray instead of quitting
         // Note: This only intercepts the close button (X), not the minimize button.
@@ -2546,6 +2831,18 @@ impl eframe::App for AaeqApp {
                                 resample_enabled: self.dsp_view.resample_enabled,
                                 resample_quality: self.dsp_view.resample_quality,
                                 target_sample_rate: self.dsp_view.target_sample_rate,
+                                headroom_db: self.dsp_view.headroom_db,
+                                tube_warmth_enabled: self.dsp_view.tube_warmth_enabled,
+                                tape_saturation_enabled: self.dsp_view.tape_saturation_enabled,
+                                transformer_enabled: self.dsp_view.transformer_enabled,
+                                exciter_enabled: self.dsp_view.exciter_enabled,
+                                transient_enhancer_enabled: self.dsp_view.transient_enhancer_enabled,
+                                compressor_enabled: self.dsp_view.compressor_enabled,
+                                limiter_enabled: self.dsp_view.limiter_enabled,
+                                expander_enabled: self.dsp_view.expander_enabled,
+                                stereo_width_enabled: self.dsp_view.stereo_width_enabled,
+                                crossfeed_enabled: self.dsp_view.crossfeed_enabled,
+                                room_ambience_enabled: self.dsp_view.room_ambience_enabled,
                             };
                             let _ = self.command_tx.send(AppCommand::DspStartStreaming(
                                 self.dsp_view.selected_sink,
@@ -3211,7 +3508,7 @@ impl eframe::App for AaeqApp {
             AppMode::DspServer => {
                 // DSP Server Mode: Show DSP controls in main area
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    if let Some(action) = self.dsp_view.show(ui, &self.current_theme) {
+                    if let Some(action) = self.dsp_view.show(ui, &self.current_theme, &self.dsp_icons) {
                         match action {
                             DspAction::SinkTypeChanged(sink_type) => {
                                 tracing::info!("DSP sink type changed: {:?}", sink_type);
@@ -3438,6 +3735,18 @@ impl eframe::App for AaeqApp {
                                         resample_enabled: self.dsp_view.resample_enabled,
                                         resample_quality: self.dsp_view.resample_quality,
                                         target_sample_rate: self.dsp_view.target_sample_rate,
+                                        headroom_db: self.dsp_view.headroom_db,
+                                        tube_warmth_enabled: self.dsp_view.tube_warmth_enabled,
+                                        tape_saturation_enabled: self.dsp_view.tape_saturation_enabled,
+                                        transformer_enabled: self.dsp_view.transformer_enabled,
+                                        exciter_enabled: self.dsp_view.exciter_enabled,
+                                        transient_enhancer_enabled: self.dsp_view.transient_enhancer_enabled,
+                                        compressor_enabled: self.dsp_view.compressor_enabled,
+                                        limiter_enabled: self.dsp_view.limiter_enabled,
+                                        expander_enabled: self.dsp_view.expander_enabled,
+                                        stereo_width_enabled: self.dsp_view.stereo_width_enabled,
+                                        crossfeed_enabled: self.dsp_view.crossfeed_enabled,
+                                        room_ambience_enabled: self.dsp_view.room_ambience_enabled,
                                     };
                                     let _ = self.command_tx.send(AppCommand::DspStartStreaming(
                                         self.dsp_view.selected_sink,
@@ -3455,59 +3764,6 @@ impl eframe::App for AaeqApp {
                             }
                             DspAction::StopStreaming => {
                                 let _ = self.command_tx.send(AppCommand::DspStopStreaming);
-                            }
-                            DspAction::PlayTestTone => {
-                                // If not streaming, automatically start streaming to play the test tone
-                                if !self.dsp_view.is_streaming {
-                                    // Convert FormatOption to SampleFormat
-                                    let format = match self.dsp_view.format {
-                                        FormatOption::F32 => SampleFormat::F32,
-                                        FormatOption::S24LE => SampleFormat::S24LE,
-                                        FormatOption::S16LE => SampleFormat::S16LE,
-                                    };
-
-                                    // Use target sample rate if resampling is enabled, otherwise use input rate
-                                    let output_sample_rate = if self.dsp_view.resample_enabled {
-                                        self.dsp_view.target_sample_rate
-                                    } else {
-                                        self.dsp_view.sample_rate
-                                    };
-
-                                    let config = OutputConfig {
-                                        sample_rate: output_sample_rate,
-                                        channels: 2,
-                                        format,
-                                        buffer_ms: self.dsp_view.buffer_ms,
-                                        exclusive: false,
-                                    };
-
-                                    if let Some(device) = &self.dsp_view.selected_device {
-                                        let dsp_config = DspRuntimeConfig {
-                                            dither_enabled: self.dsp_view.dither_enabled,
-                                            dither_mode: self.dsp_view.dither_mode,
-                                            noise_shaping: self.dsp_view.noise_shaping,
-                                            target_bits: self.dsp_view.target_bits,
-                                            resample_enabled: self.dsp_view.resample_enabled,
-                                            resample_quality: self.dsp_view.resample_quality,
-                                            target_sample_rate: self.dsp_view.target_sample_rate,
-                                        };
-                                        let _ = self.command_tx.send(AppCommand::DspStartStreaming(
-                                            self.dsp_view.selected_sink,
-                                            device.clone(),
-                                            config,
-                                            true, // use_test_tone
-                                            None, // input_device
-                                            None, // No manual preset override - use EQ Management // Use selected EQ preset
-                                            dsp_config,
-                                        ));
-                                        self.status_message = Some("Starting test tone...".to_string());
-                                    } else {
-                                        self.status_message = Some("No device selected".to_string());
-                                    }
-                                } else {
-                                    // Already streaming, the tone is already playing
-                                    self.status_message = Some("Test tone is already playing (1kHz)".to_string());
-                                }
                             }
                             DspAction::ToggleTestTone => {
                                 tracing::info!("Test tone toggled: {}", self.dsp_view.use_test_tone);
@@ -3641,6 +3897,29 @@ impl eframe::App for AaeqApp {
                                 tracing::info!("Buffer changed to: {} ms - saving to database", self.dsp_view.buffer_ms);
                                 self.save_dsp_sink_settings();
                                 // Buffer change can be applied without restart for some sinks
+                            }
+                            DspAction::DspEnhancersChanged => {
+                                tracing::info!("DSP enhancers changed - auto-saving and updating stream");
+                                // Auto-save DSP settings with new enhancer states
+                                self.auto_save_dsp_settings();
+
+                                // Send update to running stream if streaming
+                                if self.dsp_view.is_streaming {
+                                    let states = DspEnhancerStates {
+                                        tube_warmth_enabled: self.dsp_view.tube_warmth_enabled,
+                                        tape_saturation_enabled: self.dsp_view.tape_saturation_enabled,
+                                        transformer_enabled: self.dsp_view.transformer_enabled,
+                                        exciter_enabled: self.dsp_view.exciter_enabled,
+                                        transient_enhancer_enabled: self.dsp_view.transient_enhancer_enabled,
+                                        compressor_enabled: self.dsp_view.compressor_enabled,
+                                        limiter_enabled: self.dsp_view.limiter_enabled,
+                                        expander_enabled: self.dsp_view.expander_enabled,
+                                        stereo_width_enabled: self.dsp_view.stereo_width_enabled,
+                                        crossfeed_enabled: self.dsp_view.crossfeed_enabled,
+                                        room_ambience_enabled: self.dsp_view.room_ambience_enabled,
+                                    };
+                                    let _ = self.command_tx.send(AppCommand::DspUpdateEnhancers(states));
+                                }
                             }
                         }
                     }

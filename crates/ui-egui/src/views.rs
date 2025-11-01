@@ -998,6 +998,20 @@ pub struct DspView {
     pub resample_enabled: bool, // Enable resampling
     pub resample_quality: ResamplerQuality, // Resampling quality preset
     pub target_sample_rate: u32, // Target sample rate (Hz)
+    // DSP Enhancers & Filters
+    pub tube_warmth_enabled: bool,
+    pub tape_saturation_enabled: bool,
+    pub transformer_enabled: bool,
+    pub exciter_enabled: bool,
+    pub transient_enhancer_enabled: bool,
+    pub compressor_enabled: bool,
+    pub limiter_enabled: bool,
+    pub expander_enabled: bool,
+    pub stereo_width_enabled: bool,
+    pub crossfeed_enabled: bool,
+    pub room_ambience_enabled: bool,
+    // DSP error message (for exclusivity conflicts)
+    pub dsp_error_message: Option<String>,
     // Pipeline visualization
     pub pipeline_view: crate::pipeline_view::PipelineView,
 }
@@ -1128,6 +1142,20 @@ impl Default for DspView {
             resample_enabled: false, // Disabled by default
             resample_quality: ResamplerQuality::Balanced, // Balanced quality
             target_sample_rate: 48000, // Target 48 kHz (studio standard)
+            // DSP Enhancers defaults - all disabled
+            tube_warmth_enabled: false,
+            tape_saturation_enabled: false,
+            transformer_enabled: false,
+            exciter_enabled: false,
+            transient_enhancer_enabled: false,
+            compressor_enabled: false,
+            limiter_enabled: false,
+            expander_enabled: false,
+            stereo_width_enabled: false,
+            crossfeed_enabled: false,
+            room_ambience_enabled: false,
+            // DSP error message
+            dsp_error_message: None,
             // Pipeline visualization
             pipeline_view: crate::pipeline_view::PipelineView::new(),
         }
@@ -1135,7 +1163,7 @@ impl Default for DspView {
 }
 
 impl DspView {
-    pub fn show(&mut self, ui: &mut Ui, theme: &crate::theme::Theme) -> Option<DspAction> {
+    pub fn show(&mut self, ui: &mut Ui, theme: &crate::theme::Theme, dsp_icons: &crate::app::DspIcons) -> Option<DspAction> {
         let mut action = None;
         let meter_colors = theme.meter_colors();
         let spectrum_colors = theme.spectrum_colors();
@@ -1144,7 +1172,7 @@ impl DspView {
             .auto_shrink([false, false])
             .show(ui, |ui| {
         // Update and display pipeline visualization
-        self.update_pipeline_view();
+        self.update_pipeline_view(dsp_icons);
         if let Some(pipeline_action) = self.pipeline_view.show(ui, theme) {
             action = Some(self.handle_pipeline_action(pipeline_action));
         }
@@ -1954,6 +1982,162 @@ impl DspView {
             ui.add_space(10.0);
             ui.separator();
 
+            // DSP Enhancers & Filters section
+            ui.collapsing("DSP Enhancers & Filters", |ui| {
+                ui.label(
+                    egui::RichText::new("⚠ Note: On/off toggles only in this version. Parameters coming soon.")
+                        .size(10.0)
+                        .color(egui::Color32::GRAY)
+                        .italics()
+                );
+                ui.add_space(5.0);
+
+                // Show error message if there's a conflict
+                if let Some(ref error_msg) = self.dsp_error_message {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 100, 100),
+                        format!("⚠ {}", error_msg)
+                    );
+                    ui.add_space(5.0);
+                }
+
+                // Tone/Character Enhancers (mutually exclusive)
+                ui.label(egui::RichText::new("Tone Enhancers (mutually exclusive)").strong());
+                ui.horizontal_wrapped(|ui| {
+                    let old_tube = self.tube_warmth_enabled;
+                    if ui.checkbox(&mut self.tube_warmth_enabled, "Tube Warmth")
+                        .on_hover_text("Adds smooth even-order harmonics for analog warmth")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::TubeWarmth, self.tube_warmth_enabled) {
+                            self.tube_warmth_enabled = old_tube; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_tape = self.tape_saturation_enabled;
+                    if ui.checkbox(&mut self.tape_saturation_enabled, "Tape Saturation")
+                        .on_hover_text("Soft compression and high-frequency smoothing")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::TapeSaturation, self.tape_saturation_enabled) {
+                            self.tape_saturation_enabled = old_tape; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_transformer = self.transformer_enabled;
+                    if ui.checkbox(&mut self.transformer_enabled, "Transformer")
+                        .on_hover_text("2nd+3rd harmonic coloration like vintage gear")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::Transformer, self.transformer_enabled) {
+                            self.transformer_enabled = old_transformer; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_exciter = self.exciter_enabled;
+                    if ui.checkbox(&mut self.exciter_enabled, "Exciter")
+                        .on_hover_text("Adds 'air' by synthesizing harmonics above 6kHz")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::Exciter, self.exciter_enabled) {
+                            self.exciter_enabled = old_exciter; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_transient = self.transient_enhancer_enabled;
+                    if ui.checkbox(&mut self.transient_enhancer_enabled, "Transient Enhancer")
+                        .on_hover_text("Restores attack and punch")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::TransientEnhancer, self.transient_enhancer_enabled) {
+                            self.transient_enhancer_enabled = old_transient; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                // Dynamic Processors (mutually exclusive)
+                ui.label(egui::RichText::new("Dynamic Processors (mutually exclusive)").strong());
+                ui.horizontal_wrapped(|ui| {
+                    let old_compressor = self.compressor_enabled;
+                    if ui.checkbox(&mut self.compressor_enabled, "Compressor")
+                        .on_hover_text("Smooth loudness control with soft-knee")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::Compressor, self.compressor_enabled) {
+                            self.compressor_enabled = old_compressor; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_limiter = self.limiter_enabled;
+                    if ui.checkbox(&mut self.limiter_enabled, "Limiter")
+                        .on_hover_text("Prevents clipping at output")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::Limiter, self.limiter_enabled) {
+                            self.limiter_enabled = old_limiter; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                    let old_expander = self.expander_enabled;
+                    if ui.checkbox(&mut self.expander_enabled, "Expander/Gate")
+                        .on_hover_text("Reduces noise in quiet passages")
+                        .changed() {
+                        if let Some(error) = self.validate_dsp_toggle(stream_server::dsp::DspEffect::Expander, self.expander_enabled) {
+                            self.expander_enabled = old_expander; // Revert
+                            self.dsp_error_message = Some(error);
+                        } else {
+                            self.dsp_error_message = None;
+                            action = Some(DspAction::DspEnhancersChanged);
+                        }
+                    }
+                });
+
+                ui.add_space(8.0);
+
+                // Spatial/Psychoacoustic (can stack)
+                ui.label(egui::RichText::new("Spatial Effects (can stack)").strong());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.checkbox(&mut self.stereo_width_enabled, "Stereo Width")
+                        .on_hover_text("Adjusts stereo image width")
+                        .changed() {
+                        self.dsp_error_message = None; // Clear any previous errors
+                        action = Some(DspAction::DspEnhancersChanged);
+                    }
+                    if ui.checkbox(&mut self.crossfeed_enabled, "Crossfeed")
+                        .on_hover_text("Natural imaging for headphones")
+                        .changed() {
+                        self.dsp_error_message = None; // Clear any previous errors
+                        action = Some(DspAction::DspEnhancersChanged);
+                    }
+                    if ui.checkbox(&mut self.room_ambience_enabled, "Room Ambience")
+                        .on_hover_text("Adds subtle early reflections")
+                        .changed() {
+                        self.dsp_error_message = None; // Clear any previous errors
+                        action = Some(DspAction::DspEnhancersChanged);
+                    }
+                });
+            });
+
+            ui.add_space(10.0);
+            ui.separator();
+
             // Stream status display
             if let Some(status) = &self.stream_status {
                 ui.add_space(10.0);
@@ -2001,13 +2185,6 @@ impl DspView {
                         ui.label(format!("{:.1} ms", status.dsp_latency_ms));
                     }
                 });
-            }
-
-            ui.add_space(5.0);
-
-            // Test controls
-            if ui.button("🔊 Test Tone").on_hover_text("Play a 1kHz test tone for 2 seconds").clicked() {
-                action = Some(DspAction::PlayTestTone);
             }
             } // End of !audio_output_collapsed conditional
 
@@ -2414,7 +2591,7 @@ impl DspView {
     }
 
     /// Update pipeline view with current state
-    fn update_pipeline_view(&mut self) {
+    fn update_pipeline_view(&mut self, dsp_icons: &crate::app::DspIcons) {
         let output_status = if self.is_streaming {
             match self.selected_sink {
                 SinkType::LocalDac => {
@@ -2442,12 +2619,73 @@ impl DspView {
         // Convert resample quality to display string
         let resample_display = self.resample_quality.as_str();
 
+        // Determine active tone enhancer and its icon
+        let (tone_enhancer_name, tone_icon) = if self.tube_warmth_enabled {
+            (Some("Tube"), dsp_icons.tube.clone())
+        } else if self.tape_saturation_enabled {
+            (Some("Tape"), dsp_icons.tape.clone())
+        } else if self.transformer_enabled {
+            (Some("Transformer"), dsp_icons.transformer.clone())
+        } else if self.transient_enhancer_enabled {
+            (Some("Transient"), dsp_icons.transient.clone())
+        } else {
+            (None, None)
+        };
+        let tone_enhancers_enabled = tone_enhancer_name.is_some();
+
+        // Determine active dynamics processor and its icon
+        let (dynamics_name, dynamics_icon) = if self.compressor_enabled {
+            (Some("Compressor"), dsp_icons.compressor.clone())
+        } else if self.limiter_enabled {
+            (Some("Limiter"), dsp_icons.limiter.clone())
+        } else {
+            (None, None)
+        };
+        let dynamics_enabled = dynamics_name.is_some();
+
+        // Collect active spatial effects and determine icon
+        let mut spatial_names_vec = Vec::new();
+        if self.stereo_width_enabled {
+            spatial_names_vec.push("Stereo");
+        }
+        if self.crossfeed_enabled {
+            spatial_names_vec.push("Crossfeed");
+        }
+        if self.room_ambience_enabled {
+            spatial_names_vec.push("Room");
+        }
+        let spatial_enabled = !spatial_names_vec.is_empty();
+
+        // Pick icon based on priority: stereo > crossfeed > room
+        let spatial_icon = if self.stereo_width_enabled {
+            dsp_icons.stereo.clone()
+        } else if self.crossfeed_enabled {
+            dsp_icons.crossfeed.clone()
+        } else if self.room_ambience_enabled {
+            dsp_icons.room.clone()
+        } else {
+            None
+        };
+
         self.pipeline_view.update(
             self.is_streaming,
             self.sample_rate,
             self.headroom_db,
             self.clip_count,
+            self.expander_enabled,
+            dsp_icons.expander.clone(),
+            tone_enhancers_enabled,
+            tone_enhancer_name,
+            tone_icon,
             self.current_active_preset.as_deref(), // Use actual active preset from EQ Management
+            dynamics_enabled,
+            dynamics_name,
+            dynamics_icon,
+            spatial_enabled,
+            &spatial_names_vec,
+            spatial_icon,
+            self.exciter_enabled,
+            dsp_icons.exciter.clone(),
             self.resample_enabled,
             resample_display,
             self.target_sample_rate,
@@ -2455,6 +2693,40 @@ impl DspView {
             dither_display,
             output_status,
         );
+    }
+
+    /// Build DspSettings from current enhancer states (for validation)
+    fn build_dsp_settings(&self) -> aaeq_core::DspSettings {
+        aaeq_core::DspSettings {
+            profile_id: 0, // Not used for validation
+            tube_warmth_enabled: self.tube_warmth_enabled,
+            tape_saturation_enabled: self.tape_saturation_enabled,
+            transformer_enabled: self.transformer_enabled,
+            exciter_enabled: self.exciter_enabled,
+            transient_enhancer_enabled: self.transient_enhancer_enabled,
+            compressor_enabled: self.compressor_enabled,
+            limiter_enabled: self.limiter_enabled,
+            expander_enabled: self.expander_enabled,
+            stereo_width_enabled: self.stereo_width_enabled,
+            crossfeed_enabled: self.crossfeed_enabled,
+            room_ambience_enabled: self.room_ambience_enabled,
+            ..Default::default()
+        }
+    }
+
+    /// Validate toggling a DSP effect (returns error message if conflict)
+    fn validate_dsp_toggle(&self, effect: stream_server::dsp::DspEffect, new_state: bool) -> Option<String> {
+        // Disabling is always allowed
+        if !new_state {
+            return None;
+        }
+
+        // For enabling, check for conflicts
+        let current_settings = self.build_dsp_settings();
+        match stream_server::dsp::validate_toggle(effect, &current_settings) {
+            Ok(_) => None,
+            Err(conflict) => Some(conflict.message()),
+        }
     }
 
     /// Handle pipeline action (clicking on a stage)
@@ -2465,12 +2737,32 @@ impl DspView {
                 // In the future, could scroll to input device selector
                 DspAction::ToggleVisualization // Placeholder
             }
+            crate::pipeline_view::PipelineAction::FocusExpander => {
+                // Scroll to DSP enhancers section
+                DspAction::ToggleVisualization // Placeholder
+            }
             crate::pipeline_view::PipelineAction::FocusHeadroom => {
                 // Scroll to headroom controls (they're already visible in the UI)
                 DspAction::ToggleVisualization // Placeholder
             }
+            crate::pipeline_view::PipelineAction::FocusToneEnhancers => {
+                // Scroll to tone enhancers section
+                DspAction::ToggleVisualization // Placeholder
+            }
             crate::pipeline_view::PipelineAction::FocusEq => {
                 // Could open EQ preset selector or scroll to it
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusDynamics => {
+                // Scroll to dynamics processors section
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusSpatial => {
+                // Scroll to spatial effects section
+                DspAction::ToggleVisualization // Placeholder
+            }
+            crate::pipeline_view::PipelineAction::FocusExciter => {
+                // Scroll to exciter control
                 DspAction::ToggleVisualization // Placeholder
             }
             crate::pipeline_view::PipelineAction::FocusResample => {
@@ -2499,7 +2791,6 @@ pub enum DspAction {
     DiscoverInputDevices,
     StartStreaming,
     StopStreaming,
-    PlayTestTone,
     ToggleVisualization,
     ToggleMeters,
     SaveCustomPreset(EqPreset),
@@ -2516,4 +2807,5 @@ pub enum DspAction {
     SampleRateChanged,
     FormatChanged,
     BufferChanged,
+    DspEnhancersChanged,
 }

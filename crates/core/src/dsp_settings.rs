@@ -20,6 +20,20 @@ pub struct DspSettings {
     pub resample_enabled: bool,
     pub resample_quality: String, // ResamplerQuality as string: "Fast", "Balanced", "High", "Ultra"
     pub target_sample_rate: u32,
+    // DSP Enhancers & Filters - Tone/Character (mutually exclusive)
+    pub tube_warmth_enabled: bool,
+    pub tape_saturation_enabled: bool,
+    pub transformer_enabled: bool,
+    pub exciter_enabled: bool,
+    pub transient_enhancer_enabled: bool,
+    // DSP Enhancers & Filters - Dynamic Processors (mutually exclusive)
+    pub compressor_enabled: bool,
+    pub limiter_enabled: bool,
+    pub expander_enabled: bool,
+    // DSP Enhancers & Filters - Spatial/Psychoacoustic (can be stacked)
+    pub stereo_width_enabled: bool,
+    pub crossfeed_enabled: bool,
+    pub room_ambience_enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -41,6 +55,18 @@ impl Default for DspSettings {
             resample_enabled: false,
             resample_quality: "Balanced".to_string(), // Balanced is recommended
             target_sample_rate: 48000, // 48 kHz is studio standard
+            // DSP Enhancers - all disabled by default
+            tube_warmth_enabled: false,
+            tape_saturation_enabled: false,
+            transformer_enabled: false,
+            exciter_enabled: false,
+            transient_enhancer_enabled: false,
+            compressor_enabled: false,
+            limiter_enabled: false,
+            expander_enabled: false,
+            stereo_width_enabled: false,
+            crossfeed_enabled: false,
+            room_ambience_enabled: false,
             created_at: 0, // Will be set by persistence layer
             updated_at: 0, // Will be set by persistence layer
         }
@@ -78,6 +104,18 @@ impl DspSettings {
             resample_enabled: false,
             resample_quality: "Balanced".to_string(),
             target_sample_rate: 48000,
+            // DSP Enhancers - all disabled by default
+            tube_warmth_enabled: false,
+            tape_saturation_enabled: false,
+            transformer_enabled: false,
+            exciter_enabled: false,
+            transient_enhancer_enabled: false,
+            compressor_enabled: false,
+            limiter_enabled: false,
+            expander_enabled: false,
+            stereo_width_enabled: false,
+            crossfeed_enabled: false,
+            room_ambience_enabled: false,
             created_at: 0,  // Will be set by persistence layer
             updated_at: 0,  // Will be set by persistence layer
         }

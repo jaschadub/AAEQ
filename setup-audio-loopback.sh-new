@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Setup audio loopback for capturing system audio in AAEQ (PipeWire/Pulse)
+# Creates a virtual sink "AAEQ_Capture" whose monitor is used as AAEQ input.
+# No loopback to speakers (to avoid duplicate audio).
+
+WITH_LOOPBACK=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-loopback) WITH_LOOPBACK=true; shift ;;
+    *) echo "Usage: $0 [--with-loopback]"; exit 1 ;;
+  esac
+done
+
+command -v pactl >/dev/null || { echo "pactl not found"; exit 1; }
+
+echo "[AAEQ] Cleaning any existing loopback modules..."
+pactl unload-module module-null-sink 2>/dev/null || true
+pactl unload-module module-loopback 2>/dev/null || true
+
+echo "[AAEQ] Creating virtual sink 'AAEQ_Capture'..."
+pactl load-module module-null-sink \
+  sink_name=AAEQ_Capture \
+  sink_properties=device.description="AAEQ_Capture"
+
+# Keep the capture sink inaudible (we only use its MONITOR)
+pactl set-sink-mute   AAEQ_Capture 1 || true
+pactl set-sink-volume AAEQ_Capture 0% || true
+
+# Make the monitor the default source (optional but convenient)
+pactl set-default-source AAEQ_Capture.monitor || true
+
+if [[ "$WITH_LOOPBACK" == true ]]; then
+  echo "[AAEQ] Creating loopback to default speakers (TEST MODE ONLY)..."
+  pactl load-module module-loopback source=AAEQ_Capture.monitor latency_msec=1
+  echo "⚠ TEST MODE: Disable AAEQ streaming or you'll hear double audio."
+else
+  echo "[AAEQ] Not creating a loopback to speakers (recommended)."
+fi
+
+# Optional: Move common players to the capture sink
+for si in $(pactl list short sink-inputs | awk '/spotify|firefox|chrome|brave|mpv/i {print $1}'); do
+  pactl move-sink-input "$si" AAEQ_Capture || true
+done
+
+# Make sure AAEQ output (if already running) is NOT on AAEQ_Capture
+ANALOG=$(pactl list short sinks | awk '/analog-stereo/{print $2; exit}')
+if [[ -n "${ANALOG:-}" ]]; then
+  for si in $(pactl list short sink-inputs | awk '/aaeq/i {print $1,$2}'); do
+    ID=$(awk '{print $1}' <<<"$si"); SINK=$(awk '{print $2}' <<<"$si")
+    [[ "$SINK" != "AAEQ_Capture" ]] || pactl move-sink-input "$ID" "$ANALOG"
+  done
+fi
+
+echo
+echo "✓ AAEQ audio capture ready."
+echo "Route apps (Spotify, browsers) → 'AAEQ_Capture'."
+echo "In AAEQ:"
+echo "  Input  = 'AAEQ_Capture.monitor' (or default source)"
+echo "  Output = 'pulse' (then move the 'AAEQ' stream to your analog-stereo sink in pavucontrol)"
+echo

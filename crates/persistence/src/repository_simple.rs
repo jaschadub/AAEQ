@@ -1010,6 +1010,10 @@ impl DspSettingsRepository {
                       auto_compensate, clip_detection,
                       dither_enabled, dither_mode, noise_shaping, target_bits,
                       resample_enabled, resample_quality, target_sample_rate,
+                      tube_warmth_enabled, tape_saturation_enabled, transformer_enabled,
+                      exciter_enabled, transient_enhancer_enabled,
+                      compressor_enabled, limiter_enabled, expander_enabled,
+                      stereo_width_enabled, crossfeed_enabled, room_ambience_enabled,
                       created_at, updated_at
                FROM dsp_profile_settings
                WHERE profile_id = ?"#
@@ -1033,8 +1037,20 @@ impl DspSettingsRepository {
             resample_enabled: r.get::<i32, _>(11) != 0, // Convert SQLite integer to bool
             resample_quality: r.get(12),
             target_sample_rate: r.get(13),
-            created_at: r.get(14),
-            updated_at: r.get(15),
+            // DSP Enhancers
+            tube_warmth_enabled: r.get::<i32, _>(14) != 0,
+            tape_saturation_enabled: r.get::<i32, _>(15) != 0,
+            transformer_enabled: r.get::<i32, _>(16) != 0,
+            exciter_enabled: r.get::<i32, _>(17) != 0,
+            transient_enhancer_enabled: r.get::<i32, _>(18) != 0,
+            compressor_enabled: r.get::<i32, _>(19) != 0,
+            limiter_enabled: r.get::<i32, _>(20) != 0,
+            expander_enabled: r.get::<i32, _>(21) != 0,
+            stereo_width_enabled: r.get::<i32, _>(22) != 0,
+            crossfeed_enabled: r.get::<i32, _>(23) != 0,
+            room_ambience_enabled: r.get::<i32, _>(24) != 0,
+            created_at: r.get(25),
+            updated_at: r.get(26),
         }))
     }
 
@@ -1048,8 +1064,12 @@ impl DspSettingsRepository {
                 auto_compensate, clip_detection,
                 dither_enabled, dither_mode, noise_shaping, target_bits,
                 resample_enabled, resample_quality, target_sample_rate,
+                tube_warmth_enabled, tape_saturation_enabled, transformer_enabled,
+                exciter_enabled, transient_enhancer_enabled,
+                compressor_enabled, limiter_enabled, expander_enabled,
+                stereo_width_enabled, crossfeed_enabled, room_ambience_enabled,
                 created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(profile_id) DO UPDATE SET
                    sample_rate = excluded.sample_rate,
                    buffer_ms = excluded.buffer_ms,
@@ -1063,6 +1083,17 @@ impl DspSettingsRepository {
                    resample_enabled = excluded.resample_enabled,
                    resample_quality = excluded.resample_quality,
                    target_sample_rate = excluded.target_sample_rate,
+                   tube_warmth_enabled = excluded.tube_warmth_enabled,
+                   tape_saturation_enabled = excluded.tape_saturation_enabled,
+                   transformer_enabled = excluded.transformer_enabled,
+                   exciter_enabled = excluded.exciter_enabled,
+                   transient_enhancer_enabled = excluded.transient_enhancer_enabled,
+                   compressor_enabled = excluded.compressor_enabled,
+                   limiter_enabled = excluded.limiter_enabled,
+                   expander_enabled = excluded.expander_enabled,
+                   stereo_width_enabled = excluded.stereo_width_enabled,
+                   crossfeed_enabled = excluded.crossfeed_enabled,
+                   room_ambience_enabled = excluded.room_ambience_enabled,
                    updated_at = ?
             "#
         )
@@ -1079,6 +1110,18 @@ impl DspSettingsRepository {
         .bind(if settings.resample_enabled { 1 } else { 0 }) // Convert bool to integer
         .bind(&settings.resample_quality)
         .bind(settings.target_sample_rate)
+        // DSP Enhancers
+        .bind(if settings.tube_warmth_enabled { 1 } else { 0 })
+        .bind(if settings.tape_saturation_enabled { 1 } else { 0 })
+        .bind(if settings.transformer_enabled { 1 } else { 0 })
+        .bind(if settings.exciter_enabled { 1 } else { 0 })
+        .bind(if settings.transient_enhancer_enabled { 1 } else { 0 })
+        .bind(if settings.compressor_enabled { 1 } else { 0 })
+        .bind(if settings.limiter_enabled { 1 } else { 0 })
+        .bind(if settings.expander_enabled { 1 } else { 0 })
+        .bind(if settings.stereo_width_enabled { 1 } else { 0 })
+        .bind(if settings.crossfeed_enabled { 1 } else { 0 })
+        .bind(if settings.room_ambience_enabled { 1 } else { 0 })
         .bind(now)
         .bind(now)
         .bind(now) // For the UPDATE SET updated_at
@@ -1105,6 +1148,10 @@ impl DspSettingsRepository {
                       auto_compensate, clip_detection,
                       dither_enabled, dither_mode, noise_shaping, target_bits,
                       resample_enabled, resample_quality, target_sample_rate,
+                      tube_warmth_enabled, tape_saturation_enabled, transformer_enabled,
+                      exciter_enabled, transient_enhancer_enabled,
+                      compressor_enabled, limiter_enabled, expander_enabled,
+                      stereo_width_enabled, crossfeed_enabled, room_ambience_enabled,
                       created_at, updated_at
                FROM dsp_profile_settings
                ORDER BY profile_id"#
@@ -1127,8 +1174,20 @@ impl DspSettingsRepository {
             resample_enabled: r.get::<i32, _>(11) != 0,
             resample_quality: r.get(12),
             target_sample_rate: r.get(13),
-            created_at: r.get(14),
-            updated_at: r.get(15),
+            // DSP Enhancers
+            tube_warmth_enabled: r.get::<i32, _>(14) != 0,
+            tape_saturation_enabled: r.get::<i32, _>(15) != 0,
+            transformer_enabled: r.get::<i32, _>(16) != 0,
+            exciter_enabled: r.get::<i32, _>(17) != 0,
+            transient_enhancer_enabled: r.get::<i32, _>(18) != 0,
+            compressor_enabled: r.get::<i32, _>(19) != 0,
+            limiter_enabled: r.get::<i32, _>(20) != 0,
+            expander_enabled: r.get::<i32, _>(21) != 0,
+            stereo_width_enabled: r.get::<i32, _>(22) != 0,
+            crossfeed_enabled: r.get::<i32, _>(23) != 0,
+            room_ambience_enabled: r.get::<i32, _>(24) != 0,
+            created_at: r.get(25),
+            updated_at: r.get(26),
         }).collect())
     }
 }

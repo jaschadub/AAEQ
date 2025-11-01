@@ -15,13 +15,14 @@ pub enum StageState {
 }
 
 /// A single stage in the DSP pipeline
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PipelineStage {
     pub name: &'static str,
     pub enabled: bool,
     pub status_text: String,
     pub latency_ms: f32,
     pub state: StageState,
+    pub icon: Option<egui::TextureHandle>,
 }
 
 impl PipelineStage {
@@ -32,6 +33,7 @@ impl PipelineStage {
             status_text: String::new(),
             latency_ms: 0.0,
             state: StageState::Normal,
+            icon: None,
         }
     }
 
@@ -57,6 +59,11 @@ impl PipelineStage {
         }
         self
     }
+
+    pub fn with_icon(mut self, icon: Option<egui::TextureHandle>) -> Self {
+        self.icon = icon;
+        self
+    }
 }
 
 /// Pipeline visualization view
@@ -72,8 +79,13 @@ impl Default for PipelineView {
         Self {
             stages: vec![
                 PipelineStage::new("INPUT").with_status("48kHz"),
+                PipelineStage::new("EXPANDER").with_status("Off").with_enabled(false),
                 PipelineStage::new("HEADROOM").with_status("-3 dB"),
+                PipelineStage::new("TONE").with_status("Off").with_enabled(false),
                 PipelineStage::new("EQ").with_status("None"),
+                PipelineStage::new("DYNAMICS").with_status("Off").with_enabled(false),
+                PipelineStage::new("SPATIAL").with_status("Off").with_enabled(false),
+                PipelineStage::new("EXCITER").with_status("Off").with_enabled(false),
                 PipelineStage::new("RESAMPLE").with_status("Off").with_enabled(false),
                 PipelineStage::new("DITHER").with_status("Off").with_enabled(false),
                 PipelineStage::new("OUTPUT").with_status("Stopped"),
@@ -89,8 +101,13 @@ impl Default for PipelineView {
 #[derive(Clone, Debug)]
 pub enum PipelineAction {
     FocusInput,
+    FocusExpander,
     FocusHeadroom,
+    FocusToneEnhancers,  // Combined action for all tone enhancers
     FocusEq,
+    FocusDynamics,       // Combined action for dynamics
+    FocusSpatial,        // Combined action for spatial effects
+    FocusExciter,
     FocusResample,
     FocusDither,
     FocusOutput,
@@ -108,7 +125,20 @@ impl PipelineView {
         sample_rate: u32,
         headroom_db: f32,
         clip_count: u64,
+        expander_enabled: bool,
+        expander_icon: Option<egui::TextureHandle>,
+        tone_enhancers_enabled: bool,
+        tone_enhancer_name: Option<&str>,
+        tone_icon: Option<egui::TextureHandle>,
         eq_preset: Option<&str>,
+        dynamics_enabled: bool,
+        dynamics_name: Option<&str>,
+        dynamics_icon: Option<egui::TextureHandle>,
+        spatial_enabled: bool,
+        spatial_names: &[&str],
+        spatial_icon: Option<egui::TextureHandle>,
+        exciter_enabled: bool,
+        exciter_icon: Option<egui::TextureHandle>,
         resample_enabled: bool,
         resample_quality: &str,
         target_sample_rate: u32,
@@ -119,14 +149,26 @@ impl PipelineView {
         self.is_streaming = is_streaming;
         self.sample_rate = sample_rate;
 
-        // Update INPUT stage
+        // Update INPUT stage (index 0)
         self.stages[0] = PipelineStage::new("INPUT")
             .with_status(format!("{}kHz", sample_rate / 1000))
             .with_latency(0.0)
             .with_state(if is_streaming { StageState::Normal } else { StageState::Bypassed })
             .with_enabled(is_streaming);
 
-        // Update HEADROOM stage
+        // Update EXPANDER stage (index 1)
+        self.stages[1] = PipelineStage::new("EXPANDER")
+            .with_status(if expander_enabled { "Active" } else { "Off" }.to_string())
+            .with_latency(0.1)
+            .with_state(if is_streaming && expander_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(expander_enabled)
+            .with_icon(expander_icon);
+
+        // Update HEADROOM stage (index 2)
         let headroom_state = if clip_count > 0 {
             StageState::Error
         } else if headroom_db > -1.0 {
@@ -135,15 +177,28 @@ impl PipelineView {
             StageState::Normal
         };
 
-        self.stages[1] = PipelineStage::new("HEADROOM")
+        self.stages[2] = PipelineStage::new("HEADROOM")
             .with_status(format!("{:.1} dB", headroom_db))
             .with_latency(0.1)
             .with_state(if is_streaming { headroom_state } else { StageState::Bypassed })
             .with_enabled(is_streaming);
 
-        // Update EQ stage
+        // Update TONE stage (index 3)
+        let tone_status = tone_enhancer_name.unwrap_or("Off");
+        self.stages[3] = PipelineStage::new("TONE")
+            .with_status(tone_status.to_string())
+            .with_latency(0.2)
+            .with_state(if is_streaming && tone_enhancers_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(tone_enhancers_enabled)
+            .with_icon(tone_icon);
+
+        // Update EQ stage (index 4)
         let eq_status = eq_preset.unwrap_or("None");
-        self.stages[2] = PipelineStage::new("EQ")
+        self.stages[4] = PipelineStage::new("EQ")
             .with_status(eq_status.to_string())
             .with_latency(2.3)
             .with_state(if is_streaming && eq_preset.is_some() {
@@ -153,13 +208,57 @@ impl PipelineView {
             })
             .with_enabled(is_streaming);
 
-        // Update RESAMPLE stage
+        // Update DYNAMICS stage (index 5)
+        let dynamics_status = dynamics_name.unwrap_or("Off");
+        self.stages[5] = PipelineStage::new("DYNAMICS")
+            .with_status(dynamics_status.to_string())
+            .with_latency(0.5)
+            .with_state(if is_streaming && dynamics_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(dynamics_enabled)
+            .with_icon(dynamics_icon);
+
+        // Update SPATIAL stage (index 6)
+        let spatial_status = if spatial_names.is_empty() {
+            "Off".to_string()
+        } else if spatial_names.len() == 1 {
+            spatial_names[0].to_string()
+        } else {
+            format!("{} Active", spatial_names.len())
+        };
+        self.stages[6] = PipelineStage::new("SPATIAL")
+            .with_status(spatial_status)
+            .with_latency(1.0)
+            .with_state(if is_streaming && spatial_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(spatial_enabled)
+            .with_icon(spatial_icon);
+
+        // Update EXCITER stage (index 7)
+        self.stages[7] = PipelineStage::new("EXCITER")
+            .with_status(if exciter_enabled { "Active" } else { "Off" }.to_string())
+            .with_latency(0.2)
+            .with_state(if is_streaming && exciter_enabled {
+                StageState::Normal
+            } else {
+                StageState::Bypassed
+            })
+            .with_enabled(exciter_enabled)
+            .with_icon(exciter_icon);
+
+        // Update RESAMPLE stage (index 8)
         let resample_status = if resample_enabled {
             format!("{} → {}kHz", resample_quality, target_sample_rate / 1000)
         } else {
             "Off".to_string()
         };
-        self.stages[3] = PipelineStage::new("RESAMPLE")
+        self.stages[8] = PipelineStage::new("RESAMPLE")
             .with_status(resample_status)
             .with_latency(1.5)
             .with_state(if is_streaming && resample_enabled {
@@ -167,10 +266,10 @@ impl PipelineView {
             } else {
                 StageState::Bypassed
             })
-            .with_enabled(is_streaming && resample_enabled);
+            .with_enabled(resample_enabled);
 
-        // Update DITHER stage
-        self.stages[4] = PipelineStage::new("DITHER")
+        // Update DITHER stage (index 9)
+        self.stages[9] = PipelineStage::new("DITHER")
             .with_status(if dither_enabled { dither_mode.to_string() } else { "Off".to_string() })
             .with_latency(0.1)
             .with_state(if is_streaming && dither_enabled {
@@ -178,10 +277,10 @@ impl PipelineView {
             } else {
                 StageState::Bypassed
             })
-            .with_enabled(is_streaming && dither_enabled);
+            .with_enabled(dither_enabled);
 
-        // Update OUTPUT stage
-        self.stages[5] = PipelineStage::new("OUTPUT")
+        // Update OUTPUT stage (index 10)
+        self.stages[10] = PipelineStage::new("OUTPUT")
             .with_status(output_status.to_string())
             .with_latency(5.2)
             .with_state(if is_streaming { StageState::Normal } else { StageState::Bypassed })
@@ -224,16 +323,26 @@ impl PipelineView {
 
             ui.add_space(5.0);
 
-            // Pipeline stages
+            // Pipeline stages - filter to show only enabled stages or core stages
             ui.horizontal(|ui| {
-                for (i, stage) in self.stages.iter().enumerate() {
+                // Collect visible stages (core stages always visible, others only when enabled)
+                let visible_stages: Vec<&PipelineStage> = self.stages.iter()
+                    .filter(|stage| {
+                        // Core stages always visible
+                        matches!(stage.name, "INPUT" | "HEADROOM" | "EQ" | "OUTPUT") ||
+                        // Optional stages only visible when enabled
+                        stage.enabled
+                    })
+                    .collect();
+
+                for (i, stage) in visible_stages.iter().enumerate() {
                     // Draw the stage box
                     if let Some(stage_action) = self.draw_stage(ui, stage, theme) {
                         action = Some(stage_action);
                     }
 
                     // Draw arrow between stages (except after last)
-                    if i < self.stages.len() - 1 {
+                    if i < visible_stages.len() - 1 {
                         self.draw_arrow(ui);
                     }
                 }
@@ -267,103 +376,97 @@ impl PipelineView {
 
         // Determine colors based on state
         let accent_color = theme.meter_colors().border; // Use border color as accent
-        let (bg_color, text_color, icon_color) = match stage.state {
+        let (bg_color, text_color) = match stage.state {
             StageState::Normal => (
                 accent_color,
                 Color32::WHITE,
-                Color32::from_rgb(144, 238, 144), // Light green
             ),
             StageState::Warning => (
                 Color32::from_rgb(255, 165, 0), // Orange
                 Color32::BLACK,
-                Color32::from_rgb(255, 215, 0), // Gold
             ),
             StageState::Error => (
                 Color32::from_rgb(220, 53, 69), // Red
                 Color32::WHITE,
-                Color32::from_rgb(255, 100, 100), // Light red
             ),
             StageState::Bypassed => (
                 Color32::from_rgb(100, 100, 100), // Gray
                 Color32::from_rgb(180, 180, 180),
-                Color32::from_rgb(150, 150, 150),
             ),
         };
 
-        // Create a frame for the stage
-        let frame = egui::Frame::none()
-            .fill(bg_color)
-            .rounding(egui::Rounding::same(5.0))
-            .inner_margin(egui::Margin::same(8.0));
+        // Allocate space for the stage
+        let desired_size = Vec2::new(85.0, 60.0);
+        let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
-        let response = frame.show(ui, |ui| {
-            ui.set_min_size(Vec2::new(85.0, 60.0));
-            ui.set_max_width(95.0);
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            let rounding = egui::Rounding::same(5.0);
 
-            ui.vertical_centered(|ui| {
-                // Stage name
-                ui.label(
-                    egui::RichText::new(stage.name)
-                        .strong()
-                        .size(11.0)
-                        .color(text_color)
+            // Draw icon as background if available
+            if let Some(ref icon_texture) = stage.icon {
+                // Determine tint based on enabled state
+                let tint = if stage.enabled {
+                    Color32::from_rgba_unmultiplied(255, 255, 255, 200) // Full color when enabled
+                } else {
+                    Color32::from_rgba_unmultiplied(128, 128, 128, 150) // Greyed out when disabled
+                };
+
+                // Draw icon filling the entire rect
+                painter.image(
+                    icon_texture.id(),
+                    rect.shrink(2.0),
+                    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0)),
+                    tint,
                 );
 
-                ui.add_space(2.0);
+                // Draw semi-transparent overlay for better text contrast
+                let overlay_color = bg_color.linear_multiply(0.4);
+                painter.rect_filled(rect.shrink(2.0), rounding, overlay_color);
+            } else {
+                // No icon: draw solid background
+                painter.rect_filled(rect.shrink(2.0), rounding, bg_color);
+            }
 
-                // Status icon - draw using shapes for cross-platform compatibility
-                let icon_size = Vec2::new(24.0, 24.0);
-                let (icon_rect, _) = ui.allocate_exact_size(icon_size, egui::Sense::hover());
+            // Draw border
+            painter.rect_stroke(
+                rect.shrink(2.0),
+                rounding,
+                egui::Stroke::new(1.5, bg_color.gamma_multiply(1.3)),
+            );
 
-                if ui.is_rect_visible(icon_rect) {
-                    let painter = ui.painter();
-                    let center = icon_rect.center();
-                    let radius = icon_rect.width() / 2.0;
+            // Draw stage name at top
+            let name_pos = egui::Pos2::new(rect.center().x, rect.top() + 12.0);
+            painter.text(
+                name_pos,
+                egui::Align2::CENTER_CENTER,
+                stage.name,
+                egui::FontId::proportional(11.0),
+                text_color,
+            );
 
-                    if stage.enabled {
-                        // Draw checkmark
-                        let stroke = egui::Stroke::new(2.5, icon_color);
+            // Draw status text at bottom
+            let status_pos = egui::Pos2::new(rect.center().x, rect.bottom() - 12.0);
+            painter.text(
+                status_pos,
+                egui::Align2::CENTER_CENTER,
+                &stage.status_text,
+                egui::FontId::proportional(10.0),
+                text_color,
+            );
+        }
 
-                        // Checkmark path: short vertical line, then longer diagonal
-                        let start = center + Vec2::new(-radius * 0.4, 0.0);
-                        let middle = center + Vec2::new(-radius * 0.1, radius * 0.4);
-                        let end = center + Vec2::new(radius * 0.5, -radius * 0.5);
-
-                        painter.line_segment([start, middle], stroke);
-                        painter.line_segment([middle, end], stroke);
-                    } else {
-                        // Draw circle with diagonal line (like ⊘)
-                        let stroke = egui::Stroke::new(2.0, icon_color);
-
-                        // Draw circle
-                        painter.circle_stroke(center, radius * 0.7, stroke);
-
-                        // Draw diagonal line through it
-                        let top_left = center + Vec2::new(-radius * 0.5, -radius * 0.5);
-                        let bottom_right = center + Vec2::new(radius * 0.5, radius * 0.5);
-                        painter.line_segment([top_left, bottom_right], stroke);
-                    }
-                }
-
-                ui.add_space(2.0);
-
-                // Status text
-                ui.label(
-                    egui::RichText::new(&stage.status_text)
-                        .size(10.0)
-                        .color(text_color)
-                );
-            });
-        });
-
-        // Make it clickable
-        let click_response = response.response.interact(egui::Sense::click());
-
-        if click_response.clicked() {
+        // Check if clicked
+        if response.clicked() {
             action = Some(match stage.name {
                 "INPUT" => PipelineAction::FocusInput,
+                "EXPANDER" => PipelineAction::FocusExpander,
                 "HEADROOM" => PipelineAction::FocusHeadroom,
+                "TONE" => PipelineAction::FocusToneEnhancers,
                 "EQ" => PipelineAction::FocusEq,
+                "DYNAMICS" => PipelineAction::FocusDynamics,
+                "SPATIAL" => PipelineAction::FocusSpatial,
+                "EXCITER" => PipelineAction::FocusExciter,
                 "RESAMPLE" => PipelineAction::FocusResample,
                 "DITHER" => PipelineAction::FocusDither,
                 "OUTPUT" => PipelineAction::FocusOutput,
@@ -372,7 +475,7 @@ impl PipelineView {
         }
 
         // Enhanced tooltip on hover with detailed explanations
-        click_response.on_hover_ui(|ui| {
+        response.on_hover_ui(|ui| {
             ui.vertical(|ui| {
                 ui.label(egui::RichText::new(stage.name).strong().size(13.0));
                 ui.separator();
@@ -388,8 +491,13 @@ impl PipelineView {
                 // Stage-specific explanations
                 let description = match stage.name {
                     "INPUT" => "Captures audio from your selected input device. Sample rate determines the frequency range and processing precision.",
+                    "EXPANDER" => "Downward expander and noise gate. Reduces background noise by attenuating quiet signals below threshold.",
                     "HEADROOM" => "Reduces volume to prevent clipping. Digital audio clips at 0 dBFS causing distortion. Headroom provides safety margin for peaks.",
+                    "TONE" => "Tone enhancers add analog character. Choose from Tube Warmth, Tape Saturation, Transformer, Exciter, or Transient Enhancer. Only one can be active at a time.",
                     "EQ" => "Parametric equalizer adjusts frequency balance. Applies custom or mapped presets based on currently playing track.",
+                    "DYNAMICS" => "Dynamic processors control volume. Choose from Compressor (reduces dynamic range), Limiter (prevents peaks), or use Expander above. Only one can be active at a time.",
+                    "SPATIAL" => "Spatial effects create width and ambience. Includes Stereo Width, Crossfeed (headphone natural imaging), and Room Ambience. Multiple effects can be active simultaneously.",
+                    "EXCITER" => "Harmonic exciter adds high-frequency excitement and 'air'. Synthesizes harmonics above 6kHz for enhanced presence.",
                     "RESAMPLE" => "Changes sample rate using high-quality sinc interpolation. Useful for matching DAC requirements or upsampling.",
                     "DITHER" => "Adds subtle noise when reducing bit depth. Eliminates quantization distortion, essential for 16-bit output.",
                     "OUTPUT" => "Streams processed audio to selected sink. Can be DLNA device, AirPlay speaker, or local DAC.",
@@ -561,7 +669,7 @@ mod tests {
     #[test]
     fn test_pipeline_view_default() {
         let view = PipelineView::default();
-        assert_eq!(view.stages.len(), 6);
+        assert_eq!(view.stages.len(), 11);
         assert!(!view.is_streaming);
         assert_eq!(view.sample_rate, 48000);
     }
@@ -575,7 +683,20 @@ mod tests {
             96000,          // sample_rate
             -6.0,           // headroom_db
             0,              // clip_count
+            false,          // expander_enabled
+            None,           // expander_icon
+            true,           // tone_enhancers_enabled
+            Some("Tube"),   // tone_enhancer_name
+            None,           // tone_icon
             Some("Rock"),   // eq_preset
+            true,           // dynamics_enabled
+            Some("Compressor"), // dynamics_name
+            None,           // dynamics_icon
+            false,          // spatial_enabled
+            &[],            // spatial_names
+            None,           // spatial_icon
+            false,          // exciter_enabled
+            None,           // exciter_icon
             true,           // resample_enabled
             "High",         // resample_quality
             48000,          // target_sample_rate
@@ -587,31 +708,86 @@ mod tests {
         assert!(view.is_streaming);
         assert_eq!(view.sample_rate, 96000);
         assert_eq!(view.stages[0].status_text, "96kHz");
-        assert_eq!(view.stages[1].status_text, "-6.0 dB");
-        assert_eq!(view.stages[2].status_text, "Rock");
-        assert_eq!(view.stages[3].status_text, "High → 48kHz");
-        assert_eq!(view.stages[4].status_text, "TPDF");
-        assert_eq!(view.stages[5].status_text, "DLNA Device");
+        assert_eq!(view.stages[1].status_text, "Off"); // Expander off
+        assert_eq!(view.stages[2].status_text, "-6.0 dB"); // Headroom
+        assert_eq!(view.stages[3].status_text, "Tube"); // Tone
+        assert_eq!(view.stages[4].status_text, "Rock"); // EQ
+        assert_eq!(view.stages[5].status_text, "Compressor"); // Dynamics
+        assert_eq!(view.stages[6].status_text, "Off"); // Spatial off
+        assert_eq!(view.stages[7].status_text, "Off"); // Exciter off
+        assert_eq!(view.stages[8].status_text, "High → 48kHz"); // Resample
+        assert_eq!(view.stages[9].status_text, "TPDF"); // Dither
+        assert_eq!(view.stages[10].status_text, "DLNA Device"); // Output
     }
 
     #[test]
     fn test_clipping_detection() {
         let mut view = PipelineView::new();
 
-        view.update(true, 48000, -3.0, 10, None, false, "Fast", 48000, false, "Off", "DAC");
+        view.update(
+            true,   // is_streaming
+            48000,  // sample_rate
+            -3.0,   // headroom_db
+            10,     // clip_count
+            false,  // expander_enabled
+            None,   // expander_icon
+            false,  // tone_enhancers_enabled
+            None,   // tone_enhancer_name
+            None,   // tone_icon
+            None,   // eq_preset
+            false,  // dynamics_enabled
+            None,   // dynamics_name
+            None,   // dynamics_icon
+            false,  // spatial_enabled
+            &[],    // spatial_names
+            None,   // spatial_icon
+            false,  // exciter_enabled
+            None,   // exciter_icon
+            false,  // resample_enabled
+            "Fast", // resample_quality
+            48000,  // target_sample_rate
+            false,  // dither_enabled
+            "Off",  // dither_mode
+            "DAC"   // output_status
+        );
 
-        // Headroom stage should show error state due to clips
-        assert_eq!(view.stages[1].state, StageState::Error);
+        // Headroom stage (index 2) should show error state due to clips
+        assert_eq!(view.stages[2].state, StageState::Error);
     }
 
     #[test]
     fn test_low_headroom_warning() {
         let mut view = PipelineView::new();
 
-        view.update(true, 48000, -0.5, 0, None, false, "Fast", 48000, false, "Off", "DAC");
+        view.update(
+            true,   // is_streaming
+            48000,  // sample_rate
+            -0.5,   // headroom_db
+            0,      // clip_count
+            false,  // expander_enabled
+            None,   // expander_icon
+            false,  // tone_enhancers_enabled
+            None,   // tone_enhancer_name
+            None,   // tone_icon
+            None,   // eq_preset
+            false,  // dynamics_enabled
+            None,   // dynamics_name
+            None,   // dynamics_icon
+            false,  // spatial_enabled
+            &[],    // spatial_names
+            None,   // spatial_icon
+            false,  // exciter_enabled
+            None,   // exciter_icon
+            false,  // resample_enabled
+            "Fast", // resample_quality
+            48000,  // target_sample_rate
+            false,  // dither_enabled
+            "Off",  // dither_mode
+            "DAC"   // output_status
+        );
 
-        // Headroom stage should show warning state
-        assert_eq!(view.stages[1].state, StageState::Warning);
+        // Headroom stage (index 2) should show warning state
+        assert_eq!(view.stages[2].state, StageState::Warning);
     }
 
     #[test]
