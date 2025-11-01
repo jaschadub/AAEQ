@@ -11,7 +11,7 @@
 Transform AAEQ into a next-generation intelligent audio processing platform that combines:
 - **Automated intelligence** (per-track EQ switching) ✓ Already leading
 - **Network flexibility** (DLNA, WiiM, StreamMagic) ✓ Already leading
-- **DSP precision** (HQPlayer-inspired processing depth) ← Target area
+- **DSP precision** (professional-grade processing depth) ← Target area
 - **Visual fidelity tools** (pipeline visualization, analysis) ← Target area
 - **Room correction** (convolution, measurement integration) ← Target area
 
@@ -702,7 +702,7 @@ impl FilterDesigner {
 ### Quality
 - Measured THD+N improvement with dithering
 - User-reported sound quality improvements
-- A/B testing vs. HQPlayer (subjective)
+- A/B testing with reference tracks (subjective)
 
 ---
 
@@ -718,7 +718,7 @@ impl FilterDesigner {
 - Offload FFT to GPU (future)
 
 ### Challenge 2: Complexity Creep
-**Risk:** AAEQ becomes as complex as HQPlayer
+**Risk:** AAEQ becomes too complex for typical users
 
 **Mitigation:**
 - Keep "Simple Mode" as default
@@ -799,7 +799,7 @@ impl FilterDesigner {
 ### v1.0.0 - "Mastering Suite"
 - Full convolution engine
 - Advanced room EQ
-- Complete HQPlayer feature parity (where relevant)
+- Professional-grade DSP feature set
 
 ---
 
@@ -813,7 +813,7 @@ impl FilterDesigner {
 ### Beta Testing Program
 - Early access to Phase 2 features
 - Feedback on CPU usage and quality
-- A/B comparison with HQPlayer
+- A/B comparison with reference audio systems
 
 ### Contribution Opportunities
 - DSP filter implementations
@@ -840,7 +840,7 @@ impl FilterDesigner {
 This roadmap balances:
 - **Quick wins** (Phase 1) that add value immediately
 - **Quality improvements** (Phase 2) that differentiate AAEQ
-- **Advanced features** (Phase 3) that approach HQPlayer territory
+- **Advanced features** (Phase 3) that deliver professional-grade DSP
 
 **Core principle:** Never lose sight of AAEQ's unique strength - **intelligent automation**. Every feature should serve the goal of making high-quality audio processing effortless.
 
