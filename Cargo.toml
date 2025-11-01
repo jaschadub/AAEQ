@@ -6,7 +6,9 @@ members = [
     "crates/media-session",
     "crates/persistence",
     "crates/ui-egui",
-    "apps/desktop", "crates/stream-server",
+    "apps/desktop",
+    "crates/stream-server",
+    "crates/anp",
 ]
 
 [workspace.package]
