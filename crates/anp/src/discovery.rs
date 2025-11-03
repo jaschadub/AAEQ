@@ -3,7 +3,6 @@
 //! Implements the mDNS TXT record format as specified in the AANP v0.4 specification.
 
 use std::collections::HashMap;
-use std::net::IpAddr;
 use uuid::Uuid;
 
 /// Node discovery record for mDNS advertising
@@ -175,6 +174,12 @@ pub struct AnpDiscovery {
     service_name: String,
     /// Service domain
     service_domain: String,
+}
+
+impl Default for AnpDiscovery {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnpDiscovery {

@@ -137,6 +137,21 @@ fn find_best_match(artist: &str, cleaned_album: &str, search_result: ITunesSearc
 /// The iTunes Search API is free and doesn't require authentication.
 /// Returns high-resolution album artwork (600x600) by modifying the URL.
 pub async fn lookup_album_art(artist: &str, album: &str) -> Result<Option<String>> {
+    // Wrap entire operation in timeout to prevent hanging
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        lookup_album_art_impl(artist, album)
+    ).await {
+        Ok(result) => result,
+        Err(_) => {
+            warn!("Album art lookup timed out after 10 seconds for: {} - {}", artist, album);
+            Ok(None)
+        }
+    }
+}
+
+/// Internal implementation of album art lookup
+async fn lookup_album_art_impl(artist: &str, album: &str) -> Result<Option<String>> {
     // Skip lookup if metadata is missing or placeholder
     if artist.is_empty() || album.is_empty()
         || artist == "Unknown" || album == "Unknown"

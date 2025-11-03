@@ -225,6 +225,12 @@ pub struct ErrorHandler {
     pub error_count: u64,
 }
 
+impl Default for ErrorHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErrorHandler {
     /// Create a new error handler
     pub fn new() -> Self {
@@ -409,6 +415,12 @@ pub enum ErrorState {
     Error,
     /// Critical error
     Critical,
+}
+
+impl Default for ErrorStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ErrorStateMachine {

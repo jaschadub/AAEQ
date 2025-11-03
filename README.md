@@ -109,18 +109,52 @@ Download the latest release for your platform:
 
 **Linux:**
 - GTK3 development libraries
-- libxdo (for system tray support)
+- libxdo (for global hotkeys)
 - libappindicator3 (for system tray support)
 - ALSA development libraries (for audio capture/DSP)
 - D-Bus (for MPRIS integration)
+- Additional GUI dependencies (GLib, Cairo, Pango, etc.)
 
 ```bash
-# Ubuntu/Debian
-sudo apt install libgtk-3-dev libxdo-dev libappindicator3-dev libasound2-dev dbus
+# Ubuntu/Debian/Raspberry Pi OS
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libasound2-dev \
+    libxdo-dev \
+    libappindicator3-dev \
+    libglib2.0-dev \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libatk1.0-dev \
+    libgdk-pixbuf2.0-dev \
+    libgtk-3-dev \
+    libxcb-render0-dev \
+    libxcb-shape0-dev \
+    libxcb-xfixes0-dev \
+    libxkbcommon-dev \
+    libfontconfig1-dev \
+    dbus
 
 # Arch Linux/Manjaro
-sudo pacman -S gtk3 xdotool libappindicator-gtk3 alsa-lib dbus
+sudo pacman -S gtk3 xdotool libappindicator-gtk3 alsa-lib dbus \
+    glib2 cairo pango atk gdk-pixbuf2 libxcb libxkbcommon fontconfig
 ```
+
+**Raspberry Pi / ARM Systems:**
+- All the dependencies above are required
+- Build times are longer on Pi hardware - use parallel jobs: `cargo build --release -j4`
+- Tested on Raspberry Pi 4 with Raspberry Pi OS (Debian-based)
+- **Runtime requirement for system tray**: You also need the runtime library for the system tray icon:
+  ```bash
+  # Try ayatana variant first (newer, recommended)
+  sudo apt-get install libayatana-appindicator3-1
+
+  # If that's not available, use the older appindicator
+  sudo apt-get install libappindicator3-1
+  ```
 
 **macOS:**
 - No additional dependencies required for basic functionality
@@ -317,16 +351,25 @@ Contributions are welcome! Please:
   - ✅ Per-profile DSP settings for different listening scenarios
 
 ### General
-- **System Tray on XFCE**:
-  - AAEQ uses libappindicator for the system tray icon, which requires specific XFCE panel plugins
-  - **Solution**: Add one of these plugins to your XFCE panel:
+- **System Tray on XFCE and LXDE**:
+  - AAEQ uses libappindicator for the system tray icon, which requires specific panel plugins on XFCE and LXDE
+
+  - **XFCE Solution**: Add one of these plugins to your XFCE panel:
     - **Indicator Plugin** (xfce4-indicator-plugin) - Recommended for most apps
     - **Status Notifier Plugin** (xfce4-statusnotifier-plugin) - Modern D-Bus based
     - **Status Tray** (XFCE 4.15+) - Built-in support for statusnotifier items
-  - **How to add**: Right-click XFCE panel → Panel → Add New Items → Select "Indicator Plugin" or "Status Notifier Plugin"
-  - **Note**: Don't use both Indicator and Status Notifier plugins simultaneously as they conflict
-  - The "Notification Area" (systray) plugin only supports legacy XEMBED icons, not libappindicator
-  - Works out-of-box on GNOME, KDE, and other desktop environments with native indicator support
+    - **How to add**: Right-click XFCE panel → Panel → Add New Items → Select "Indicator Plugin" or "Status Notifier Plugin"
+    - **Install if missing**: `sudo apt-get install xfce4-indicator-plugin` or `xfce4-statusnotifier-plugin`
+    - **Note**: Don't use both Indicator and Status Notifier plugins simultaneously as they conflict
+    - The "Notification Area" (systray) plugin only supports legacy XEMBED icons, not libappindicator
+
+  - **LXDE/LXPanel Solution**:
+    - Install the indicator plugin: `sudo apt-get install indicator-application`
+    - Right-click LXPanel → Panel Settings → Panel Applets → Add → Select "Indicator applet"
+    - Alternatively, you can run AAEQ without minimizing (keep window visible)
+
+  - **Alternative**: If you can't get the tray icon working, AAEQ works fine without it - just keep the window visible
+  - Works out-of-box on GNOME, KDE, Cinnamon, and other desktop environments with native indicator support
 
 ## License
 

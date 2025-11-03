@@ -149,6 +149,12 @@ pub struct FeatureNegotiator {
     negotiated_features: FeatureSet,
 }
 
+impl Default for FeatureNegotiator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FeatureNegotiator {
     /// Create a new feature negotiator
     pub fn new() -> Self {
@@ -175,14 +181,14 @@ impl FeatureNegotiator {
         
         // Core features (must be supported by both)
         for feature in &self.local_features.supported {
-            if self.remote_features.as_ref().map_or(false, |rf| rf.supported.contains(feature)) {
+            if self.remote_features.as_ref().is_some_and(|rf| rf.supported.contains(feature)) {
                 negotiated.add_active(*feature);
             }
         }
         
         // Optional features (accept if both support)
         for feature in &self.local_features.optional {
-            if self.remote_features.as_ref().map_or(false, |rf| rf.optional.contains(feature)) {
+            if self.remote_features.as_ref().is_some_and(|rf| rf.optional.contains(feature)) {
                 negotiated.add_active(*feature);
             }
         }
@@ -284,9 +290,9 @@ impl FeatureValidator {
         local_features: &FeatureSet,
         remote_features: &FeatureSet,
     ) -> ValidationResult {
-        let mut errors = Vec::new();
+        let errors = Vec::new();
         let mut warnings = Vec::new();
-        
+
         // Check version compatibility
         // (In a real implementation, this would check protocol versions)
         
@@ -370,6 +376,12 @@ pub enum FeatureState {
     Transitioning,
     /// Feature error
     Error,
+}
+
+impl Default for FeatureStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FeatureStateMachine {

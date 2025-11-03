@@ -282,6 +282,76 @@ impl DeviceController for WiimController {
             }
         }
     }
+
+    // Playback control trait implementations
+
+    async fn play(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:resume").await?;
+        Ok(())
+    }
+
+    async fn pause(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:pause").await?;
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:stop").await?;
+        Ok(())
+    }
+
+    async fn next_track(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:next").await?;
+        Ok(())
+    }
+
+    async fn prev_track(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:prev").await?;
+        Ok(())
+    }
+
+    fn supports_playback_control(&self) -> bool {
+        true
+    }
+
+    async fn switch_source(&self, source: &str) -> Result<()> {
+        let command = format!("setPlayerCmd:switchmode:{}", source);
+        self.execute_command(&command).await?;
+        Ok(())
+    }
+
+    async fn get_player_status(&self) -> Result<Option<(String, String, u8, bool)>> {
+        // Call getPlayerStatus API to get mode, status, volume, and mute
+        match self.execute_command("getPlayerStatus").await {
+            Ok(response) => {
+                match serde_json::from_str::<PlayerStatus>(&response) {
+                    Ok(status) => {
+                        // Parse volume (string "0"-"100" -> u8)
+                        let volume = status.vol.parse::<u8>().unwrap_or(75);
+                        // Parse mute (string "0"/"1" -> bool)
+                        let muted = status.mute == "1";
+                        Ok(Some((status.mode, status.status, volume, muted)))
+                    }
+                    Err(_) => Ok(None),
+                }
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn set_volume(&self, volume: u8) -> Result<()> {
+        let volume = volume.min(100);
+        let command = format!("setPlayerCmd:vol:{}", volume);
+        self.execute_command(&command).await?;
+        Ok(())
+    }
+
+    async fn set_mute(&self, muted: bool) -> Result<()> {
+        let n = if muted { 1 } else { 0 };
+        let command = format!("setPlayerCmd:mute:{}", n);
+        self.execute_command(&command).await?;
+        Ok(())
+    }
 }
 
 /// Helper functions for WiiM-specific operations
@@ -337,25 +407,74 @@ impl WiimController {
         Ok(stat.eq_stat == "On")
     }
 
-    /// Set volume (0-100)
+    /// Resume playback
     ///
-    /// Command: setPlayerCmd:vol:{value}
-    pub async fn set_volume(&self, volume: u8) -> Result<()> {
-        let volume = volume.min(100);
-        let command = format!("setPlayerCmd:vol:{}", volume);
+    /// Command: setPlayerCmd:resume
+    pub async fn play(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:resume").await?;
+        Ok(())
+    }
+
+    /// Pause playback
+    ///
+    /// Command: setPlayerCmd:pause
+    pub async fn pause(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:pause").await?;
+        Ok(())
+    }
+
+    /// Stop playback
+    ///
+    /// Command: setPlayerCmd:stop
+    pub async fn stop(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:stop").await?;
+        Ok(())
+    }
+
+    /// Next track
+    ///
+    /// Command: setPlayerCmd:next
+    pub async fn next_track(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:next").await?;
+        Ok(())
+    }
+
+    /// Previous track
+    ///
+    /// Command: setPlayerCmd:prev
+    pub async fn prev_track(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:prev").await?;
+        Ok(())
+    }
+
+    /// Toggle play/pause
+    ///
+    /// Command: setPlayerCmd:onepause
+    /// If paused, resumes; if playing, pauses
+    pub async fn toggle_play_pause(&self) -> Result<()> {
+        self.execute_command("setPlayerCmd:onepause").await?;
+        Ok(())
+    }
+
+    /// Switch playback source/input
+    ///
+    /// Command: setPlayerCmd:switchmode:{mode}
+    /// Available modes: "line-in", "bluetooth", "optical", "udisk", "wifi"
+    pub async fn switch_source(&self, mode: &str) -> Result<()> {
+        let command = format!("setPlayerCmd:switchmode:{}", mode);
         self.execute_command(&command).await?;
         Ok(())
     }
 
-    /// Mute/unmute
+    /// Get player status (for UI updates)
     ///
-    /// Command: setPlayerCmd:mute:{n}
-    /// n=1 for mute, n=0 for unmute
-    pub async fn set_mute(&self, muted: bool) -> Result<()> {
-        let n = if muted { 1 } else { 0 };
-        let command = format!("setPlayerCmd:mute:{}", n);
-        self.execute_command(&command).await?;
-        Ok(())
+    /// Command: getPlayerStatus
+    /// Returns detailed status including playback state and mode
+    pub async fn get_player_status(&self) -> Result<PlayerStatus> {
+        let response = self.execute_command("getPlayerStatus").await?;
+        let status: PlayerStatus = serde_json::from_str(&response)
+            .context("Failed to parse getPlayerStatus response")?;
+        Ok(status)
     }
 }
 

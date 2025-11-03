@@ -177,6 +177,12 @@ pub struct HealthCounters {
     pub buffer_overruns: u64,
 }
 
+impl Default for HealthManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthManager {
     /// Create a new health manager
     pub fn new() -> Self {
@@ -401,7 +407,13 @@ pub struct HealthMetricsCollector {
     /// Manager instance
     manager: HealthManager,
     /// Collection interval
-    collection_interval: std::time::Duration,
+    _collection_interval: std::time::Duration,
+}
+
+impl Default for HealthMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthMetricsCollector {
@@ -409,7 +421,7 @@ impl HealthMetricsCollector {
     pub fn new() -> Self {
         Self {
             manager: HealthManager::new(),
-            collection_interval: std::time::Duration::from_millis(1000), // 1 second
+            _collection_interval: std::time::Duration::from_millis(1000), // 1 second
         }
     }
 
@@ -447,6 +459,12 @@ pub enum HealthState {
     Paused,
     /// Error
     Error,
+}
+
+impl Default for HealthStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthStateMachine {

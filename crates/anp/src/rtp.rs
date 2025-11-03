@@ -333,7 +333,7 @@ impl RtpPayloadUtils {
     /// Calculate timestamp increment
     pub fn calculate_timestamp_increment(
         frames_in_packet: u32,
-        timestamp_rate: u32,
+        _timestamp_rate: u32,
     ) -> u32 {
         // For audio, timestamp increments by number of frames
         frames_in_packet
@@ -353,7 +353,7 @@ pub struct RtpStreamManager {
     /// Payload type
     payload_type: RtpPayloadType,
     /// Buffer for outgoing packets
-    packet_buffer: VecDeque<RtpPacket>,
+    _packet_buffer: VecDeque<RtpPacket>,
 }
 
 impl RtpStreamManager {
@@ -365,7 +365,7 @@ impl RtpStreamManager {
             ssrc,
             timestamp_rate,
             payload_type,
-            packet_buffer: VecDeque::new(),
+            _packet_buffer: VecDeque::new(),
         }
     }
 

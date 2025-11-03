@@ -247,6 +247,12 @@ pub struct WebSocketManager {
     pub message_receiver: mpsc::UnboundedReceiver<ControlMessage>,
 }
 
+impl Default for WebSocketManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSocketManager {
     /// Create a new WebSocket manager
     pub fn new() -> Self {
@@ -343,6 +349,12 @@ pub enum HandlerState {
     Error,
 }
 
+impl Default for ControlMessageHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ControlMessageHandler {
     /// Create a new handler
     pub fn new() -> Self {
@@ -396,7 +408,7 @@ impl ControlMessageHandler {
     }
 
     /// Handle health message
-    pub fn handle_health(&mut self, health: &HealthMessage) -> Result<(), String> {
+    pub fn handle_health(&mut self, _health: &HealthMessage) -> Result<(), String> {
         // Process health data
         // This would typically update internal state and telemetry
         Ok(())

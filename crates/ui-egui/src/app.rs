@@ -227,7 +227,7 @@ enum AppResponse {
     PresetsLoaded(Vec<String>),
     PresetApplied(String),
     MappingSaved(String),
-    TrackUpdated(TrackMeta, Option<String>),
+    TrackUpdated(TrackMeta, Option<String>, Option<String>, Option<String>, Option<u8>, Option<bool>), // (track, preset, player_mode, player_status, volume, muted)
     BackupCreated(String), // (backup_path)
     DatabaseRestored(String), // (backup_path_used)
     Error(String), // Legacy simple error message
@@ -1512,7 +1512,13 @@ impl AaeqApp {
                                 // This ensures we have track metadata available for profile switches
                                 last_track = Some(track.clone());
 
-                                let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone()));
+                                // Get player status (mode, playback state, volume, mute) if device supports it
+                                let (player_mode, player_status, volume, muted) = match dev.get_player_status().await {
+                                    Ok(Some((mode, status, vol, mute))) => (Some(mode), Some(status), Some(vol), Some(mute)),
+                                    _ => (None, None, None, None),
+                                };
+
+                                let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone(), player_mode, player_status, volume, muted));
                             }
                             Err(e) => {
                                 tracing::error!("Poll error: {}", e);
@@ -1580,7 +1586,8 @@ impl AaeqApp {
                                 // This ensures we have track metadata available for profile switches
                                 last_track = Some(track.clone());
 
-                                let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone()));
+                                // No device in DSP/MPRIS mode, so no player status available
+                                let _ = response_tx.send(AppResponse::TrackUpdated(track, current_preset.clone(), None, None, None, None));
                             }
                             Err(e) => {
                                 // MPRIS polling failed - this is OK if no media is playing
@@ -2675,12 +2682,17 @@ impl eframe::App for AaeqApp {
                 AppResponse::PresetApplied(preset) => {
                     self.current_preset = Some(preset.clone());
                     self.dsp_view.current_active_preset = Some(preset.clone()); // Sync to DSP view
+                    self.now_playing_view.current_preset = Some(preset.clone());
                     self.status_message = Some(format!("Applied: {}", preset));
+
+                    // Load the EQ curve for display
+                    // This ensures the curve updates even if the initial LoadPresetCurve command had issues
+                    let _ = self.command_tx.send(AppCommand::LoadPresetCurve(preset));
                 }
                 AppResponse::MappingSaved(msg) => {
                     self.status_message = Some(msg);
                 }
-                AppResponse::TrackUpdated(track, preset) => {
+                AppResponse::TrackUpdated(track, preset, player_mode, player_status, volume, muted) => {
                     // Check if track actually changed
                     let track_changed = self.current_track.as_ref()
                         .map(|t| t.track_key() != track.track_key())
@@ -2719,8 +2731,69 @@ impl eframe::App for AaeqApp {
                     // This prevents unnecessary album art processing on every poll for the same track
                     if track_changed || genre_changed {
                         self.now_playing_view.track = Some(track.clone());
+
+                        // Trigger album art loading regardless of which tab is focused
+                        if let Some(art_url) = &track.album_art_url {
+                            // Handle lookup:// URLs (album art lookup from external services)
+                            if art_url.starts_with("lookup://") {
+                                // Extract artist and album from lookup URL
+                                if let Some(metadata) = art_url.strip_prefix("lookup://") {
+                                    let parts: Vec<&str> = metadata.split('|').collect();
+                                    if parts.len() == 2 {
+                                        let artist = parts[0].to_string();
+                                        let album = parts[1].to_string();
+                                        let lookup_cache_key = format!("looked_up:{}", art_url);
+
+                                        // Only start lookup if not already loading or loaded
+                                        let state = self.album_art_cache.try_get(&lookup_cache_key)
+                                            .unwrap_or(crate::album_art::AlbumArtState::NotLoaded);
+
+                                        if matches!(state, crate::album_art::AlbumArtState::NotLoaded) {
+                                            tracing::info!("Starting album art lookup (background): {} - {}", artist, album);
+                                            let cache = self.album_art_cache.clone();
+                                            let cache_key = lookup_cache_key.clone();
+
+                                            // Mark as loading immediately
+                                            self.album_art_cache.mark_loading(lookup_cache_key);
+
+                                            // Spawn lookup task
+                                            tokio::spawn(async move {
+                                                match crate::album_art_lookup::lookup_album_art(&artist, &album).await {
+                                                    Ok(Some(url)) => {
+                                                        tracing::info!("Album art lookup succeeded: {}", url);
+                                                        cache.load_as(url, cache_key);
+                                                    }
+                                                    Ok(None) => {
+                                                        tracing::debug!("Album art lookup returned no results");
+                                                        cache.mark_failed(cache_key);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!("Album art lookup failed: {}", e);
+                                                        cache.mark_failed(cache_key);
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Handle regular HTTP/HTTPS URLs - trigger loading if not already cached
+                                if let Some(state) = self.album_art_cache.try_get(art_url) {
+                                    if matches!(state, crate::album_art::AlbumArtState::NotLoaded) {
+                                        tracing::debug!("Starting album art load (background): {}", art_url);
+                                        self.album_art_cache.load(art_url.clone());
+                                    }
+                                }
+                            }
+                        }
                     }
                     self.now_playing_view.current_preset = self.current_preset.clone();
+
+                    // Update player mode, status, volume, and mute in the view
+                    self.now_playing_view.player_mode = player_mode;
+                    self.now_playing_view.player_status = player_status;
+                    self.now_playing_view.volume = volume;
+                    self.now_playing_view.muted = muted;
 
                     // Load preset curve if preset changed
                     if preset_changed {
@@ -3475,7 +3548,10 @@ impl eframe::App for AaeqApp {
 
                     // Central panel for now playing
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone()) {
+                        let device_connected = self.device.is_some();
+                        let supports_playback = self.device.as_ref().map(|d| d.supports_playback_control()).unwrap_or(false);
+
+                        if let Some(action) = self.now_playing_view.show(ui, self.album_art_cache.clone(), device_connected, supports_playback) {
                             match action {
                                 NowPlayingAction::SaveMapping(scope) => {
                                     // Pass track and preset to the async worker for saving
@@ -3497,6 +3573,100 @@ impl eframe::App for AaeqApp {
                                             self.now_playing_view.track = Some(track.clone());
                                             self.now_playing_view.genre_edit = genre; // Keep the edited value
                                         }
+                                    }
+                                }
+                                NowPlayingAction::Play => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.play().await {
+                                                tracing::error!("Failed to play: {}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                                NowPlayingAction::Pause => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.pause().await {
+                                                tracing::error!("Failed to pause: {}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                                NowPlayingAction::Stop => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.stop().await {
+                                                tracing::error!("Failed to stop: {}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                                NowPlayingAction::NextTrack => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.next_track().await {
+                                                tracing::error!("Failed to skip to next track: {}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                                NowPlayingAction::PrevTrack => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.prev_track().await {
+                                                tracing::error!("Failed to skip to previous track: {}", e);
+                                            }
+                                        });
+                                    }
+                                }
+                                NowPlayingAction::SwitchSource(source) => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        let source_clone = source.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.switch_source(&source_clone).await {
+                                                tracing::error!("Failed to switch source to {}: {}", source_clone, e);
+                                            } else {
+                                                tracing::info!("Successfully switched to source: {}", source_clone);
+                                            }
+                                        });
+                                        self.status_message = Some(format!("Switching to source: {}", source));
+                                    }
+                                }
+                                NowPlayingAction::SetVolume(volume) => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.set_volume(volume).await {
+                                                tracing::error!("Failed to set volume to {}: {}", volume, e);
+                                            } else {
+                                                tracing::debug!("Set volume to {}", volume);
+                                            }
+                                        });
+                                        self.status_message = Some(format!("Volume: {}%", volume));
+                                    }
+                                }
+                                NowPlayingAction::ToggleMute => {
+                                    if let Some(device) = &self.device {
+                                        let device = device.clone();
+                                        let current_muted = self.now_playing_view.muted.unwrap_or(false);
+                                        let new_muted = !current_muted;
+                                        tokio::spawn(async move {
+                                            if let Err(e) = device.set_mute(new_muted).await {
+                                                tracing::error!("Failed to toggle mute: {}", e);
+                                            } else {
+                                                tracing::info!("Mute toggled to {}", new_muted);
+                                            }
+                                        });
+                                        // Optimistically update UI
+                                        self.now_playing_view.muted = Some(new_muted);
+                                        self.status_message = Some(if new_muted { "Muted" } else { "Unmuted" }.to_string());
                                     }
                                 }
                             }

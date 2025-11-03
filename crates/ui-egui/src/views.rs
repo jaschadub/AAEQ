@@ -398,6 +398,10 @@ pub struct NowPlayingView {
     album_art_texture: Option<egui::TextureHandle>,
     last_album_art_url: Option<String>,
     default_icon_texture: Option<egui::TextureHandle>, // Default icon when no album art available
+    pub player_mode: Option<String>,  // Current playback mode/source from PlayerStatus
+    pub player_status: Option<String>, // Current status: "play", "pause", "stop", "loading"
+    pub volume: Option<u8>,            // Current volume level (0-100)
+    pub muted: Option<bool>,           // Current mute state
 }
 
 impl NowPlayingView {
@@ -409,7 +413,29 @@ impl NowPlayingView {
         !is_unknown
     }
 
-    pub fn show(&mut self, ui: &mut Ui, album_art_cache: Arc<AlbumArtCache>) -> Option<NowPlayingAction> {
+    /// Map WiiM mode number to human-readable source name and button identifier
+    /// Returns (display_name, button_id)
+    fn mode_to_source(mode: &str) -> (String, &'static str) {
+        match mode {
+            "31" => ("Spotify".to_string(), "wifi"),
+            "32" => ("TIDAL".to_string(), "wifi"),
+            "40" => ("AUX-In".to_string(), "line-in"),
+            "41" => ("Bluetooth".to_string(), "bluetooth"),
+            "43" => ("Optical".to_string(), "optical"),
+            "1" => ("AirPlay".to_string(), "wifi"),
+            "2" => ("DLNA".to_string(), "wifi"),
+            m if m.starts_with('1') => ("WiFi/Playlist".to_string(), "wifi"),
+            _ => (format!("Mode {}", mode), "wifi"),
+        }
+    }
+
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        album_art_cache: Arc<AlbumArtCache>,
+        device_connected: bool,
+        supports_playback_control: bool,
+    ) -> Option<NowPlayingAction> {
         let mut action = None;
 
         // Load default icon on first run (embedded at compile time)
@@ -619,6 +645,207 @@ impl NowPlayingView {
                                 action = Some(NowPlayingAction::UpdateGenre(track.device_genre.clone()));
                             }
                         });
+
+                        // Playback controls - only show when device is connected and supports playback
+                        if device_connected && supports_playback_control {
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(5.0);
+
+                            // Show current source if available
+                            if let Some(mode) = &self.player_mode {
+                                let (source_name, _) = Self::mode_to_source(mode);
+                                ui.horizontal(|ui| {
+                                    ui.label("Current Source:");
+                                    ui.strong(&source_name);
+                                });
+                                ui.add_space(3.0);
+                            }
+
+                            // Show current playback status
+                            if let Some(status) = &self.player_status {
+                                ui.horizontal(|ui| {
+                                    ui.label("Status:");
+                                    let status_text = match status.as_str() {
+                                        "play" => "▶ Playing",
+                                        "pause" => "⏸ Paused",
+                                        "stop" => "⏹ Stopped",
+                                        "loading" => "⏳ Loading",
+                                        _ => status,
+                                    };
+                                    ui.strong(status_text);
+                                });
+                                ui.add_space(5.0);
+                            }
+
+                            let current_status = self.player_status.as_deref().unwrap_or("stop");
+                            let is_playing = current_status == "play";
+                            let is_stopped = current_status == "stop";
+
+                            ui.label("Playback Controls:");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0; // More space between buttons
+                                let button_size = egui::vec2(70.0, 32.0); // Larger button size
+
+                                if ui.add_sized(button_size, egui::Button::new("⏮ Prev")).clicked() {
+                                    action = Some(NowPlayingAction::PrevTrack);
+                                }
+
+                                // Show Play button when paused or stopped, disable when already playing
+                                ui.add_enabled_ui(!is_playing, |ui| {
+                                    if ui.add_sized(button_size, egui::Button::new("▶ Play")).clicked() {
+                                        action = Some(NowPlayingAction::Play);
+                                    }
+                                });
+
+                                // Show Pause button, disable when already paused or stopped
+                                ui.add_enabled_ui(is_playing, |ui| {
+                                    if ui.add_sized(button_size, egui::Button::new("⏸ Pause")).clicked() {
+                                        action = Some(NowPlayingAction::Pause);
+                                    }
+                                });
+
+                                // Show Stop button, disable when already stopped
+                                ui.add_enabled_ui(!is_stopped, |ui| {
+                                    if ui.add_sized(button_size, egui::Button::new("⏹ Stop")).clicked() {
+                                        action = Some(NowPlayingAction::Stop);
+                                    }
+                                });
+
+                                if ui.add_sized(button_size, egui::Button::new("⏭ Next")).clicked() {
+                                    action = Some(NowPlayingAction::NextTrack);
+                                }
+                            });
+
+                            ui.add_space(5.0);
+                            ui.label("Switch Source:");
+
+                            // Get current source button ID
+                            let current_source_button = self.player_mode.as_ref()
+                                .map(|m| Self::mode_to_source(m).1);
+
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 8.0; // More space between buttons
+                                let source_button_size = egui::vec2(90.0, 32.0); // Larger button size
+
+                                // Highlight active source with different style
+                                let wifi_active = current_source_button == Some("wifi");
+                                let mut wifi_btn = egui::Button::new(if wifi_active { "[WiFi]" } else { "WiFi" });
+                                if wifi_active {
+                                    wifi_btn = wifi_btn.fill(ui.style().visuals.selection.bg_fill);
+                                }
+                                if ui.add_sized(source_button_size, wifi_btn).clicked() && !wifi_active {
+                                    action = Some(NowPlayingAction::SwitchSource("wifi".to_string()));
+                                }
+
+                                let bt_active = current_source_button == Some("bluetooth");
+                                let mut bt_btn = egui::Button::new(if bt_active { "[Bluetooth]" } else { "Bluetooth" });
+                                if bt_active {
+                                    bt_btn = bt_btn.fill(ui.style().visuals.selection.bg_fill);
+                                }
+                                if ui.add_sized(source_button_size, bt_btn).clicked() && !bt_active {
+                                    action = Some(NowPlayingAction::SwitchSource("bluetooth".to_string()));
+                                }
+
+                                let line_active = current_source_button == Some("line-in");
+                                let mut line_btn = egui::Button::new(if line_active { "[Line-In]" } else { "Line-In" });
+                                if line_active {
+                                    line_btn = line_btn.fill(ui.style().visuals.selection.bg_fill);
+                                }
+                                if ui.add_sized(source_button_size, line_btn).clicked() && !line_active {
+                                    action = Some(NowPlayingAction::SwitchSource("line-in".to_string()));
+                                }
+
+                                let optical_active = current_source_button == Some("optical");
+                                let mut optical_btn = egui::Button::new(if optical_active { "[Optical]" } else { "Optical" });
+                                if optical_active {
+                                    optical_btn = optical_btn.fill(ui.style().visuals.selection.bg_fill);
+                                }
+                                if ui.add_sized(source_button_size, optical_btn).clicked() && !optical_active {
+                                    action = Some(NowPlayingAction::SwitchSource("optical".to_string()));
+                                }
+                            });
+
+                            // Volume controls
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(5.0);
+
+                            ui.label("Volume:");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 10.0; // Space between button and slider
+
+                                // Mute/unmute button
+                                let is_muted = self.muted.unwrap_or(false);
+                                let mute_text = if is_muted { "🔇 Unmute" } else { "🔊 Mute" };
+                                let mute_button_size = egui::vec2(90.0, 32.0);
+                                if ui.add_sized(mute_button_size, egui::Button::new(mute_text)).clicked() {
+                                    action = Some(NowPlayingAction::ToggleMute);
+                                }
+
+                                // Volume slider (wider with available space)
+                                ui.add_space(5.0);
+                                let available_width = ui.available_width().max(200.0);
+
+                                // Use local variable for slider, but handle keyboard separately
+                                let current_volume = self.volume.unwrap_or(75);
+                                let mut volume_f32 = current_volume as f32;
+
+                                // Create ID for focus management
+                                let volume_slider_id = ui.id().with("volume_slider");
+
+                                // Check if slider has focus and handle keyboard BEFORE creating slider
+                                let has_focus = ui.memory(|mem| mem.has_focus(volume_slider_id));
+                                let mut keyboard_changed_volume = None;
+
+                                if has_focus {
+                                    let shift_pressed = ui.input(|i| i.modifiers.shift);
+                                    let step = if shift_pressed { 10 } else { 1 };
+
+                                    // Consume keyboard events before slider processes them
+                                    if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight))
+                                        || ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
+                                        let new_vol = current_volume.saturating_add(step).min(100);
+                                        keyboard_changed_volume = Some(new_vol);
+                                    } else if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft))
+                                        || ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+                                        let new_vol = current_volume.saturating_sub(step);
+                                        keyboard_changed_volume = Some(new_vol);
+                                    } else if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Home)) {
+                                        keyboard_changed_volume = Some(0);
+                                    } else if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::End)) {
+                                        keyboard_changed_volume = Some(100);
+                                    }
+                                }
+
+                                // Apply keyboard change to slider value
+                                if let Some(new_vol) = keyboard_changed_volume {
+                                    volume_f32 = new_vol as f32;
+                                    self.volume = Some(new_vol);
+                                    action = Some(NowPlayingAction::SetVolume(new_vol));
+                                }
+
+                                let slider = egui::Slider::new(&mut volume_f32, 0.0..=100.0)
+                                    .text("%")
+                                    .clamping(egui::SliderClamping::Always);
+
+                                let response = ui.add_sized([available_width, 20.0], slider);
+
+                                // Store focus using our custom ID
+                                if response.clicked() {
+                                    ui.memory_mut(|mem| mem.request_focus(volume_slider_id));
+                                }
+                                if response.gained_focus() {
+                                    ui.memory_mut(|mem| mem.request_focus(volume_slider_id));
+                                }
+
+                                // Handle slider value changes (mouse/drag)
+                                if keyboard_changed_volume.is_none() && response.changed() {
+                                    let new_volume = volume_f32 as u8;
+                                    action = Some(NowPlayingAction::SetVolume(new_volume));
+                                }
+                            });
+                        }
                     });
                 });
 
@@ -816,6 +1043,14 @@ impl NowPlayingView {
 pub enum NowPlayingAction {
     SaveMapping(Scope),
     UpdateGenre(String),
+    Play,
+    Pause,
+    Stop,
+    NextTrack,
+    PrevTrack,
+    SwitchSource(String),
+    SetVolume(u8),
+    ToggleMute,
 }
 
 /// View for listing and managing presets
