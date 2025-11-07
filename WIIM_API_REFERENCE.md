@@ -46,6 +46,7 @@ The WiiM devices support HTTPS-based API with most responses in JSON format.
   - `10-19`: Wiimu playlist
   - `31`: Spotify Connect
   - `32`: TIDAL Connect
+  - `36`: Qobuz Connect
   - `40`: AUX-In
   - `41`: Bluetooth
 - `eq`: Current EQ preset number

@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2025-11-06
+
+### Added
+
+#### WiiM Device Support 🎵
+- **Qobuz Connect Support**: Added support for Qobuz Connect streaming mode (mode 36)
+  - WiiM devices now properly recognize and display Qobuz streaming service
+  - Matches support for Spotify (31), TIDAL (32), and other streaming services
+  - Updated API reference documentation with Qobuz mode
+
+#### Diagnostics & Debugging 🔍
+- **Enhanced Status Logging**: Added comprehensive debug logging for WiiM player status
+  - Logs mode, status, volume, and muted state on every poll
+  - Helps diagnose playback status issues and device behavior
+  - Available when debug logging is enabled in settings
+
+### Fixed
+
+#### UI/UX Improvements 🐛
+- **Status Display**: Improved handling of empty or unknown playback status
+  - Better fallback for empty status strings from device
+  - Displays "Unknown" instead of blank text when status is missing
+  - Prevents UI confusion when device status is unclear
+
+### Changed
+
+#### Documentation 📚
+- **Updated WiiM API Reference**: Added Qobuz Connect to supported input modes list
+  - Complete documentation of all streaming service modes
+  - Helps developers understand device capabilities
+
 ## [0.6.4] - 2025-10-30
 
 ### Added
@@ -559,7 +590,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minor version (0.X.0)**: New features, non-breaking changes
 - **Patch version (0.0.X)**: Bug fixes, minor improvements
 
-[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/jaschadub/AAEQ/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jaschadub/AAEQ/compare/v0.6.4...v0.7.0
 [0.6.4]: https://github.com/jaschadub/AAEQ/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/jaschadub/AAEQ/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/jaschadub/AAEQ/compare/v0.6.1...v0.6.2

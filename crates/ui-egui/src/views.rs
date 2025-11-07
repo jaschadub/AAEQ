@@ -419,6 +419,7 @@ impl NowPlayingView {
         match mode {
             "31" => ("Spotify".to_string(), "wifi"),
             "32" => ("TIDAL".to_string(), "wifi"),
+            "36" => ("Qobuz".to_string(), "wifi"),
             "40" => ("AUX-In".to_string(), "line-in"),
             "41" => ("Bluetooth".to_string(), "bluetooth"),
             "43" => ("Optical".to_string(), "optical"),
@@ -671,6 +672,8 @@ impl NowPlayingView {
                                         "pause" => "⏸ Paused",
                                         "stop" => "⏹ Stopped",
                                         "loading" => "⏳ Loading",
+                                        "" => "Unknown",
+                                        s if s.trim().is_empty() => "Unknown",
                                         _ => status,
                                     };
                                     ui.strong(status_text);

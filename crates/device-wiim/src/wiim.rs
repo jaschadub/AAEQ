@@ -330,6 +330,16 @@ impl DeviceController for WiimController {
                         let volume = status.vol.parse::<u8>().unwrap_or(75);
                         // Parse mute (string "0"/"1" -> bool)
                         let muted = status.mute == "1";
+
+                        // Debug logging to help diagnose status issues
+                        tracing::debug!(
+                            "WiiM player status - mode: '{}', status: '{}', volume: {}, muted: {}",
+                            status.mode,
+                            status.status,
+                            volume,
+                            muted
+                        );
+
                         Ok(Some((status.mode, status.status, volume, muted)))
                     }
                     Err(_) => Ok(None),
