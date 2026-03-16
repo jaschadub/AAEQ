@@ -270,7 +270,7 @@ impl WebSocketManager {
         let json = serde_json::to_string(&message)
             .map_err(|e| format!("Failed to serialize message: {:?}", e))?;
         
-        let ws_message = Message::Text(json);
+        let ws_message = Message::Text(json.into());
         
         if let Some(stream) = &mut self.stream {
             stream.send(ws_message)

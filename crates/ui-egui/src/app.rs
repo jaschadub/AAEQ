@@ -2567,7 +2567,34 @@ impl AaeqApp {
 
     /// Load DSP effect icons from assets directory
     fn load_dsp_icons(&mut self, ctx: &egui::Context) {
-        let icons_dir = std::path::Path::new("assets/icons/dsp");
+        // Try to find assets directory in multiple locations:
+        // 1. Relative to current working directory (development)
+        // 2. Relative to executable path (AppImage, Windows, Linux tar.gz)
+        // 3. In macOS app bundle (Contents/Resources/assets)
+        let icons_dir = if std::path::Path::new("assets/icons/dsp").exists() {
+            std::path::PathBuf::from("assets/icons/dsp")
+        } else if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                // Try relative to executable (AppImage, Windows, Linux)
+                let exe_relative = exe_dir.join("assets/icons/dsp");
+                if exe_relative.exists() {
+                    exe_relative
+                } else {
+                    // Try macOS app bundle structure (Contents/MacOS/../Resources/assets)
+                    let macos_bundle = exe_dir.join("../Resources/assets/icons/dsp");
+                    if macos_bundle.exists() {
+                        macos_bundle
+                    } else {
+                        // Fallback to original path
+                        std::path::PathBuf::from("assets/icons/dsp")
+                    }
+                }
+            } else {
+                std::path::PathBuf::from("assets/icons/dsp")
+            }
+        } else {
+            std::path::PathBuf::from("assets/icons/dsp")
+        };
 
         // Helper closure to load a single icon
         let load_icon = |path: &str| -> Option<egui::TextureHandle> {

@@ -42,6 +42,28 @@
               KeyPath='yes'
               Checksum='yes' />
           </Component>
+
+          <!-- Assets directory structure -->
+          <Directory Id='AssetsFolder' Name='assets'>
+            <Directory Id='IconsFolder' Name='icons'>
+              <Directory Id='DspIconsFolder' Name='dsp'>
+                <Component Id='DspIcons' Guid='*'>
+                  <File Id='RoomIcon' Name='room.png' Source='assets\icons\dsp\room.png' />
+                  <File Id='FadeIcon' Name='fade.png' Source='assets\icons\dsp\fade.png' />
+                  <File Id='TransientIcon' Name='transient.png' Source='assets\icons\dsp\transient.png' />
+                  <File Id='TransformerIcon' Name='transformer.png' Source='assets\icons\dsp\transformer.png' />
+                  <File Id='StereoIcon' Name='stereo.png' Source='assets\icons\dsp\stereo.png' />
+                  <File Id='TubeIcon' Name='tube.png' Source='assets\icons\dsp\tube.png' />
+                  <File Id='LimiterIcon' Name='limiter.png' Source='assets\icons\dsp\limiter.png' />
+                  <File Id='CompressorIcon' Name='compressor.png' Source='assets\icons\dsp\compressor.png' />
+                  <File Id='ExciterIcon' Name='exciter.png' Source='assets\icons\dsp\exciter.png' />
+                  <File Id='ExpanderIcon' Name='expander.png' Source='assets\icons\dsp\expander.png' />
+                  <File Id='TapeIcon' Name='tape.png' Source='assets\icons\dsp\tape.png' />
+                  <File Id='CrossfeedIcon' Name='crossfeed.png' Source='assets\icons\dsp\crossfeed.png' />
+                </Component>
+              </Directory>
+            </Directory>
+          </Directory>
         </Directory>
       </Directory>
 
@@ -98,6 +120,7 @@
       Display='expand'
       Absent='disallow'>
       <ComponentRef Id='MainExecutable' />
+      <ComponentRef Id='DspIcons' />
       <ComponentRef Id='ApplicationShortcut' />
 
       <Feature
