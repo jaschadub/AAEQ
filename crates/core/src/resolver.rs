@@ -1,3 +1,4 @@
+use crate::genre_presets::builtin_genre_preset;
 use crate::models::{Mapping, Scope, TrackMeta};
 use std::collections::HashMap;
 
@@ -43,7 +44,7 @@ impl RulesIndex {
 }
 
 /// Resolve the appropriate preset for a given track using the hierarchy:
-/// Song > Album > Genre > Default
+/// Song > Album > Genre > Built-in genre preset > Default
 pub fn resolve_preset(meta: &TrackMeta, rules: &RulesIndex, fallback: &str) -> String {
     // 1. Check song-specific rule
     let song_key = meta.song_key();
@@ -66,7 +67,13 @@ pub fn resolve_preset(meta: &TrackMeta, rules: &RulesIndex, fallback: &str) -> S
         return preset.clone();
     }
 
-    // 4. Use default from rules or fallback
+    // 4. Check built-in genre preset (no user rule for this genre)
+    if let Some(preset) = builtin_genre_preset(&meta.genre) {
+        tracing::debug!("Matched built-in genre preset: {} -> {}", genre_key, preset);
+        return preset.to_string();
+    }
+
+    // 5. Use default from rules or fallback
     let default = rules.default_preset.as_deref().unwrap_or(fallback);
     tracing::debug!("Using default preset: {}", default);
     default.to_string()
@@ -153,6 +160,64 @@ mod tests {
 
         let result = resolve_preset(&track, &rules, "Fallback");
         assert_eq!(result, "Flat");
+    }
+
+    #[test]
+    fn test_resolve_preset_builtin_genre() {
+        let track = TrackMeta {
+            artist: "Altın Gün".to_string(),
+            title: "Goca Dünya".to_string(),
+            album: "On".to_string(),
+            genre: "Alternative".to_string(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+
+        // No user genre rule: built-in genre preset beats the default
+        let rules = RulesIndex {
+            default_preset: Some("Flat".to_string()),
+            ..Default::default()
+        };
+
+        let result = resolve_preset(&track, &rules, "Fallback");
+        assert_eq!(result, "Rock");
+    }
+
+    #[test]
+    fn test_resolve_preset_user_genre_rule_beats_builtin() {
+        let track = TrackMeta {
+            artist: "Altın Gün".to_string(),
+            title: "Goca Dünya".to_string(),
+            album: "On".to_string(),
+            genre: "Alternative".to_string(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+
+        let mut rules = RulesIndex::default();
+        rules
+            .genre_rules
+            .insert("alternative".to_string(), "Pop".to_string());
+
+        let result = resolve_preset(&track, &rules, "Fallback");
+        assert_eq!(result, "Pop");
+    }
+
+    #[test]
+    fn test_resolve_preset_unmapped_genre_uses_default() {
+        let track = TrackMeta {
+            artist: "Various".to_string(),
+            title: "Song".to_string(),
+            album: "Album".to_string(),
+            genre: "World".to_string(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+
+        let rules = RulesIndex::default();
+
+        let result = resolve_preset(&track, &rules, "Fallback");
+        assert_eq!(result, "Fallback");
     }
 
     #[test]
