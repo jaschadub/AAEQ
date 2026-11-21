@@ -17,6 +17,27 @@ use stream_server::dsp::{
     HeadroomControl,
 };
 
+/// Fill in a missing genre from iTunes (album genre, then artist genre).
+///
+/// Must run after the manual genre override is applied so overrides always win.
+/// The result is never saved as an override. This never blocks: the first poll
+/// for an album starts the lookup in the background and a later poll applies it.
+fn apply_auto_genre(track: &mut TrackMeta) {
+    if !crate::album_art_lookup::genre_is_missing(&track.genre) {
+        return;
+    }
+
+    if let Some(genre) = crate::album_art_lookup::cached_genre(&track.artist, &track.album) {
+        tracing::debug!(
+            "Using iTunes genre for {} - {}: {}",
+            track.artist,
+            track.title,
+            genre
+        );
+        track.genre = genre;
+    }
+}
+
 /// Application mode tabs
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AppMode {
@@ -1424,8 +1445,6 @@ impl AaeqApp {
                                     }
                                 }
 
-                                let track_key = track.track_key();
-
                                 // Store device genre before applying override (always do this on every poll)
                                 track.device_genre = track.genre.clone();
 
@@ -1434,8 +1453,16 @@ impl AaeqApp {
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
                                 let song_key = track.song_key();
                                 if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
-                                    track.genre = genre_override;
+                                    if !genre_override.trim().is_empty() {
+                                        track.genre = genre_override;
+                                    }
                                 }
+
+                                // No override or device genre: fall back to iTunes genre
+                                apply_auto_genre(&mut track);
+
+                                // Key includes the final genre, so a genre arriving later re-resolves the preset
+                                let track_key = track.track_key();
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
@@ -1536,8 +1563,6 @@ impl AaeqApp {
                         // No WiiM device connected, try media session for DSP mode
                         match crate::media::get_now_playing() {
                             Ok(mut track) => {
-                                let track_key = track.track_key();
-
                                 // Store device genre before applying override (always do this on every poll)
                                 track.device_genre = track.genre.clone();
 
@@ -1546,8 +1571,16 @@ impl AaeqApp {
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
                                 let song_key = track.song_key();
                                 if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
-                                    track.genre = genre_override;
+                                    if !genre_override.trim().is_empty() {
+                                        track.genre = genre_override;
+                                    }
                                 }
+
+                                // No override or device genre: fall back to iTunes genre
+                                apply_auto_genre(&mut track);
+
+                                // Key includes the final genre, so a genre arriving later re-resolves the preset
+                                let track_key = track.track_key();
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {

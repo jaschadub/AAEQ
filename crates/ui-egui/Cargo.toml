@@ -27,3 +27,6 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 urlencoding = "2.1"
 regex = "1"
+
+[dev-dependencies]
+serde_json = { workspace = true }
