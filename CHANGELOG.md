@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Automatic Genre Lookup 🎼
+- **iTunes Genre Detection**: Tracks without a genre now get one automatically, so genre-based EQ rules work in WiiM mode without manual tagging
+  - Uses the `primaryGenreName` from the existing iTunes album search (no extra request when album art is already being looked up)
+  - Falls back to the artist's primary genre when the album isn't found
+  - Genre priority: manual override > device genre > iTunes album genre > iTunes artist genre
+  - Auto-detected genres are never saved as manual overrides
+  - Lookups run in the background and are cached in memory per album and artist for the session
+  - Genre is only taken from results that match the artist, never from a last-resort search result
+- **Built-in Genre Presets**: Genres without a user genre rule now map to a matching WiiM built-in preset automatically (e.g. Jazz → Jazz, Alternative → Rock, Arena Rock → Rock, Hip-Hop/Rap → Hip-Hop, Bossa Nova → Lounge)
+  - Covers every genre and sub-genre in Apple's music genre list (~470 names)
+  - Preset priority is now Song → Album → Genre rule → Built-in genre preset → Default
+  - User song, album and genre rules always take priority; genres too varied for one EQ curve (e.g. Worldwide, Holiday) use the default preset
+  - Table lives in `crates/core/src/genre_presets.rs`
+
+### Changed
+- **Preset re-resolution on genre change**: The polling loop now computes the track key after the genre override and auto genre are applied, so a genre that arrives (or is edited) while a track is playing re-resolves the EQ preset
+- **Empty genre overrides ignored**: An empty override (e.g. from the ↻ reset button) no longer blocks the device or auto-detected genre
+
 ## [0.7.0] - 2025-11-06
 
 ### Added
