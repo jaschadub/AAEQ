@@ -274,7 +274,7 @@ The table covers every genre and sub-genre in Apple's music genre list (about 47
 | Jazz | Jazz, Blues, Swing |
 | Classical | Classical, Opera, Orchestral, Indian/Chinese/Korean Classical |
 | Latin | Latin, Brazilian, Cuban, Tango, Tex-Mex |
-| Acoustic | Country, Folk, Singer/Songwriter, Celtic, Flamenco, Acoustic/Delta Blues, Cajun, Zydeco |
+| Acoustic | Country, Folk, Singer/Songwriter, Worldwide, Celtic, Flamenco, Acoustic/Delta Blues, Cajun, Zydeco, and regional categories such as Arabic, Turkish or South America |
 | Lounge | Easy Listening, New Age, Ambient, Smooth Jazz, Bossa Nova |
 | Deep | Downtempo, Trip Hop |
 | Bass Booster | Reggae, Dancehall, Dub, Bass |
@@ -284,7 +284,7 @@ The table covers every genre and sub-genre in Apple's music genre list (about 47
 | Game | Video Game |
 | Spoken Word | Spoken Word, Comedy, Hörspiele |
 
-The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Genres too varied for a single EQ curve (such as Worldwide, Holiday, Karaoke and regional categories like Arabic or Turkish) aren't mapped and use your default preset.
+The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped and use your default preset.
 
 To change any of these, play a track in that genre, apply the preset you prefer, and click **This Genre**.
 

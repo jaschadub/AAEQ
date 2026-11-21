@@ -8,15 +8,12 @@
 //! (https://itunes.apple.com/WebObjects/MZStoreServices.woa/ws/genres?id=34),
 //! plus a few older or alternate names iTunes still returns.
 //!
-//! Genres that are too varied for a single EQ curve are intentionally left out,
-//! so they fall through to the default preset:
+//! Holiday, children's and utility genres don't suit a single EQ curve, so they are
+//! intentionally left out and fall through to the default preset:
 //!
-//! Arabic, Asia, Australia, Chanukah, Children's Music, Chinese, Christmas, Christmas: Children's,
-//! Drinking Songs, Easter, Europe, Farsi, Fitness & Workout, France, Halloween, Holiday,
-//! Holiday: Other, Iberia, Israeli, Japan, Jewish Holidays, Jewish Music, Karaoke, Khaleeji,
-//! Khaleeji Jalsat, Khaleeji Shailat, Korean, Levant, Lullabies, North African, North America,
-//! Polka, Russian, Sing-Along, Sound Effects, South Africa, South America, Taarab, Thanksgiving,
-//! Tibetan Native Music, Turkish, World, Worldwide
+//! Chanukah, Children's Music, Christmas, Christmas: Children's, Easter, Fitness & Workout,
+//! Halloween, Holiday, Holiday: Other, Jewish Holidays, Jewish Music, Karaoke, Lullabies,
+//! Sing-Along, Sound Effects, Taarab, Thanksgiving
 
 use crate::models::normalize_key;
 
@@ -389,11 +386,15 @@ const GENRE_PRESETS: &[(&str, &str)] = &[
     ("alternative country", "Acoustic"),
     ("alternative folk", "Acoustic"),
     ("americana", "Acoustic"),
+    ("arabic", "Acoustic"),
+    ("asia", "Acoustic"),
+    ("australia", "Acoustic"),
     ("bard in russian", "Acoustic"),
     ("bluegrass", "Acoustic"),
     ("cajun", "Acoustic"),
     ("celtic", "Acoustic"),
     ("celtic folk", "Acoustic"),
+    ("chinese", "Acoustic"),
     ("chinese regional folk", "Acoustic"),
     ("choro", "Acoustic"),
     ("christmas: country", "Acoustic"),
@@ -406,31 +407,53 @@ const GENRE_PRESETS: &[(&str, &str)] = &[
     ("country blues", "Acoustic"),
     ("country gospel", "Acoustic"),
     ("delta blues", "Acoustic"),
+    ("drinking songs", "Acoustic"),
+    ("europe", "Acoustic"),
+    ("farsi", "Acoustic"),
     ("flamenco", "Acoustic"),
     ("folk", "Acoustic"),
     ("folk-rock", "Acoustic"),
+    ("france", "Acoustic"),
     ("german folk", "Acoustic"),
     ("guitar", "Acoustic"),
     ("halk", "Acoustic"),
     ("hawaii", "Acoustic"),
     ("honky tonk", "Acoustic"),
+    ("iberia", "Acoustic"),
     ("indian folk", "Acoustic"),
     ("iraqi folk", "Acoustic"),
+    ("israeli", "Acoustic"),
+    ("japan", "Acoustic"),
+    ("khaleeji", "Acoustic"),
     ("khaleeji folk", "Acoustic"),
+    ("khaleeji jalsat", "Acoustic"),
+    ("khaleeji shailat", "Acoustic"),
     ("klezmer", "Acoustic"),
+    ("korean", "Acoustic"),
     ("korean trad instrumental", "Acoustic"),
+    ("levant", "Acoustic"),
     ("maskandi", "Acoustic"),
     ("new acoustic", "Acoustic"),
+    ("north african", "Acoustic"),
+    ("north america", "Acoustic"),
     ("outlaw country", "Acoustic"),
+    ("polka", "Acoustic"),
+    ("russian", "Acoustic"),
     ("sertanejo", "Acoustic"),
     ("singer/songwriter", "Acoustic"),
+    ("south africa", "Acoustic"),
+    ("south america", "Acoustic"),
     ("taiwanese folk", "Acoustic"),
     ("thai country", "Acoustic"),
+    ("tibetan native music", "Acoustic"),
     ("traditional bluegrass", "Acoustic"),
     ("traditional celtic", "Acoustic"),
     ("traditional country", "Acoustic"),
     ("traditional folk", "Acoustic"),
+    ("turkish", "Acoustic"),
     ("urban cowboy", "Acoustic"),
+    ("world", "Acoustic"),
+    ("worldwide", "Acoustic"),
     ("zydeco", "Acoustic"),
     ("özgün", "Acoustic"),
     // Lounge
@@ -611,6 +634,17 @@ mod tests {
     }
 
     #[test]
+    fn test_world_and_regional_genres() {
+        assert_eq!(builtin_genre_preset("Worldwide"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("World"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("South America"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("Turkish"), Some("Acoustic"));
+        // Specific sub-genres keep their own preset
+        assert_eq!(builtin_genre_preset("Fado"), Some("Vocal Booster"));
+        assert_eq!(builtin_genre_preset("Tango"), Some("Latin"));
+    }
+
+    #[test]
     fn test_case_and_whitespace_insensitive() {
         assert_eq!(builtin_genre_preset("  ALTERNATIVE "), Some("Rock"));
         assert_eq!(builtin_genre_preset("hip-hop/rap"), Some("Hip-Hop"));
@@ -618,9 +652,8 @@ mod tests {
 
     #[test]
     fn test_unmapped_genres() {
-        assert_eq!(builtin_genre_preset("Worldwide"), None);
-        assert_eq!(builtin_genre_preset("World"), None);
         assert_eq!(builtin_genre_preset("Holiday"), None);
+        assert_eq!(builtin_genre_preset("Karaoke"), None);
         assert_eq!(builtin_genre_preset(""), None);
         assert_eq!(builtin_genre_preset("Unknown"), None);
     }

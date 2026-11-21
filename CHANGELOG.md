@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Built-in Genre Presets**: Genres without a user genre rule now map to a matching WiiM built-in preset automatically (e.g. Jazz → Jazz, Alternative → Rock, Arena Rock → Rock, Hip-Hop/Rap → Hip-Hop, Bossa Nova → Lounge)
   - Covers every genre and sub-genre in Apple's music genre list (~470 names)
   - Preset priority is now Song → Album → Genre rule → Built-in genre preset → Default
-  - User song, album and genre rules always take priority; genres too varied for one EQ curve (e.g. Worldwide, Holiday) use the default preset
+  - User song, album and genre rules always take priority; Worldwide and regional catch-all genres use Acoustic; holiday, children's and utility genres (e.g. Christmas, Karaoke) use the default preset
   - Table lives in `crates/core/src/genre_presets.rs`
 - **Genre Preset Setting**: New **Automatically apply suggested genre presets** checkbox in Settings (on by default)
   - When off, only song, album and genre rules apply (genres are still looked up), and Now Playing shows the suggested preset as a hint

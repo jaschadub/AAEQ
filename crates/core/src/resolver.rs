@@ -241,7 +241,7 @@ mod tests {
             artist: "Various".to_string(),
             title: "Song".to_string(),
             album: "Album".to_string(),
-            genre: "World".to_string(),
+            genre: "Holiday".to_string(),
             device_genre: String::new(),
             album_art_url: None,
         };
