@@ -7,7 +7,7 @@ AAEQ polls your WiiM device every second to check what's currently playing. When
 1. Checks for a **song-specific** mapping (`Artist - Title`)
 2. Falls back to **album mapping** (`Artist - Album`)
 3. Falls back to **genre mapping** (if genre is set)
-4. Falls back to a **built-in genre preset** (e.g. Alternative → Rock) when the genre has no mapping
+4. Falls back to a **built-in genre preset** (e.g. Alternative → Rock) when the genre has no mapping, if enabled in Settings (on by default)
 5. Falls back to **default preset** (usually "Flat")
 
 If the device doesn't report a genre (WiiM never does), AAEQ fills it in from the iTunes Search API in the background. Manual genre edits always take priority.

@@ -45,7 +45,14 @@ impl RulesIndex {
 
 /// Resolve the appropriate preset for a given track using the hierarchy:
 /// Song > Album > Genre > Built-in genre preset > Default
-pub fn resolve_preset(meta: &TrackMeta, rules: &RulesIndex, fallback: &str) -> String {
+///
+/// The built-in genre preset step only runs when `use_builtin_genre_presets` is true.
+pub fn resolve_preset(
+    meta: &TrackMeta,
+    rules: &RulesIndex,
+    fallback: &str,
+    use_builtin_genre_presets: bool,
+) -> String {
     // 1. Check song-specific rule
     let song_key = meta.song_key();
     if let Some(preset) = rules.song_rules.get(&song_key) {
@@ -68,9 +75,11 @@ pub fn resolve_preset(meta: &TrackMeta, rules: &RulesIndex, fallback: &str) -> S
     }
 
     // 4. Check built-in genre preset (no user rule for this genre)
-    if let Some(preset) = builtin_genre_preset(&meta.genre) {
-        tracing::debug!("Matched built-in genre preset: {} -> {}", genre_key, preset);
-        return preset.to_string();
+    if use_builtin_genre_presets {
+        if let Some(preset) = builtin_genre_preset(&meta.genre) {
+            tracing::debug!("Matched built-in genre preset: {} -> {}", genre_key, preset);
+            return preset.to_string();
+        }
     }
 
     // 5. Use default from rules or fallback
@@ -100,7 +109,7 @@ mod tests {
         rules.genre_rules.insert("rock".to_string(), "Rock".to_string());
         rules.default_preset = Some("Flat".to_string());
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Bass Boost");
     }
 
@@ -119,7 +128,7 @@ mod tests {
         rules.album_rules.insert("pink floyd - the dark side of the moon".to_string(), "Neutral".to_string());
         rules.genre_rules.insert("rock".to_string(), "Rock".to_string());
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Neutral");
     }
 
@@ -138,7 +147,7 @@ mod tests {
         rules.genre_rules.insert("rock".to_string(), "Rock".to_string());
         rules.default_preset = Some("Flat".to_string());
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Rock");
     }
 
@@ -158,7 +167,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Flat");
     }
 
@@ -179,7 +188,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Rock");
     }
 
@@ -199,7 +208,30 @@ mod tests {
             .genre_rules
             .insert("alternative".to_string(), "Pop".to_string());
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
+        assert_eq!(result, "Pop");
+    }
+
+    #[test]
+    fn test_resolve_preset_builtin_genre_disabled() {
+        let track = TrackMeta {
+            artist: "Altın Gün".to_string(),
+            title: "Goca Dünya".to_string(),
+            album: "On".to_string(),
+            genre: "Alternative".to_string(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+
+        let mut rules = RulesIndex::default();
+        let result = resolve_preset(&track, &rules, "Fallback", false);
+        assert_eq!(result, "Fallback");
+
+        // User genre rules still apply when built-in presets are disabled
+        rules
+            .genre_rules
+            .insert("alternative".to_string(), "Pop".to_string());
+        let result = resolve_preset(&track, &rules, "Fallback", false);
         assert_eq!(result, "Pop");
     }
 
@@ -216,7 +248,7 @@ mod tests {
 
         let rules = RulesIndex::default();
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Fallback");
     }
 
@@ -225,7 +257,7 @@ mod tests {
         let track = TrackMeta::default();
         let rules = RulesIndex::default();
 
-        let result = resolve_preset(&track, &rules, "Fallback");
+        let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Fallback");
     }
 }

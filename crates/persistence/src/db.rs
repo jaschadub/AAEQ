@@ -626,6 +626,27 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
         tracing::info!("Added 11 DSP enhancer columns to dsp_profile_settings table");
     }
 
+    // Migration 018: Add auto_genre_presets to app_settings
+    let auto_genre_presets_column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('app_settings') WHERE name = 'auto_genre_presets'"
+    )
+    .fetch_one(pool)
+    .await?
+    .get::<i32, _>("count") > 0;
+
+    if !auto_genre_presets_column_exists {
+        sqlx::query("ALTER TABLE app_settings ADD COLUMN auto_genre_presets INTEGER DEFAULT 1")
+            .execute(pool)
+            .await?;
+        tracing::info!("Added auto_genre_presets column to app_settings");
+
+        // Update existing rows to have auto_genre_presets = 1 (enabled by default)
+        // The DEFAULT in ALTER TABLE only applies to new rows, not existing ones
+        sqlx::query("UPDATE app_settings SET auto_genre_presets = 1 WHERE auto_genre_presets IS NULL")
+            .execute(pool)
+            .await?;
+    }
+
     tracing::info!("Database migrations completed");
     Ok(())
 }

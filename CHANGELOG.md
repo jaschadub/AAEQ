@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Preset priority is now Song → Album → Genre rule → Built-in genre preset → Default
   - User song, album and genre rules always take priority; genres too varied for one EQ curve (e.g. Worldwide, Holiday) use the default preset
   - Table lives in `crates/core/src/genre_presets.rs`
+- **Genre Preset Setting**: New **Automatically apply suggested genre presets** checkbox in Settings (on by default)
+  - When off, only song, album and genre rules apply (genres are still looked up), and Now Playing shows the suggested preset as a hint
+  - Changing it re-resolves the current track immediately
+  - Stored in a new `auto_genre_presets` column in `app_settings` (migration 018)
 
 ### Changed
 - **Preset re-resolution on genre change**: The polling loop now computes the track key after the genre override and auto genre are applied, so a genre that arrives (or is edited) while a track is playing re-resolves the EQ preset

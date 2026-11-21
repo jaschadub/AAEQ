@@ -536,6 +536,49 @@ impl AppSettingsRepository {
         Ok(())
     }
 
+    /// Whether to apply the built-in genre preset when no genre rule matches (default: true)
+    pub async fn get_auto_genre_presets(&self) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT auto_genre_presets FROM app_settings WHERE id = 1"
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.and_then(|r| {
+            let value: Option<i32> = r.get(0);
+            value.map(|v| v != 0)
+        }).unwrap_or(true))
+    }
+
+    pub async fn set_auto_genre_presets(&self, enabled: bool) -> Result<()> {
+        let now = Utc::now().timestamp();
+        let value = if enabled { 1 } else { 0 };
+
+        // Try to update existing row first
+        let result = sqlx::query(
+            "UPDATE app_settings SET auto_genre_presets = ?, updated_at = ? WHERE id = 1"
+        )
+        .bind(value)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        // If no row was updated, insert a new one
+        if result.rows_affected() == 0 {
+            sqlx::query(
+                "INSERT INTO app_settings (id, auto_genre_presets, created_at, updated_at)
+                 VALUES (1, ?, ?, ?)"
+            )
+            .bind(value)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn get_enable_debug_logging(&self) -> Result<bool> {
         let row = sqlx::query(
             "SELECT enable_debug_logging FROM app_settings WHERE id = 1"

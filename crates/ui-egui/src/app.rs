@@ -224,6 +224,7 @@ enum AppCommand {
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
     SaveEnableDebugLogging(bool), // Save debug logging preference to database
+    SaveAutoGenrePresets(bool), // Save built-in genre preset preference and use it for future resolves
     SaveHotkeyEnabled(bool), // Save hotkey enabled preference to database
     SaveHotkey(String, String), // Save hotkey configuration (modifiers, key) to database
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
@@ -350,6 +351,8 @@ pub struct AaeqApp {
     preset_before_editor: Option<String>, // Track preset before opening editor (for restoration on cancel)
     status_message: Option<String>,
     auto_reconnect: bool,
+    /// Apply the built-in genre preset when no genre rule matches
+    auto_genre_presets: bool,
     connection_lost_time: Option<Instant>,
     reconnect_interval: Duration,
     discovered_devices: Vec<(String, String)>, // Vec<(name, host)>
@@ -426,6 +429,7 @@ impl AaeqApp {
             preset_before_editor: None,
             status_message: None,
             auto_reconnect: true, // Enable by default
+            auto_genre_presets: true, // Enable by default
             connection_lost_time: None,
             reconnect_interval: Duration::from_secs(5),
             discovered_devices: vec![],
@@ -599,6 +603,10 @@ impl AaeqApp {
             }
         }
 
+        // Load built-in genre preset setting (defaults to enabled)
+        self.auto_genre_presets = settings_repo.get_auto_genre_presets().await.unwrap_or(true);
+        self.now_playing_view.auto_genre_presets = self.auto_genre_presets;
+
         // Load last connected host from settings
         if let Ok(Some(last_host)) = settings_repo.get_last_connected_host().await {
             tracing::info!("Loading last connected host: {}", last_host);
@@ -727,7 +735,7 @@ impl AaeqApp {
 
             // Resolve preset
             let rules = self.rules_index.read().await;
-            let desired_preset = resolve_preset(&track, &rules, "Flat");
+            let desired_preset = resolve_preset(&track, &rules, "Flat", self.auto_genre_presets);
             drop(rules);
 
             // Apply if different from current
@@ -819,6 +827,10 @@ impl AaeqApp {
         let mut last_track_key: Option<String> = None;
         let mut last_track: Option<aaeq_core::TrackMeta> = None;
         let mut current_preset: Option<String> = None;
+        let mut auto_genre_presets = AppSettingsRepository::new(pool.clone())
+            .get_auto_genre_presets()
+            .await
+            .unwrap_or(true);
 
         // DSP state
         let mut output_manager = OutputManager::new();
@@ -1094,6 +1106,16 @@ impl AaeqApp {
                     }
                 }
 
+                AppCommand::SaveAutoGenrePresets(enabled) => {
+                    auto_genre_presets = enabled;
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_auto_genre_presets(enabled).await {
+                        tracing::error!("Failed to save genre preset setting: {}", e);
+                    } else {
+                        tracing::info!("Genre preset setting saved: {}", enabled);
+                    }
+                }
+
                 AppCommand::SaveHotkeyEnabled(enabled) => {
                     let settings_repo = AppSettingsRepository::new(pool.clone());
                     if let Err(e) = settings_repo.set_hotkey_enabled(enabled).await {
@@ -1255,7 +1277,8 @@ impl AaeqApp {
 
                         // Resolve preset with the new rules (from the switched profile)
                         let rules = rules_index.read().await;
-                        let desired_preset = resolve_preset(track, &rules, "Flat");
+                        let desired_preset =
+                            resolve_preset(track, &rules, "Flat", auto_genre_presets);
                         drop(rules);
 
                         tracing::info!("Profile switch resolved preset: {} (current: {:?})", desired_preset, current_preset);
@@ -1470,7 +1493,8 @@ impl AaeqApp {
 
                                     // Resolve preset
                                     let rules = rules_index.read().await;
-                                    let desired_preset = resolve_preset(&track, &rules, "Flat");
+                                    let desired_preset =
+                                        resolve_preset(&track, &rules, "Flat", auto_genre_presets);
                                     drop(rules);
 
                                     // Apply if different from current
@@ -1588,7 +1612,8 @@ impl AaeqApp {
 
                                     // Resolve preset based on rules
                                     let rules = rules_index.read().await;
-                                    let desired_preset = resolve_preset(&track, &rules, "Flat");
+                                    let desired_preset =
+                                        resolve_preset(&track, &rules, "Flat", auto_genre_presets);
                                     drop(rules);
 
                                     // If DSP is streaming and preset changed, apply it automatically
@@ -4190,6 +4215,38 @@ impl eframe::App for AaeqApp {
                                     }
                                 });
                         });
+                        ui.add_space(5.0);
+                    });
+
+                    ui.add_space(15.0);
+
+                    // Genre preset option
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Genre Presets").heading().size(15.0));
+                        ui.add_space(15.0);
+
+                        if ui
+                            .checkbox(
+                                &mut self.auto_genre_presets,
+                                "Automatically apply suggested genre presets",
+                            )
+                            .on_hover_text(
+                                "When a track's genre has no rule, apply a matching WiiM preset \
+                                 (e.g. Jazz → Jazz, Alternative → Rock). Your song, album and \
+                                 genre rules always take priority.",
+                            )
+                            .changed()
+                        {
+                            tracing::info!("Genre presets changed to: {}", self.auto_genre_presets);
+                            self.now_playing_view.auto_genre_presets = self.auto_genre_presets;
+                            let _ = self
+                                .command_tx
+                                .send(AppCommand::SaveAutoGenrePresets(self.auto_genre_presets));
+                            // Re-resolve the current track so the change takes effect now
+                            let _ = self.command_tx.send(AppCommand::ReapplyPresetForCurrentTrack);
+                        }
                         ui.add_space(5.0);
                     });
 

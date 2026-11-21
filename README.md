@@ -288,6 +288,8 @@ The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_p
 
 To change any of these, play a track in that genre, apply the preset you prefer, and click **This Genre**.
 
+To turn built-in genre presets off, untick **Automatically apply suggested genre presets** in the **Settings** tab. Genres are still looked up and your own rules still apply; Now Playing shows the suggested preset next to the current one so you can apply it and save a genre rule if you agree.
+
 ### Manual Genre Editing
 
 1. Click on the genre field in "Now Playing"
