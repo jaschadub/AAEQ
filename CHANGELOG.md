@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Built-in Genre Presets**: Genres without a user genre rule now map to a matching WiiM built-in preset automatically (e.g. Jazz → Jazz, Alternative → Rock, Arena Rock → Rock, Hip-Hop/Rap → Hip-Hop, Bossa Nova → Lounge)
   - Covers every genre and sub-genre in Apple's music genre list (~470 names)
   - Preset priority is now Song → Album → Genre rule → Built-in genre preset → Default
-  - User song, album and genre rules always take priority; Worldwide and regional catch-all genres use Acoustic; holiday, children's and utility genres (e.g. Christmas, Karaoke) use the default preset
+  - User song, album and genre rules always take priority; Worldwide and regional catch-all genres use Acoustic; holiday, children's and utility genres (e.g. Christmas, Karaoke) are unmapped
   - Table lives in `crates/core/src/genre_presets.rs`
 - **Genre Preset Setting**: New **Automatically apply suggested genre presets** checkbox in Settings (on by default)
   - When off, only song, album and genre rules apply (genres are still looked up), and Now Playing shows the suggested preset as a hint
@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Stored in a new `auto_genre_presets` column in `app_settings` (migration 018)
 
 ### Changed
+- **EQ Off When Nothing Matches**: In WiiM mode, when no rule or built-in genre preset matches and no Default mapping is saved, AAEQ now turns the device's EQ off (`EQOff`) instead of applying "Flat", so tracks play with no EQ processing
+  - Now Playing shows "EQ Off"; the next preset load turns EQ back on
+  - "EQ Off" can be saved as a song, album or genre mapping
+  - A saved Default mapping still takes priority; DSP streaming mode still uses "Flat"
+  - New `DeviceController::set_eq_enabled` (default: unsupported), implemented for WiiM
 - **Preset re-resolution on genre change**: The polling loop now computes the track key after the genre override and auto genre are applied, so a genre that arrives (or is edited) while a track is playing re-resolves the EQ preset
 - **Empty genre overrides ignored**: An empty override (e.g. from the ↻ reset button) no longer blocks the device or auto-detected genre
 

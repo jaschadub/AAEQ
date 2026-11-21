@@ -43,6 +43,12 @@ impl RulesIndex {
     }
 }
 
+/// Special preset name meaning "turn the device's EQ off" rather than load a preset.
+///
+/// Used as the fallback in WiiM mode when no rule matches, so tracks without a
+/// matching preset play with no EQ processing at all. It can also be saved as a rule.
+pub const EQ_OFF_PRESET: &str = "EQ Off";
+
 /// Resolve the appropriate preset for a given track using the hierarchy:
 /// Song > Album > Genre > Built-in genre preset > Default
 ///
@@ -250,6 +256,28 @@ mod tests {
 
         let result = resolve_preset(&track, &rules, "Fallback", true);
         assert_eq!(result, "Fallback");
+    }
+
+    #[test]
+    fn test_resolve_preset_eq_off_when_nothing_matches() {
+        let track = TrackMeta {
+            artist: "Various".to_string(),
+            title: "Song".to_string(),
+            album: "Album".to_string(),
+            genre: "Holiday".to_string(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+
+        // No rules and no built-in match: fall back to turning EQ off
+        let mut rules = RulesIndex::default();
+        let result = resolve_preset(&track, &rules, EQ_OFF_PRESET, true);
+        assert_eq!(result, EQ_OFF_PRESET);
+
+        // A user's Default rule is an explicit choice and still wins
+        rules.default_preset = Some("Flat".to_string());
+        let result = resolve_preset(&track, &rules, EQ_OFF_PRESET, true);
+        assert_eq!(result, "Flat");
     }
 
     #[test]

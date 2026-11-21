@@ -93,4 +93,10 @@ pub trait DeviceController: Send + Sync {
     async fn set_mute(&self, _muted: bool) -> Result<()> {
         Err(anyhow!("Mute control not supported by this device"))
     }
+
+    /// Turn the device's EQ on or off
+    /// Default implementation returns an error. Override in device implementations that support this.
+    async fn set_eq_enabled(&self, _enabled: bool) -> Result<()> {
+        Err(anyhow!("EQ on/off not supported by this device"))
+    }
 }

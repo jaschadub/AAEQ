@@ -362,6 +362,21 @@ impl DeviceController for WiimController {
         self.execute_command(&command).await?;
         Ok(())
     }
+
+    /// Turn EQ on or off (loading a preset with EQLoad also turns EQ back on)
+    async fn set_eq_enabled(&self, enabled: bool) -> Result<()> {
+        if enabled {
+            self.eq_on().await?;
+        } else {
+            self.eq_off().await?;
+        }
+        tracing::info!(
+            "Turned EQ {} on device '{}'",
+            if enabled { "on" } else { "off" },
+            self.label
+        );
+        Ok(())
+    }
 }
 
 /// Helper functions for WiiM-specific operations

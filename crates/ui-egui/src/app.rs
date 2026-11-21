@@ -1,4 +1,4 @@
-use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
+use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta, EQ_OFF_PRESET};
 use aaeq_device_wiim::{WiimController, discover_devices_quick};
 use aaeq_persistence::{AppSettingsRepository, CustomEqPresetRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository, ProfileRepository};
 use crate::views::*;
@@ -35,6 +35,34 @@ fn apply_auto_genre(track: &mut TrackMeta) {
             genre
         );
         track.genre = genre;
+    }
+}
+
+/// Preset to use when no rule matches. On a WiiM, turn its EQ off so the track plays
+/// with no EQ processing. AAEQ's own DSP has no "off" switch, so use Flat there.
+fn no_match_preset(device_eq: bool) -> &'static str {
+    if device_eq {
+        EQ_OFF_PRESET
+    } else {
+        "Flat"
+    }
+}
+
+/// AAEQ's DSP has no "EQ off" switch; Flat applies no adjustment
+fn dsp_preset(preset: String) -> String {
+    if preset == EQ_OFF_PRESET {
+        "Flat".to_string()
+    } else {
+        preset
+    }
+}
+
+/// Apply a preset to the device, or turn its EQ off for `EQ_OFF_PRESET`
+async fn apply_device_preset(dev: &dyn DeviceController, preset: &str) -> Result<()> {
+    if preset == EQ_OFF_PRESET {
+        dev.set_eq_enabled(false).await
+    } else {
+        dev.apply_preset(preset).await
     }
 }
 
@@ -1251,7 +1279,12 @@ impl AaeqApp {
 
                 AppCommand::LoadPresetCurve(preset_name) => {
                     // Load EQ curve for display using the database-aware function
-                    let curve = crate::preset_library::get_preset_curve_with_db(&preset_name, &pool).await;
+                    // (no curve when the device EQ is turned off)
+                    let curve = if preset_name == EQ_OFF_PRESET {
+                        None
+                    } else {
+                        crate::preset_library::get_preset_curve_with_db(&preset_name, &pool).await
+                    };
                     let _ = response_tx.send(AppResponse::PresetCurveLoaded(curve));
                 }
 
@@ -1277,9 +1310,13 @@ impl AaeqApp {
 
                         // Resolve preset with the new rules (from the switched profile)
                         let rules = rules_index.read().await;
-                        let desired_preset =
-                            resolve_preset(track, &rules, "Flat", auto_genre_presets);
+                        let fallback = no_match_preset(!dsp_is_streaming && device.is_some());
+                        let mut desired_preset =
+                            resolve_preset(track, &rules, fallback, auto_genre_presets);
                         drop(rules);
+                        if dsp_is_streaming {
+                            desired_preset = dsp_preset(desired_preset);
+                        }
 
                         tracing::info!("Profile switch resolved preset: {} (current: {:?})", desired_preset, current_preset);
 
@@ -1307,7 +1344,7 @@ impl AaeqApp {
                         } else if let Some(dev) = &device {
                             // Use WiiM API
                             tracing::info!("Applying preset via WiiM API: {}", desired_preset);
-                            match dev.apply_preset(&desired_preset).await {
+                            match apply_device_preset(dev.as_ref(), &desired_preset).await {
                                 Ok(_) => {
                                     current_preset = Some(desired_preset.clone());
                                     tracing::info!("Successfully applied preset via WiiM API");
@@ -1493,9 +1530,13 @@ impl AaeqApp {
 
                                     // Resolve preset
                                     let rules = rules_index.read().await;
-                                    let desired_preset =
-                                        resolve_preset(&track, &rules, "Flat", auto_genre_presets);
+                                    let fallback = no_match_preset(!dsp_is_streaming);
+                                    let mut desired_preset =
+                                        resolve_preset(&track, &rules, fallback, auto_genre_presets);
                                     drop(rules);
+                                    if dsp_is_streaming {
+                                        desired_preset = dsp_preset(desired_preset);
+                                    }
 
                                     // Apply if different from current
                                     if current_preset.as_deref() != Some(&desired_preset) {
@@ -1516,7 +1557,7 @@ impl AaeqApp {
                                             }
                                         } else {
                                             // Use WiiM API
-                                            match dev.apply_preset(&desired_preset).await {
+                                            match apply_device_preset(dev.as_ref(), &desired_preset).await {
                                                 Ok(_) => {
                                                     current_preset = Some(desired_preset.clone());
 
@@ -1612,8 +1653,12 @@ impl AaeqApp {
 
                                     // Resolve preset based on rules
                                     let rules = rules_index.read().await;
-                                    let desired_preset =
-                                        resolve_preset(&track, &rules, "Flat", auto_genre_presets);
+                                    let desired_preset = dsp_preset(resolve_preset(
+                                        &track,
+                                        &rules,
+                                        "Flat",
+                                        auto_genre_presets,
+                                    ));
                                     drop(rules);
 
                                     // If DSP is streaming and preset changed, apply it automatically

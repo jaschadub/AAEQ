@@ -895,8 +895,9 @@ impl NowPlayingView {
                         let is_known = crate::preset_library::is_known_preset(preset);
                         let is_custom = self.custom_presets.iter().any(|p| p == preset);
                         let is_exact_curve = is_known || is_custom;
+                        let eq_off = preset == aaeq_core::EQ_OFF_PRESET;
 
-                        if is_exact_curve {
+                        if is_exact_curve || eq_off {
                             ui.label("EQ Curve:");
                         } else {
                             ui.horizontal(|ui| {
@@ -1003,6 +1004,18 @@ impl NowPlayingView {
                                 });
                             }
                         });
+                        } else if eq_off {
+                            // Device EQ is turned off: no curve to show
+                            ui.add_space(40.0); // Add space to center vertically
+                            ui.label(
+                                egui::RichText::new("EQ is off (no matching preset)")
+                                    .color(egui::Color32::GRAY)
+                                    .italics(),
+                            )
+                            .on_hover_text(
+                                "No song, album or genre preset matched, so the device's EQ is \
+                                 turned off. Apply a preset and save it to change this.",
+                            );
                         } else {
                             // Show loading spinner while curve is being fetched
                             ui.add_space(40.0); // Add space to center vertically

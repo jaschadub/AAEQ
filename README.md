@@ -29,7 +29,7 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 ## Features
 
 ### EQ Management Mode
-- **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → built-in genre preset → default priority
+- **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → built-in genre preset → default priority, and turns the WiiM's EQ off when nothing matches
 - **Automatic Genre EQ** - Fills in missing genres from the iTunes Search API and picks a matching WiiM preset (e.g. Jazz → Jazz, Alternative → Rock) with no setup
 - **Manual Genre Editing** - Add or correct genres for any track; manual edits always take priority
 - **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
@@ -284,7 +284,11 @@ The table covers every genre and sub-genre in Apple's music genre list (about 47
 | Game | Video Game |
 | Spoken Word | Spoken Word, Comedy, Hörspiele |
 
-The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped and use your default preset.
+The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped.
+
+### When Nothing Matches
+
+If no song, album or genre rule matches, the built-in table has no match, and you haven't saved a **Default** mapping, AAEQ turns your WiiM's EQ **off** for that track instead of applying "Flat", so the audio gets no EQ processing at all. Now Playing shows **EQ Off**. Loading a preset for the next track turns the EQ back on. While EQ is off you can still click **This Song**, **This Album** or **This Genre** to keep it off for those tracks, or save a **Default** mapping to use a preset instead. (In DSP streaming mode, AAEQ uses "Flat" here.)
 
 To change any of these, play a track in that genre, apply the preset you prefer, and click **This Genre**.
 
