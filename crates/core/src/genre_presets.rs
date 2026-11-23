@@ -484,8 +484,8 @@ const GENRE_PRESETS: &[(&str, &str)] = &[
     ("reggae", "Bass Booster"),
     ("roots reggae", "Bass Booster"),
     ("ska", "Bass Booster"),
-    // Piano
-    ("instrumental", "Piano"),
+    // Piano ("Instrumental" is deliberately unmapped: it says nothing about style,
+    // and iTunes uses it for post-rock, lounge and film music as well as piano)
     ("nocturne", "Piano"),
     ("piano", "Piano"),
     ("ragtime", "Piano"),
@@ -654,6 +654,8 @@ mod tests {
     fn test_unmapped_genres() {
         assert_eq!(builtin_genre_preset("Holiday"), None);
         assert_eq!(builtin_genre_preset("Karaoke"), None);
+        // Too broad to pick a preset (post-rock, lounge, film music, piano...)
+        assert_eq!(builtin_genre_preset("Instrumental"), None);
         assert_eq!(builtin_genre_preset(""), None);
         assert_eq!(builtin_genre_preset("Unknown"), None);
     }

@@ -278,13 +278,13 @@ The table covers every genre and sub-genre in Apple's music genre list (about 47
 | Lounge | Easy Listening, New Age, Ambient, Smooth Jazz, Bossa Nova |
 | Deep | Downtempo, Trip Hop |
 | Bass Booster | Reggae, Dancehall, Dub, Bass |
-| Piano | Instrumental, Piano, Ragtime, Nocturne |
+| Piano | Piano, Ragtime, Nocturne |
 | Vocal Booster | Vocal, Gospel, Musicals, Doo Wop, Tarab, Enka, Fado, Ghazals |
 | Movie | Soundtrack, Film Music, Original Score |
 | Game | Video Game |
 | Spoken Word | Spoken Word, Comedy, Hörspiele |
 
-The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped.
+The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped, and neither is Instrumental, which iTunes uses for styles from post-rock to solo piano.
 
 ### When Nothing Matches
 
