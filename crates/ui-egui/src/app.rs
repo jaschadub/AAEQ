@@ -38,6 +38,17 @@ fn apply_auto_genre(track: &mut TrackMeta) {
     }
 }
 
+/// Genre for the "Track changed" log line. The track key includes the genre, so a
+/// genre that arrives after the first poll logs the same track again; showing it
+/// makes clear what changed.
+fn log_genre(track: &TrackMeta) -> &str {
+    if crate::album_art_lookup::genre_is_missing(&track.genre) {
+        "not known yet"
+    } else {
+        &track.genre
+    }
+}
+
 /// Preset to use when no rule matches. On a WiiM, turn its EQ off so the track plays
 /// with no EQ processing. AAEQ's own DSP has no "off" switch, so use Flat there.
 fn no_match_preset(device_eq: bool) -> &'static str {
@@ -1526,7 +1537,7 @@ impl AaeqApp {
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
-                                    tracing::info!("Track changed: {} - {}", track.artist, track.title);
+                                    tracing::info!("Track changed: {} - {} (genre: {})", track.artist, track.title, log_genre(&track));
 
                                     // Resolve preset
                                     let rules = rules_index.read().await;
@@ -1649,7 +1660,7 @@ impl AaeqApp {
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
-                                    tracing::info!("Track changed (MPRIS): {} - {}", track.artist, track.title);
+                                    tracing::info!("Track changed (MPRIS): {} - {} (genre: {})", track.artist, track.title, log_genre(&track));
 
                                     // Resolve preset based on rules
                                     let rules = rules_index.read().await;
