@@ -110,14 +110,34 @@ impl WiimController {
         result
     }
 
-    /// Get additional metadata that might not be in getPlayerStatus
-    /// This is a helper to extract metadata from various sources
-    #[allow(dead_code)]
-    async fn get_metadata_supplemental(&self) -> Result<(String, String, String)> {
-        // Try to get more detailed info from other endpoints if needed
-        // For now, return empty strings - metadata should come from getPlayerStatus
-        Ok((String::new(), String::new(), String::new()))
+    /// Get the track metadata from getMetaInfo
+    async fn get_meta_info(&self) -> Result<MetaInfo> {
+        let response = self.execute_command("getMetaInfo").await?;
+        let info: MetaInfoResponse = serde_json::from_str(&response)
+            .context("Failed to parse getMetaInfo response")?;
+        Ok(info.meta_data)
     }
+
+    /// Fill empty title, artist and album fields from getMetaInfo.
+    ///
+    /// Only fields that are empty are filled, so getPlayerStatus values win.
+    fn fill_missing_metadata(meta: &mut TrackMeta, info: &MetaInfo) {
+        for (field, value) in [
+            (&mut meta.title, &info.title),
+            (&mut meta.artist, &info.artist),
+            (&mut meta.album, &info.album),
+        ] {
+            if field.is_empty() && !is_unknown_meta(value) {
+                *field = value.trim().to_string();
+            }
+        }
+    }
+}
+
+/// getMetaInfo writes "unknow" (sic) for fields the source doesn't provide
+fn is_unknown_meta(value: &str) -> bool {
+    let value = value.trim();
+    value.is_empty() || value.eq_ignore_ascii_case("unknow") || value.eq_ignore_ascii_case("unknown")
 }
 
 #[async_trait]
@@ -151,6 +171,17 @@ impl DeviceController for WiimController {
             device_genre: String::new(),  // WiiM API doesn't provide genre directly
             album_art_url: None,  // Will be set below if available
         };
+
+        // Some sources leave fields empty here but fill them in getMetaInfo
+        // (Google Cast, mode 5, never sends Artist). Without an artist there's
+        // no iTunes genre lookup, so ask for the rest while something is playing.
+        let playing = status.status == "play" || status.status == "pause";
+        if playing && (meta.title.is_empty() || meta.artist.is_empty() || meta.album.is_empty()) {
+            match self.get_meta_info().await {
+                Ok(info) => Self::fill_missing_metadata(&mut meta, &info),
+                Err(e) => tracing::debug!("getMetaInfo failed (mode {}): {}", status.mode, e),
+            }
+        }
 
         // Album art for WiiM devices:
         // The WiiM/LinkPlay HTTP API does not provide a direct endpoint for album artwork.
@@ -623,5 +654,51 @@ mod tests {
         assert_eq!(status.title, "4974277320416C6C204265636175736520536865277320476F6E65");
         assert_eq!(status.artist, "5374657665204461766973");
         assert_eq!(status.album, "5243412053747564696F20422053657373696F6E73202F2031393731");
+    }
+
+    #[test]
+    fn test_fill_missing_metadata_from_cast_meta_info() {
+        // Google Cast (mode 5): getPlayerStatus sends no Artist
+        let status_json = r#"{"mode":"5","vendor":"CAST","status":"play","Title":"456D6F74696F6E","Artist":"","Album":"456D6F74696F6E"}"#;
+        let status: PlayerStatus = serde_json::from_str(status_json).unwrap();
+        let mut meta = TrackMeta {
+            artist: WiimController::decode_metadata_field(&status.artist),
+            title: WiimController::decode_metadata_field(&status.title),
+            album: WiimController::decode_metadata_field(&status.album),
+            genre: String::new(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+        assert_eq!(meta.artist, "");
+
+        let info_json = r#"{ "metaData": { "album": "Emotion", "title": "Emotion", "subtitle": "unknow", "artist": "Fyze", "albumArtURI": "https://i.scdn.co/image/x", "sampleRate": "44100", "bitDepth": "unknow", "bitRate": "unknow", "trackId": "0" } }"#;
+        let info: MetaInfoResponse = serde_json::from_str(info_json).unwrap();
+        WiimController::fill_missing_metadata(&mut meta, &info.meta_data);
+
+        assert_eq!(meta.artist, "Fyze");
+        assert_eq!(meta.title, "Emotion");
+        assert_eq!(meta.album, "Emotion");
+    }
+
+    #[test]
+    fn test_fill_missing_metadata_keeps_existing_and_skips_unknow() {
+        let mut meta = TrackMeta {
+            artist: "From Status".to_string(),
+            title: String::new(),
+            album: String::new(),
+            genre: String::new(),
+            device_genre: String::new(),
+            album_art_url: None,
+        };
+        let info = MetaInfo {
+            title: "Song".to_string(),
+            artist: "Other".to_string(),
+            album: "unknow".to_string(),
+        };
+        WiimController::fill_missing_metadata(&mut meta, &info);
+
+        assert_eq!(meta.artist, "From Status");
+        assert_eq!(meta.title, "Song");
+        assert_eq!(meta.album, "");
     }
 }
