@@ -2,9 +2,17 @@
 //!
 //! Fetches album artwork URLs using track metadata (artist, album, title)
 //! from various free music databases.
+//!
+//! The same iTunes album search also supplies the album's primary genre, which
+//! is used to fill in a track's genre when neither the device nor a manual
+//! override provides one. Results are cached in memory for the session so the
+//! album art and genre lookups share a single request per album.
 
 use anyhow::Result;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::OnceCell;
 use tracing::{debug, warn};
 
 /// iTunes Search API response structure
@@ -26,6 +34,37 @@ struct ITunesResult {
     artwork_url_100: Option<String>,
     #[serde(default)]
     artwork_url_60: Option<String>,
+    #[serde(default)]
+    primary_genre_name: Option<String>,
+}
+
+/// Album metadata found via the iTunes Search API
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AlbumInfo {
+    /// High-resolution artwork URL
+    pub artwork_url: Option<String>,
+    /// iTunes primary genre for the album (only set for artist matches)
+    pub genre: Option<String>,
+}
+
+/// How closely an iTunes result matched the requested artist/album
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchQuality {
+    ArtistAndAlbum,
+    ArtistOnly,
+    /// Last-resort first result: fine for artwork, not trusted for genre
+    FirstResult,
+}
+
+/// Returns true when a genre value carries no real information
+pub fn genre_is_missing(genre: &str) -> bool {
+    let genre = genre.trim();
+    genre.is_empty() || genre.eq_ignore_ascii_case("unknown")
+}
+
+/// Returns true when artist metadata is a placeholder rather than a real artist
+fn is_placeholder_artist(artist: &str) -> bool {
+    artist.is_empty() || artist == "Unknown" || artist == "Not playing"
 }
 
 /// Clean up album name for better search results
@@ -65,7 +104,7 @@ fn clean_album_name(album: &str) -> String {
 }
 
 /// Extract artwork URL from an iTunes result
-fn extract_artwork_url(result: &ITunesResult) -> Result<Option<String>> {
+fn extract_artwork_url(result: &ITunesResult) -> Option<String> {
     if let Some(result_artist) = &result.artist_name {
         debug!("Selected album art from artist: {} (album: {:?})",
                result_artist, result.collection_name);
@@ -78,15 +117,45 @@ fn extract_artwork_url(result: &ITunesResult) -> Result<Option<String>> {
         // Upgrade to high-res by replacing 100x100 with 600x600
         let high_res_url = url.replace("100x100", "600x600");
         debug!("Found album art: {}", high_res_url);
-        return Ok(Some(high_res_url));
+        return Some(high_res_url);
     }
 
-    Ok(None)
+    None
+}
+
+/// Extract a non-empty genre from an iTunes result
+fn extract_genre(result: &ITunesResult) -> Option<String> {
+    result
+        .primary_genre_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|genre| !genre_is_missing(genre))
+        .map(str::to_string)
+}
+
+/// Build album info from a matched result.
+/// Genre is only taken from results that matched the artist, so a last-resort
+/// "first result" guess can never select the wrong EQ preset.
+fn to_album_info(result: &ITunesResult, quality: MatchQuality) -> AlbumInfo {
+    let genre = match quality {
+        MatchQuality::ArtistAndAlbum | MatchQuality::ArtistOnly => extract_genre(result),
+        MatchQuality::FirstResult => None,
+    };
+
+    AlbumInfo {
+        artwork_url: extract_artwork_url(result),
+        genre,
+    }
 }
 
 /// Find the best matching album from iTunes search results
-/// Returns Some(url) if found, or None if no match (signaling to try alternative search)
-fn find_best_match(artist: &str, cleaned_album: &str, search_result: ITunesSearchResponse, allow_fallback: bool) -> Result<Option<String>> {
+/// Returns Some(info) if found, or None if no match (signaling to try alternative search)
+fn find_best_match(
+    artist: &str,
+    cleaned_album: &str,
+    search_result: &ITunesSearchResponse,
+    allow_fallback: bool,
+) -> Option<AlbumInfo> {
     let artist_lower = artist.to_lowercase();
     let cleaned_album_lower = cleaned_album.to_lowercase();
 
@@ -102,13 +171,13 @@ fn find_best_match(artist: &str, cleaned_album: &str, search_result: ITunesSearc
 
     // If we found an artist+album match, use it
     if let Some(result) = best_match {
-        return extract_artwork_url(result);
+        return Some(to_album_info(result, MatchQuality::ArtistAndAlbum));
     }
 
     // If no exact match and fallback is disabled, return None to trigger alternative search
     if !allow_fallback {
         debug!("No exact artist+album match found, signaling for alternative search");
-        return Ok(None);
+        return None;
     }
 
     // Fallback: try exact artist match only
@@ -119,17 +188,52 @@ fn find_best_match(artist: &str, cleaned_album: &str, search_result: ITunesSearc
         } else {
             false
         }
-    }).or_else(|| {
-        // Last resort: use first result
-        debug!("No exact artist match found, using first result");
-        search_result.results.first()
     });
 
     if let Some(result) = artist_match {
-        return extract_artwork_url(result);
+        return Some(to_album_info(result, MatchQuality::ArtistOnly));
     }
 
-    Ok(None)
+    // Last resort: use first result
+    debug!("No exact artist match found, using first result");
+    search_result
+        .results
+        .first()
+        .map(|result| to_album_info(result, MatchQuality::FirstResult))
+}
+
+/// Session cache of one-time async lookups, keyed by normalized metadata.
+/// Each key holds a `OnceCell`, so concurrent callers share a single request.
+type LookupCache<T> = OnceLock<Mutex<HashMap<String, Arc<OnceCell<T>>>>>;
+
+static ALBUM_INFO_CACHE: LookupCache<AlbumInfo> = OnceLock::new();
+static ARTIST_GENRE_CACHE: LookupCache<Option<String>> = OnceLock::new();
+
+/// Non-blocking genre state used by the polling loop
+#[derive(Debug, Clone)]
+enum GenreLookup {
+    Pending,
+    Done(Option<String>),
+}
+
+static GENRE_CACHE: OnceLock<Mutex<HashMap<String, GenreLookup>>> = OnceLock::new();
+
+/// Get (or create) the cell for `key` in a lookup cache
+fn cached_cell<T>(cache: &'static LookupCache<T>, key: String) -> Arc<OnceCell<T>> {
+    let mut map = cache
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    map.entry(key).or_default().clone()
+}
+
+/// Normalized cache key for an artist/album pair
+fn album_cache_key(artist: &str, album: &str) -> String {
+    format!(
+        "{}|{}",
+        artist.trim().to_lowercase(),
+        album.trim().to_lowercase()
+    )
 }
 
 /// Lookup album art URL using iTunes Search API
@@ -137,27 +241,182 @@ fn find_best_match(artist: &str, cleaned_album: &str, search_result: ITunesSearc
 /// The iTunes Search API is free and doesn't require authentication.
 /// Returns high-resolution album artwork (600x600) by modifying the URL.
 pub async fn lookup_album_art(artist: &str, album: &str) -> Result<Option<String>> {
+    Ok(lookup_album_info(artist, album).await.artwork_url)
+}
+
+/// Lookup album artwork and genre using the iTunes Search API.
+///
+/// Results (including misses and errors) are cached for the session, so each
+/// album is requested at most once no matter how many callers ask for it.
+pub async fn lookup_album_info(artist: &str, album: &str) -> AlbumInfo {
+    let cell = cached_cell(&ALBUM_INFO_CACHE, album_cache_key(artist, album));
+    cell.get_or_init(|| fetch_album_info(artist, album))
+        .await
+        .clone()
+}
+
+/// Fetch album info with a timeout, treating any failure as "no info"
+async fn fetch_album_info(artist: &str, album: &str) -> AlbumInfo {
     // Wrap entire operation in timeout to prevent hanging
     match tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        lookup_album_art_impl(artist, album)
-    ).await {
-        Ok(result) => result,
+        lookup_album_info_impl(artist, album),
+    )
+    .await
+    {
+        Ok(Ok(info)) => info,
+        Ok(Err(e)) => {
+            warn!(
+                "iTunes album lookup failed for {} - {}: {}",
+                artist, album, e
+            );
+            AlbumInfo::default()
+        }
         Err(_) => {
-            warn!("Album art lookup timed out after 10 seconds for: {} - {}", artist, album);
-            Ok(None)
+            warn!(
+                "Album art lookup timed out after 10 seconds for: {} - {}",
+                artist, album
+            );
+            AlbumInfo::default()
         }
     }
 }
 
-/// Internal implementation of album art lookup
-async fn lookup_album_art_impl(artist: &str, album: &str) -> Result<Option<String>> {
-    // Skip lookup if metadata is missing or placeholder
-    if artist.is_empty() || album.is_empty()
-        || artist == "Unknown" || album == "Unknown"
-        || artist == "Not playing" {
-        debug!("Skipping album art lookup - invalid metadata");
+/// Lookup a genre for a track: the album's iTunes genre, falling back to the
+/// artist's primary iTunes genre. Returns None if neither is found.
+pub async fn lookup_genre(artist: &str, album: &str) -> Option<String> {
+    if is_placeholder_artist(artist) {
+        return None;
+    }
+
+    if let Some(genre) = lookup_album_info(artist, album).await.genre {
+        debug!("Found album genre for {} - {}: {}", artist, album, genre);
+        return Some(genre);
+    }
+
+    debug!(
+        "No album genre for {} - {}, trying artist genre",
+        artist, album
+    );
+    let cell = cached_cell(&ARTIST_GENRE_CACHE, artist.trim().to_lowercase());
+    cell.get_or_init(|| fetch_artist_genre(artist))
+        .await
+        .clone()
+}
+
+/// Non-blocking genre lookup for the polling loop.
+///
+/// Returns the genre if a lookup for this artist/album has already finished.
+/// Otherwise starts one in the background (once per artist/album) and returns
+/// None; a later poll picks up the result.
+pub fn cached_genre(artist: &str, album: &str) -> Option<String> {
+    if is_placeholder_artist(artist) {
+        return None;
+    }
+
+    let key = album_cache_key(artist, album);
+    let mut cache = GENRE_CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    match cache.get(&key) {
+        Some(GenreLookup::Done(genre)) => return genre.clone(),
+        Some(GenreLookup::Pending) => return None,
+        None => {}
+    }
+
+    // Need a tokio runtime to look up in the background; fail quietly without one
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return None;
+    };
+
+    cache.insert(key.clone(), GenreLookup::Pending);
+    drop(cache);
+
+    let (artist, album) = (artist.to_string(), album.to_string());
+    runtime.spawn(async move {
+        let genre = lookup_genre(&artist, &album).await;
+        debug!("Genre lookup for {} - {}: {:?}", artist, album, genre);
+        GENRE_CACHE
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, GenreLookup::Done(genre));
+    });
+
+    None
+}
+
+/// Find the genre of the result whose artist name matches exactly
+fn find_artist_genre(artist: &str, search_result: &ITunesSearchResponse) -> Option<String> {
+    search_result
+        .results
+        .iter()
+        .filter(|result| {
+            result
+                .artist_name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(artist.trim()))
+        })
+        .find_map(extract_genre)
+}
+
+/// Fetch an artist's primary genre with a timeout, treating any failure as None
+async fn fetch_artist_genre(artist: &str) -> Option<String> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        lookup_artist_genre_impl(artist),
+    )
+    .await
+    {
+        Ok(Ok(genre)) => genre,
+        Ok(Err(e)) => {
+            warn!("iTunes artist genre lookup failed for {}: {}", artist, e);
+            None
+        }
+        Err(_) => {
+            warn!(
+                "Artist genre lookup timed out after 10 seconds for: {}",
+                artist
+            );
+            None
+        }
+    }
+}
+
+/// Internal implementation of artist genre lookup
+async fn lookup_artist_genre_impl(artist: &str) -> Result<Option<String>> {
+    let url = format!(
+        "https://itunes.apple.com/search?term={}&entity=musicArtist&limit=5",
+        urlencoding::encode(artist.trim())
+    );
+
+    debug!(
+        "Looking up artist genre via iTunes API: artist='{}'",
+        artist
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    let response = client.get(&url).send().await?;
+    if !response.status().is_success() {
+        warn!("iTunes API returned status: {}", response.status());
         return Ok(None);
+    }
+
+    let search_result: ITunesSearchResponse = response.json().await?;
+    Ok(find_artist_genre(artist, &search_result))
+}
+
+/// Internal implementation of album info lookup
+async fn lookup_album_info_impl(artist: &str, album: &str) -> Result<AlbumInfo> {
+    // Skip lookup if metadata is missing or placeholder
+    if is_placeholder_artist(artist) || album.is_empty() || album == "Unknown" {
+        debug!("Skipping album art lookup - invalid metadata");
+        return Ok(AlbumInfo::default());
     }
 
     // Clean album name for better matching
@@ -194,22 +453,20 @@ async fn lookup_album_art_impl(artist: &str, album: &str) -> Result<Option<Strin
         Ok(response) => {
             if !response.status().is_success() {
                 warn!("iTunes API returned status: {}", response.status());
-                return Ok(None);
+                return Ok(AlbumInfo::default());
             }
 
             let original_result: ITunesSearchResponse = response.json().await?;
 
             if original_result.result_count == 0 {
                 debug!("No album art found for: {} - {}", artist, album);
-                return Ok(None);
+                return Ok(AlbumInfo::default());
             }
 
             // Try to find exact artist+album match (no fallback yet)
-            let exact_match = find_best_match(artist, &cleaned_album, original_result.clone(), false)?;
-
             // If exact match found, return it
-            if exact_match.is_some() {
-                return Ok(exact_match);
+            if let Some(info) = find_best_match(artist, &cleaned_album, &original_result, false) {
+                return Ok(info);
             }
 
             // No exact match - try keyword search for obscure compilations
@@ -233,9 +490,10 @@ async fn lookup_album_art_impl(artist: &str, album: &str) -> Result<Option<Strin
                             if keyword_result.result_count > 0 {
                                 debug!("Keyword search found {} results", keyword_result.result_count);
                                 // Try exact match first with keyword results
-                                let keyword_match = find_best_match(artist, &cleaned_album, keyword_result, true)?;
-                                if keyword_match.is_some() {
-                                    return Ok(keyword_match);
+                                if let Some(info) =
+                                    find_best_match(artist, &cleaned_album, &keyword_result, true)
+                                {
+                                    return Ok(info);
                                 }
                             }
                         }
@@ -245,11 +503,11 @@ async fn lookup_album_art_impl(artist: &str, album: &str) -> Result<Option<Strin
 
             // If keyword search didn't work, fall back to original results with relaxed matching
             debug!("No keyword search results, falling back to artist-only match from original results");
-            find_best_match(artist, &cleaned_album, original_result, true)
+            Ok(find_best_match(artist, &cleaned_album, &original_result, true).unwrap_or_default())
         }
         Err(e) => {
             warn!("Failed to fetch from iTunes API: {}", e);
-            Ok(None)
+            Ok(AlbumInfo::default())
         }
     }
 }
@@ -396,6 +654,146 @@ mod tests {
             println!("Found Grant Green live album art: {}", url);
             assert!(url.contains("http"));
             // Should find album art after cleaning live venue info
+        }
+    }
+
+    /// Build an iTunes response from JSON, the same way the API parses it
+    fn parse_response(json: &str) -> ITunesSearchResponse {
+        serde_json::from_str(json).expect("valid iTunes JSON")
+    }
+
+    #[test]
+    fn test_parses_primary_genre_name() {
+        let response = parse_response(
+            r#"{"resultCount": 1, "results": [{
+                "artistName": "Miles Davis",
+                "collectionName": "Kind of Blue",
+                "artworkUrl100": "https://example.com/100x100bb.jpg",
+                "primaryGenreName": "Jazz"
+            }]}"#,
+        );
+
+        let info = find_best_match("Miles Davis", "Kind of Blue", &response, false)
+            .expect("artist+album match");
+        assert_eq!(info.genre.as_deref(), Some("Jazz"));
+        assert_eq!(
+            info.artwork_url.as_deref(),
+            Some("https://example.com/600x600bb.jpg")
+        );
+    }
+
+    #[test]
+    fn test_genre_from_artist_only_match() {
+        let response = parse_response(
+            r#"{"resultCount": 2, "results": [
+                {"artistName": "Someone Else", "collectionName": "Other", "primaryGenreName": "Pop"},
+                {"artistName": "Miles Davis", "collectionName": "Bitches Brew", "primaryGenreName": "Jazz"}
+            ]}"#,
+        );
+
+        let info = find_best_match("Miles Davis", "Kind of Blue", &response, true)
+            .expect("artist-only match");
+        assert_eq!(info.genre.as_deref(), Some("Jazz"));
+    }
+
+    #[test]
+    fn test_no_genre_from_first_result_fallback() {
+        // Neither artist nor album match: artwork may fall back to the first
+        // result, but its genre must not be trusted
+        let response = parse_response(
+            r#"{"resultCount": 1, "results": [{
+                "artistName": "Someone Else",
+                "collectionName": "Other",
+                "artworkUrl100": "https://example.com/100x100bb.jpg",
+                "primaryGenreName": "Pop"
+            }]}"#,
+        );
+
+        let info = find_best_match("Miles Davis", "Kind of Blue", &response, true)
+            .expect("first-result fallback");
+        assert!(info.artwork_url.is_some());
+        assert_eq!(info.genre, None);
+    }
+
+    #[test]
+    fn test_missing_or_blank_genre_is_none() {
+        let response = parse_response(
+            r#"{"resultCount": 2, "results": [
+                {"artistName": "Miles Davis", "collectionName": "Kind of Blue"},
+                {"artistName": "Miles Davis", "collectionName": "Kind of Blue (Legacy)", "primaryGenreName": "  "}
+            ]}"#,
+        );
+
+        let info = find_best_match("Miles Davis", "Kind of Blue", &response, false)
+            .expect("artist+album match");
+        assert_eq!(info.genre, None);
+    }
+
+    #[test]
+    fn test_find_artist_genre_requires_exact_artist() {
+        let response = parse_response(
+            r#"{"resultCount": 2, "results": [
+                {"artistName": "Miles Davis Tribute Band", "primaryGenreName": "Pop"},
+                {"artistName": "Miles Davis", "primaryGenreName": "Jazz"}
+            ]}"#,
+        );
+        assert_eq!(
+            find_artist_genre("miles davis", &response).as_deref(),
+            Some("Jazz")
+        );
+
+        let no_match = parse_response(
+            r#"{"resultCount": 1, "results": [
+                {"artistName": "Miles Davis Tribute Band", "primaryGenreName": "Pop"}
+            ]}"#,
+        );
+        assert_eq!(find_artist_genre("Miles Davis", &no_match), None);
+    }
+
+    #[test]
+    fn test_genre_is_missing() {
+        assert!(genre_is_missing(""));
+        assert!(genre_is_missing("   "));
+        assert!(genre_is_missing("Unknown"));
+        assert!(genre_is_missing("unknown"));
+        assert!(!genre_is_missing("Rock"));
+    }
+
+    #[test]
+    fn test_album_cache_key_normalizes() {
+        assert_eq!(
+            album_cache_key("  Pink Floyd ", "The Dark Side of the Moon"),
+            album_cache_key("pink floyd", "THE DARK SIDE OF THE MOON ")
+        );
+        assert_ne!(
+            album_cache_key("Pink Floyd", "The Wall"),
+            album_cache_key("Pink Floyd", "Animals")
+        );
+    }
+
+    #[test]
+    fn test_cached_genre_skips_placeholder_artist() {
+        // No runtime needed and no lookup started for placeholder metadata
+        assert_eq!(cached_genre("Unknown", "Some Album"), None);
+        assert_eq!(cached_genre("", "Some Album"), None);
+    }
+
+    #[tokio::test]
+    async fn test_lookup_genre_pink_floyd() {
+        // Network test, like the album art tests above: only checks the result
+        // when iTunes is reachable
+        if let Some(genre) = lookup_genre("Pink Floyd", "The Dark Side of the Moon").await {
+            println!("Found genre: {}", genre);
+            assert!(!genre_is_missing(&genre));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lookup_genre_falls_back_to_artist() {
+        // Album that doesn't exist on iTunes: genre should come from the artist
+        if let Some(genre) = lookup_genre("Miles Davis", "Not A Real Album Xyzzy 12345").await {
+            println!("Found artist genre: {}", genre);
+            assert!(!genre_is_missing(&genre));
         }
     }
 

@@ -95,6 +95,7 @@ dependencies = [
  "rfd",
  "rustfft",
  "serde",
+ "serde_json",
  "sqlx",
  "stream-server",
  "tokio",

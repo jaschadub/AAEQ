@@ -1,0 +1,662 @@
+//! Built-in genre to EQ preset suggestions
+//!
+//! Maps iTunes genre names to WiiM's built-in EQ presets so genre-based EQ works
+//! without the user creating a rule for every genre. User-defined genre rules
+//! always take priority over this table (see `resolve_preset`).
+//!
+//! The table covers every genre and sub-genre in Apple's music genre list
+//! (https://itunes.apple.com/WebObjects/MZStoreServices.woa/ws/genres?id=34),
+//! plus a few older or alternate names iTunes still returns.
+//!
+//! Holiday, children's and utility genres don't suit a single EQ curve, so they are
+//! intentionally left out and fall through to the default preset:
+//!
+//! Chanukah, Children's Music, Christmas, Christmas: Children's, Easter, Fitness & Workout,
+//! Halloween, Holiday, Holiday: Other, Jewish Holidays, Jewish Music, Karaoke, Lullabies,
+//! Sing-Along, Sound Effects, Taarab, Thanksgiving
+
+use crate::models::normalize_key;
+
+/// Normalized (trimmed, lowercase) genre name -> WiiM built-in preset name
+const GENRE_PRESETS: &[(&str, &str)] = &[
+    // Rock
+    ("adult alternative", "Rock"),
+    ("alternative", "Rock"),
+    ("american trad rock", "Rock"),
+    ("arena rock", "Rock"),
+    ("blues-rock", "Rock"),
+    ("british invasion", "Rock"),
+    ("britpop", "Rock"),
+    ("chicago blues", "Rock"),
+    ("chinese alt", "Rock"),
+    ("chinese rock", "Rock"),
+    ("christian metal", "Rock"),
+    ("christian rock", "Rock"),
+    ("christmas: rock", "Rock"),
+    ("classic rock", "Rock"),
+    ("college rock", "Rock"),
+    ("death metal/black metal", "Rock"),
+    ("electric blues", "Rock"),
+    ("emo", "Rock"),
+    ("glam rock", "Rock"),
+    ("goth rock", "Rock"),
+    ("grunge", "Rock"),
+    ("hair metal", "Rock"),
+    ("hard rock", "Rock"),
+    ("indie egyptian", "Rock"),
+    ("indie levant", "Rock"),
+    ("indie maghreb", "Rock"),
+    ("indie rock", "Rock"),
+    ("industrial", "Rock"),
+    ("jam bands", "Rock"),
+    ("korean indie", "Rock"),
+    ("korean rock", "Rock"),
+    ("metal", "Rock"),
+    ("pop punk", "Rock"),
+    ("prog-rock/art rock", "Rock"),
+    ("psychedelic", "Rock"),
+    ("punk", "Rock"),
+    ("rock", "Rock"),
+    ("rock & roll", "Rock"),
+    ("rock in russian", "Rock"),
+    ("rock y alternativo", "Rock"),
+    ("rockabilly", "Rock"),
+    ("roots rock", "Rock"),
+    ("southern rock", "Rock"),
+    ("surf", "Rock"),
+    ("turkish alternative", "Rock"),
+    ("turkish rock", "Rock"),
+    // Pop
+    ("adult contemporary", "Pop"),
+    ("afrikaans", "Pop"),
+    ("afro-pop", "Pop"),
+    ("anime", "Pop"),
+    ("arabic pop", "Pop"),
+    ("assamese", "Pop"),
+    ("bengali", "Pop"),
+    ("bhojpuri", "Pop"),
+    ("bollywood", "Pop"),
+    ("c-pop", "Pop"),
+    ("cantopop/hk-pop", "Pop"),
+    ("ccm", "Pop"),
+    ("christian", "Pop"),
+    ("christian & gospel", "Pop"),
+    ("christian pop", "Pop"),
+    ("christmas: modern", "Pop"),
+    ("christmas: pop", "Pop"),
+    ("classic christian", "Pop"),
+    ("dangdut", "Pop"),
+    ("deutschpop", "Pop"),
+    ("disney", "Pop"),
+    ("egyptian pop", "Pop"),
+    ("fantezi", "Pop"),
+    ("french pop", "Pop"),
+    ("german pop", "Pop"),
+    ("gujarati", "Pop"),
+    ("haryanvi", "Pop"),
+    ("indian", "Pop"),
+    ("indian pop", "Pop"),
+    ("indie pop", "Pop"),
+    ("indo pop", "Pop"),
+    ("inspirational", "Pop"),
+    ("iraqi pop", "Pop"),
+    ("j-pop", "Pop"),
+    ("japanese pop", "Pop"),
+    ("k-pop", "Pop"),
+    ("kannada", "Pop"),
+    ("kayokyoku", "Pop"),
+    ("khaleeji pop", "Pop"),
+    ("korean folk-pop", "Pop"),
+    ("levant pop", "Pop"),
+    ("maghreb pop", "Pop"),
+    ("maghreb rai", "Pop"),
+    ("malayalam", "Pop"),
+    ("malaysian pop", "Pop"),
+    ("mandopop", "Pop"),
+    ("manilla sound", "Pop"),
+    ("marathi", "Pop"),
+    ("new wave", "Pop"),
+    ("novelty", "Pop"),
+    ("odia", "Pop"),
+    ("oldies", "Pop"),
+    ("original pilipino music", "Pop"),
+    ("pinoy pop", "Pop"),
+    ("pop", "Pop"),
+    ("pop in russian", "Pop"),
+    ("pop/rock", "Pop"),
+    ("praise & worship", "Pop"),
+    ("punjabi", "Pop"),
+    ("punjabi pop", "Pop"),
+    ("rajasthani", "Pop"),
+    ("regional indian", "Pop"),
+    ("soft rock", "Pop"),
+    ("t-pop", "Pop"),
+    ("tai-pop", "Pop"),
+    ("tamil", "Pop"),
+    ("teen pop", "Pop"),
+    ("telugu", "Pop"),
+    ("thai pop", "Pop"),
+    ("tribute", "Pop"),
+    ("trot", "Pop"),
+    ("turkish pop", "Pop"),
+    ("urdu", "Pop"),
+    // Hip-Hop
+    ("alternative rap", "Hip-Hop"),
+    ("chinese hip-hop", "Hip-Hop"),
+    ("christian rap", "Hip-Hop"),
+    ("country hip-hop/rap", "Hip-Hop"),
+    ("deutschrap", "Hip-Hop"),
+    ("dirty south", "Hip-Hop"),
+    ("east coast rap", "Hip-Hop"),
+    ("egyptian hip-hop", "Hip-Hop"),
+    ("gangsta rap", "Hip-Hop"),
+    ("ghanaian drill", "Hip-Hop"),
+    ("hardcore rap", "Hip-Hop"),
+    ("hip-hop", "Hip-Hop"),
+    ("hip-hop in russian", "Hip-Hop"),
+    ("hip-hop/rap", "Hip-Hop"),
+    ("khaleeji hip-hop", "Hip-Hop"),
+    ("korean hip-hop", "Hip-Hop"),
+    ("latin rap", "Hip-Hop"),
+    ("levant hip-hop", "Hip-Hop"),
+    ("maghreb hip-hop", "Hip-Hop"),
+    ("old school rap", "Hip-Hop"),
+    ("rap", "Hip-Hop"),
+    ("south african hip-hop", "Hip-Hop"),
+    ("trap", "Hip-Hop"),
+    ("turkish hip-hop/rap", "Hip-Hop"),
+    ("uk hip-hop", "Hip-Hop"),
+    ("underground rap", "Hip-Hop"),
+    ("west coast rap", "Hip-Hop"),
+    // R&B
+    ("afro soul", "R&B"),
+    ("christmas: r&b", "R&B"),
+    ("contemporary r&b", "R&B"),
+    ("funk", "R&B"),
+    ("motown", "R&B"),
+    ("neo-soul", "R&B"),
+    ("quiet storm", "R&B"),
+    ("r&b/soul", "R&B"),
+    ("soul", "R&B"),
+    // Electronic
+    ("afro house", "Electronic"),
+    ("breakbeat", "Electronic"),
+    ("drum & bass", "Electronic"),
+    ("dubstep", "Electronic"),
+    ("electro-cha'abi", "Electronic"),
+    ("electronic", "Electronic"),
+    ("electronica", "Electronic"),
+    ("garage", "Electronic"),
+    ("gqom", "Electronic"),
+    ("hardcore", "Electronic"),
+    ("house", "Electronic"),
+    ("idm/experimental", "Electronic"),
+    ("jungle/drum'n'bass", "Electronic"),
+    ("kwaito", "Electronic"),
+    ("levant electronic", "Electronic"),
+    ("maghreb electronic", "Electronic"),
+    ("shangaan electro", "Electronic"),
+    ("techno", "Electronic"),
+    ("trance", "Electronic"),
+    // Dance
+    ("african", "Dance"),
+    ("afro-beat", "Dance"),
+    ("afro-fusion", "Dance"),
+    ("afrobeats", "Dance"),
+    ("alte", "Dance"),
+    ("amapiano", "Dance"),
+    ("baile funk", "Dance"),
+    ("benga", "Dance"),
+    ("bongo-flava", "Dance"),
+    ("calypso", "Dance"),
+    ("caribbean", "Dance"),
+    ("chimurenga", "Dance"),
+    ("coupé-décalé", "Dance"),
+    ("dabke", "Dance"),
+    ("dance", "Dance"),
+    ("disco", "Dance"),
+    ("exercise", "Dance"),
+    ("fuji", "Dance"),
+    ("genge", "Dance"),
+    ("highlife", "Dance"),
+    ("kizomba", "Dance"),
+    ("kuduro", "Dance"),
+    ("kwassa", "Dance"),
+    ("maghreb dance", "Dance"),
+    ("mapouka", "Dance"),
+    ("mbalax", "Dance"),
+    ("ndombolo", "Dance"),
+    ("soca", "Dance"),
+    ("soukous", "Dance"),
+    ("worldbeat", "Dance"),
+    ("zouglou", "Dance"),
+    // Jazz
+    ("avant-garde jazz", "Jazz"),
+    ("bebop", "Jazz"),
+    ("big band", "Jazz"),
+    ("blues", "Jazz"),
+    ("bop", "Jazz"),
+    ("christmas: jazz", "Jazz"),
+    ("classic blues", "Jazz"),
+    ("contemporary blues", "Jazz"),
+    ("contemporary jazz", "Jazz"),
+    ("cool jazz", "Jazz"),
+    ("crossover jazz", "Jazz"),
+    ("dixieland", "Jazz"),
+    ("ethio jazz", "Jazz"),
+    ("fusion", "Jazz"),
+    ("hard bop", "Jazz"),
+    ("jazz", "Jazz"),
+    ("latin jazz", "Jazz"),
+    ("mainstream jazz", "Jazz"),
+    ("swing", "Jazz"),
+    ("trad jazz", "Jazz"),
+    ("vocal jazz", "Jazz"),
+    // Classical
+    ("21st century", "Classical"),
+    ("air de cours", "Classical"),
+    ("ars antiqua", "Classical"),
+    ("ars nova", "Classical"),
+    ("art song", "Classical"),
+    ("avant-garde", "Classical"),
+    ("ballet", "Classical"),
+    ("baroque", "Classical"),
+    ("baroque era", "Classical"),
+    ("bel canto", "Classical"),
+    ("brass & woodwinds", "Classical"),
+    ("cantata", "Classical"),
+    ("carnatic classical", "Classical"),
+    ("carol", "Classical"),
+    ("cello", "Classical"),
+    ("chamber music", "Classical"),
+    ("chant", "Classical"),
+    ("chinese classical", "Classical"),
+    ("chinese flute", "Classical"),
+    ("chinese opera", "Classical"),
+    ("chinese orchestral", "Classical"),
+    ("chinese strings", "Classical"),
+    ("choral", "Classical"),
+    ("christmas: classical", "Classical"),
+    ("christmas: religious", "Classical"),
+    ("classical", "Classical"),
+    ("classical crossover", "Classical"),
+    ("concert aria", "Classical"),
+    ("concerto", "Classical"),
+    ("concerto grosso", "Classical"),
+    ("contemporary era", "Classical"),
+    ("dodecaphony", "Classical"),
+    ("early 20th century", "Classical"),
+    ("early music", "Classical"),
+    ("early romantic", "Classical"),
+    ("eclecticism", "Classical"),
+    ("electroacoustic", "Classical"),
+    ("english ayre", "Classical"),
+    ("experimental classical", "Classical"),
+    ("expressionism", "Classical"),
+    ("fantasy", "Classical"),
+    ("first viennese school", "Classical"),
+    ("french baroque", "Classical"),
+    ("gregorian chant", "Classical"),
+    ("high classical", "Classical"),
+    ("hindustani classical", "Classical"),
+    ("impressionism", "Classical"),
+    ("impressionist", "Classical"),
+    ("indian classical", "Classical"),
+    ("korean classical", "Classical"),
+    ("late 20th century", "Classical"),
+    ("late romantic", "Classical"),
+    ("lied", "Classical"),
+    ("marching", "Classical"),
+    ("mass", "Classical"),
+    ("medieval", "Classical"),
+    ("medieval era", "Classical"),
+    ("meistergesang", "Classical"),
+    ("minimalism", "Classical"),
+    ("minnesang", "Classical"),
+    ("modern era", "Classical"),
+    ("modernism", "Classical"),
+    ("music theatre", "Classical"),
+    ("musique concrète", "Classical"),
+    ("nationalism", "Classical"),
+    ("neoclassicism", "Classical"),
+    ("new complexity", "Classical"),
+    ("new simplicity", "Classical"),
+    ("opera", "Classical"),
+    ("oratorio", "Classical"),
+    ("orchestral", "Classical"),
+    ("passion", "Classical"),
+    ("percussion", "Classical"),
+    ("polyphony", "Classical"),
+    ("polystylism", "Classical"),
+    ("post-modernism", "Classical"),
+    ("postminimalism", "Classical"),
+    ("prima pratica", "Classical"),
+    ("renaissance", "Classical"),
+    ("romantic", "Classical"),
+    ("romantic era", "Classical"),
+    ("sacred", "Classical"),
+    ("sanat", "Classical"),
+    ("second viennese school", "Classical"),
+    ("seconda pratica", "Classical"),
+    ("serialism", "Classical"),
+    ("solo instrumental", "Classical"),
+    ("sonata", "Classical"),
+    ("spectral music", "Classical"),
+    ("stage works", "Classical"),
+    ("string quartet", "Classical"),
+    ("symphony", "Classical"),
+    ("tone poem", "Classical"),
+    ("troubadour music", "Classical"),
+    ("trouvère music", "Classical"),
+    ("violin", "Classical"),
+    ("vocal music", "Classical"),
+    ("wedding music", "Classical"),
+    // Latin
+    ("axé", "Latin"),
+    ("baladas y boleros", "Latin"),
+    ("bolero", "Latin"),
+    ("brazilian", "Latin"),
+    ("chachacha", "Latin"),
+    ("contemporary latin", "Latin"),
+    ("cuban", "Latin"),
+    ("forró", "Latin"),
+    ("frevo", "Latin"),
+    ("guajira", "Latin"),
+    ("guaracha", "Latin"),
+    ("latin", "Latin"),
+    ("latin urbano", "Latin"),
+    ("mambo", "Latin"),
+    ("mpb", "Latin"),
+    ("música mexicana", "Latin"),
+    ("música tropical", "Latin"),
+    ("pagode", "Latin"),
+    ("pop latino", "Latin"),
+    ("raíces", "Latin"),
+    ("regional mexicano", "Latin"),
+    ("salsa y tropical", "Latin"),
+    ("samba", "Latin"),
+    ("son", "Latin"),
+    ("tango", "Latin"),
+    ("tex-mex", "Latin"),
+    ("timba", "Latin"),
+    ("urbano latino", "Latin"),
+    // Acoustic
+    ("acoustic blues", "Acoustic"),
+    ("afro-folk", "Acoustic"),
+    ("alternative country", "Acoustic"),
+    ("alternative folk", "Acoustic"),
+    ("americana", "Acoustic"),
+    ("arabic", "Acoustic"),
+    ("asia", "Acoustic"),
+    ("australia", "Acoustic"),
+    ("bard in russian", "Acoustic"),
+    ("bluegrass", "Acoustic"),
+    ("cajun", "Acoustic"),
+    ("celtic", "Acoustic"),
+    ("celtic folk", "Acoustic"),
+    ("chinese", "Acoustic"),
+    ("chinese regional folk", "Acoustic"),
+    ("choro", "Acoustic"),
+    ("christmas: country", "Acoustic"),
+    ("contemporary bluegrass", "Acoustic"),
+    ("contemporary celtic", "Acoustic"),
+    ("contemporary country", "Acoustic"),
+    ("contemporary folk", "Acoustic"),
+    ("contemporary singer/songwriter", "Acoustic"),
+    ("country", "Acoustic"),
+    ("country blues", "Acoustic"),
+    ("country gospel", "Acoustic"),
+    ("delta blues", "Acoustic"),
+    ("drinking songs", "Acoustic"),
+    ("europe", "Acoustic"),
+    ("farsi", "Acoustic"),
+    ("flamenco", "Acoustic"),
+    ("folk", "Acoustic"),
+    ("folk-rock", "Acoustic"),
+    ("france", "Acoustic"),
+    ("german folk", "Acoustic"),
+    ("guitar", "Acoustic"),
+    ("halk", "Acoustic"),
+    ("hawaii", "Acoustic"),
+    ("honky tonk", "Acoustic"),
+    ("iberia", "Acoustic"),
+    ("indian folk", "Acoustic"),
+    ("iraqi folk", "Acoustic"),
+    ("israeli", "Acoustic"),
+    ("japan", "Acoustic"),
+    ("khaleeji", "Acoustic"),
+    ("khaleeji folk", "Acoustic"),
+    ("khaleeji jalsat", "Acoustic"),
+    ("khaleeji shailat", "Acoustic"),
+    ("klezmer", "Acoustic"),
+    ("korean", "Acoustic"),
+    ("korean trad instrumental", "Acoustic"),
+    ("levant", "Acoustic"),
+    ("maskandi", "Acoustic"),
+    ("new acoustic", "Acoustic"),
+    ("north african", "Acoustic"),
+    ("north america", "Acoustic"),
+    ("outlaw country", "Acoustic"),
+    ("polka", "Acoustic"),
+    ("russian", "Acoustic"),
+    ("sertanejo", "Acoustic"),
+    ("singer/songwriter", "Acoustic"),
+    ("south africa", "Acoustic"),
+    ("south america", "Acoustic"),
+    ("taiwanese folk", "Acoustic"),
+    ("thai country", "Acoustic"),
+    ("tibetan native music", "Acoustic"),
+    ("traditional bluegrass", "Acoustic"),
+    ("traditional celtic", "Acoustic"),
+    ("traditional country", "Acoustic"),
+    ("traditional folk", "Acoustic"),
+    ("turkish", "Acoustic"),
+    ("urban cowboy", "Acoustic"),
+    ("world", "Acoustic"),
+    ("worldwide", "Acoustic"),
+    ("zydeco", "Acoustic"),
+    ("özgün", "Acoustic"),
+    // Lounge
+    ("ambient", "Lounge"),
+    ("bossa nova", "Lounge"),
+    ("easy listening", "Lounge"),
+    ("environmental", "Lounge"),
+    ("healing", "Lounge"),
+    ("lounge", "Lounge"),
+    ("meditation", "Lounge"),
+    ("nature", "Lounge"),
+    ("new age", "Lounge"),
+    ("relaxation", "Lounge"),
+    ("smooth jazz", "Lounge"),
+    ("travel", "Lounge"),
+    ("yoga", "Lounge"),
+    // Deep
+    ("downtempo", "Deep"),
+    ("trip hop", "Deep"),
+    // Bass Booster
+    ("african dancehall", "Bass Booster"),
+    ("african reggae", "Bass Booster"),
+    ("bass", "Bass Booster"),
+    ("dancehall", "Bass Booster"),
+    ("dub", "Bass Booster"),
+    ("lovers rock", "Bass Booster"),
+    ("modern dancehall", "Bass Booster"),
+    ("reggae", "Bass Booster"),
+    ("roots reggae", "Bass Booster"),
+    ("ska", "Bass Booster"),
+    // Piano ("Instrumental" is deliberately unmapped: it says nothing about style,
+    // and iTunes uses it for post-rock, lounge and film music as well as piano)
+    ("nocturne", "Piano"),
+    ("piano", "Piano"),
+    ("ragtime", "Piano"),
+    // Vocal Booster
+    ("arabesque", "Vocal Booster"),
+    ("chanson", "Vocal Booster"),
+    ("chanson in russian", "Vocal Booster"),
+    ("christmas: classic", "Vocal Booster"),
+    ("contemporary gospel", "Vocal Booster"),
+    ("devotional & spiritual", "Vocal Booster"),
+    ("dini", "Vocal Booster"),
+    ("doo wop", "Vocal Booster"),
+    ("egyptian tarab", "Vocal Booster"),
+    ("enka", "Vocal Booster"),
+    ("fado", "Vocal Booster"),
+    ("ghazals", "Vocal Booster"),
+    ("gospel", "Vocal Booster"),
+    ("indonesian religious", "Vocal Booster"),
+    ("iraqi tarab", "Vocal Booster"),
+    ("islamic", "Vocal Booster"),
+    ("khaleeji tarab", "Vocal Booster"),
+    ("korean trad song", "Vocal Booster"),
+    ("korean trad theater", "Vocal Booster"),
+    ("musicals", "Vocal Booster"),
+    ("rabindra sangeet", "Vocal Booster"),
+    ("religious", "Vocal Booster"),
+    ("romance in russian", "Vocal Booster"),
+    ("show tunes", "Vocal Booster"),
+    ("shows", "Vocal Booster"),
+    ("southern gospel", "Vocal Booster"),
+    ("standards", "Vocal Booster"),
+    ("sufi", "Vocal Booster"),
+    ("tarab", "Vocal Booster"),
+    ("traditional gospel", "Vocal Booster"),
+    ("traditional pop", "Vocal Booster"),
+    ("vocal", "Vocal Booster"),
+    ("vocal pop", "Vocal Booster"),
+    // Movie
+    ("film music", "Movie"),
+    ("foreign cinema", "Movie"),
+    ("original score", "Movie"),
+    ("soundtrack", "Movie"),
+    ("tv soundtrack", "Movie"),
+    // Game
+    ("video game", "Game"),
+    // Spoken Word
+    ("comedy", "Spoken Word"),
+    ("hörspiele", "Spoken Word"),
+    ("spoken word", "Spoken Word"),
+    ("standup comedy", "Spoken Word"),
+    ("stories", "Spoken Word"),
+];
+
+/// Suggest a built-in WiiM preset for a genre, or None if there is no good match.
+///
+/// Matching is exact on the normalized (trimmed, lowercase) genre name.
+pub fn builtin_genre_preset(genre: &str) -> Option<&'static str> {
+    let genre = normalize_key(genre);
+    GENRE_PRESETS
+        .iter()
+        .find(|(name, _)| *name == genre)
+        .map(|(_, preset)| *preset)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Built-in presets available on WiiM devices (EQGetList)
+    const WIIM_PRESETS: &[&str] = &[
+        "Flat",
+        "Acoustic",
+        "Bass Booster",
+        "Bass Reducer",
+        "Classical",
+        "Dance",
+        "Deep",
+        "Electronic",
+        "Game",
+        "Hip-Hop",
+        "Jazz",
+        "Latin",
+        "Loudness",
+        "Lounge",
+        "Movie",
+        "Piano",
+        "Pop",
+        "R&B",
+        "Rock",
+        "Small Speakers",
+        "Spoken Word",
+        "Treble Booster",
+        "Treble Reducer",
+        "Vocal Booster",
+    ];
+
+    #[test]
+    fn test_table_keys_are_normalized_and_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for (name, _) in GENRE_PRESETS {
+            assert_eq!(*name, normalize_key(name), "key not normalized: {name}");
+            assert!(seen.insert(*name), "duplicate genre: {name}");
+        }
+    }
+
+    #[test]
+    fn test_table_presets_exist_on_wiim() {
+        for (name, preset) in GENRE_PRESETS {
+            assert!(
+                WIIM_PRESETS.contains(preset),
+                "{name} maps to unknown preset {preset}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_exact_genre_names() {
+        assert_eq!(builtin_genre_preset("Rock"), Some("Rock"));
+        assert_eq!(builtin_genre_preset("Jazz"), Some("Jazz"));
+        assert_eq!(builtin_genre_preset("Classical"), Some("Classical"));
+    }
+
+    #[test]
+    fn test_mapped_itunes_genres() {
+        assert_eq!(builtin_genre_preset("Alternative"), Some("Rock"));
+        assert_eq!(builtin_genre_preset("Hip-Hop/Rap"), Some("Hip-Hop"));
+        assert_eq!(builtin_genre_preset("R&B/Soul"), Some("R&B"));
+        assert_eq!(builtin_genre_preset("Singer/Songwriter"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("Soundtrack"), Some("Movie"));
+        assert_eq!(builtin_genre_preset("Reggae"), Some("Bass Booster"));
+    }
+
+    #[test]
+    fn test_sub_genres() {
+        assert_eq!(builtin_genre_preset("Arena Rock"), Some("Rock"));
+        assert_eq!(
+            builtin_genre_preset("Death Metal/Black Metal"),
+            Some("Rock")
+        );
+        assert_eq!(builtin_genre_preset("Hard Bop"), Some("Jazz"));
+        assert_eq!(builtin_genre_preset("Gangsta Rap"), Some("Hip-Hop"));
+        assert_eq!(builtin_genre_preset("Bossa Nova"), Some("Lounge"));
+        assert_eq!(builtin_genre_preset("Acoustic Blues"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("Ragtime"), Some("Piano"));
+        assert_eq!(builtin_genre_preset("Hörspiele"), Some("Spoken Word"));
+    }
+
+    #[test]
+    fn test_world_and_regional_genres() {
+        assert_eq!(builtin_genre_preset("Worldwide"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("World"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("South America"), Some("Acoustic"));
+        assert_eq!(builtin_genre_preset("Turkish"), Some("Acoustic"));
+        // Specific sub-genres keep their own preset
+        assert_eq!(builtin_genre_preset("Fado"), Some("Vocal Booster"));
+        assert_eq!(builtin_genre_preset("Tango"), Some("Latin"));
+    }
+
+    #[test]
+    fn test_case_and_whitespace_insensitive() {
+        assert_eq!(builtin_genre_preset("  ALTERNATIVE "), Some("Rock"));
+        assert_eq!(builtin_genre_preset("hip-hop/rap"), Some("Hip-Hop"));
+    }
+
+    #[test]
+    fn test_unmapped_genres() {
+        assert_eq!(builtin_genre_preset("Holiday"), None);
+        assert_eq!(builtin_genre_preset("Karaoke"), None);
+        // Too broad to pick a preset (post-rock, lounge, film music, piano...)
+        assert_eq!(builtin_genre_preset("Instrumental"), None);
+        assert_eq!(builtin_genre_preset(""), None);
+        assert_eq!(builtin_genre_preset("Unknown"), None);
+    }
+}

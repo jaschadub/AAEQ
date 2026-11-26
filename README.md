@@ -29,8 +29,9 @@ AAEQ is a cross-platform desktop application that intelligently manages EQ setti
 ## Features
 
 ### EQ Management Mode
-- **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → default priority
-- **Manual Genre Editing** - Add genres to tracks that don't have metadata
+- **Smart EQ Switching** - Automatically applies EQ based on song → album → genre → built-in genre preset → default priority, and turns the WiiM's EQ off when nothing matches
+- **Automatic Genre EQ** - Fills in missing genres from the iTunes Search API and picks a matching WiiM preset (e.g. Jazz → Jazz, Alternative → Rock) with no setup
+- **Manual Genre Editing** - Add or correct genres for any track; manual edits always take priority
 - **WiiM/LinkPlay Support** - Works with WiiM Mini, Pro, Ultra, and other LinkPlay-based devices
 - **DLNA Support** - Discover and control DLNA/UPnP media renderers
 - **Now Playing Detection** - Cross-platform support for all major streaming services
@@ -237,14 +238,68 @@ cargo build --release
 
 For technical details on how AAEQ works, see [How It Works](docs/how-it-works.md).
 
-## Manual Genre Support
+## Genre Support
 
-Since many streaming services don't provide genre metadata via the WiiM API, AAEQ includes a manual genre editor:
+The WiiM API never reports genre, and many streaming services don't either. AAEQ fills in the genre automatically so genre rules work without tagging every song by hand.
+
+### Automatic Genre Lookup
+
+When a track has no genre, AAEQ looks up the album's primary genre using the free iTunes Search API (the same lookup used for album art). If the album isn't found, it falls back to the artist's primary genre. The genre used for a track is chosen in this order:
+
+1. Your manual genre edit (always wins)
+2. Genre reported by the device or media player
+3. Album genre from iTunes
+4. Artist genre from iTunes
+
+Notes:
+- Lookups run in the background and are cached for the session, so each album is looked up at most once. The genre (and its genre preset) appears a moment after a new album starts playing.
+- The genre is per album, so every track on an album gets the album's genre. Use a manual edit to change an individual song.
+- Auto-detected genres are never saved as manual edits.
+- If iTunes has no match or can't be reached, the track simply has no genre, as before.
+
+### Built-in Genre Presets
+
+When a track has a genre but you haven't saved a rule for it, AAEQ picks one of WiiM's built-in presets for that genre automatically. Your own genre rules (saved with **This Genre**) always take priority, as do song and album rules.
+
+The table covers every genre and sub-genre in Apple's music genre list (about 470 names). Highlights:
+
+| WiiM preset | iTunes genres (including their sub-genres unless noted) |
+|---|---|
+| Rock | Rock, Alternative, Metal, Punk, Grunge, Britpop, Industrial, Christian Rock, Electric/Chicago Blues |
+| Pop | Pop, J-Pop, K-Pop, French/German Pop, Anime, Disney, Christian, Indian, Inspirational, Indie Pop, New Wave |
+| Hip-Hop | Hip-Hop/Rap, Country Hip-Hop/Rap, Christian Rap |
+| R&B | R&B/Soul, Funk, Neo-Soul, Afro Soul |
+| Electronic | Electronic, House, Techno, Trance, Drum'n'bass, Afro House |
+| Dance | Dance, Disco, African (Afrobeats, Amapiano, Highlife, ...), Calypso, Soca |
+| Jazz | Jazz, Blues, Swing |
+| Classical | Classical, Opera, Orchestral, Indian/Chinese/Korean Classical |
+| Latin | Latin, Brazilian, Cuban, Tango, Tex-Mex |
+| Acoustic | Country, Folk, Singer/Songwriter, Worldwide, Celtic, Flamenco, Acoustic/Delta Blues, Cajun, Zydeco, and regional categories such as Arabic, Turkish or South America |
+| Lounge | Easy Listening, New Age, Ambient, Smooth Jazz, Bossa Nova |
+| Deep | Downtempo, Trip Hop |
+| Bass Booster | Reggae, Dancehall, Dub, Bass |
+| Piano | Piano, Ragtime, Nocturne |
+| Vocal Booster | Vocal, Gospel, Musicals, Doo Wop, Tarab, Enka, Fado, Ghazals |
+| Movie | Soundtrack, Film Music, Original Score |
+| Game | Video Game |
+| Spoken Word | Spoken Word, Comedy, Hörspiele |
+
+The full list is in [`crates/core/src/genre_presets.rs`](crates/core/src/genre_presets.rs). Holiday, children's and utility genres (such as Christmas, Karaoke or Fitness & Workout) aren't mapped, and neither is Instrumental, which iTunes uses for styles from post-rock to solo piano.
+
+### When Nothing Matches
+
+If no song, album or genre rule matches, the built-in table has no match, and you haven't saved a **Default** mapping, AAEQ turns your WiiM's EQ **off** for that track instead of applying "Flat", so the audio gets no EQ processing at all. Now Playing shows **EQ Off**. Loading a preset for the next track turns the EQ back on. While EQ is off you can still click **This Song**, **This Album** or **This Genre** to keep it off for those tracks, or save a **Default** mapping to use a preset instead. (In DSP streaming mode, AAEQ uses "Flat" here.)
+
+To change any of these, play a track in that genre, apply the preset you prefer, and click **This Genre**.
+
+To turn built-in genre presets off, untick **Automatically apply suggested genre presets** in the **Settings** tab. Genres are still looked up and your own rules still apply; Now Playing shows the suggested preset next to the current one so you can apply it and save a genre rule if you agree.
+
+### Manual Genre Editing
 
 1. Click on the genre field in "Now Playing"
 2. Type the genre (e.g., "Rock", "Jazz", "Classical")
 3. Press Enter to save - the genre persists across app restarts
-4. Use the ↻ button to reset to device-provided genre (if available)
+4. Use the ↻ button to reset to device-provided genre (if available); the automatic genre applies again if the device has none
 
 ## Multiple Profiles
 
@@ -306,7 +361,7 @@ Contributions are welcome! Please:
 - **WiiM API Constraints**:
   - Can only apply WiiM's built-in EQ presets via the API
   - Custom EQ presets work only in DSP Streaming Mode
-  - Genre metadata often missing from streaming services
+  - Genre metadata is not provided by the WiiM API; AAEQ looks it up from iTunes automatically (see [Genre Support](#genre-support))
   - Metadata encoding issues with some sources (handled via hex decoding)
 
 ### DSP Streaming Mode

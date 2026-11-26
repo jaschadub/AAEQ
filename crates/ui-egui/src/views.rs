@@ -402,6 +402,8 @@ pub struct NowPlayingView {
     pub player_status: Option<String>, // Current status: "play", "pause", "stop", "loading"
     pub volume: Option<u8>,            // Current volume level (0-100)
     pub muted: Option<bool>,           // Current mute state
+    /// Whether built-in genre presets are applied automatically (Settings)
+    pub auto_genre_presets: bool,
 }
 
 impl NowPlayingView {
@@ -856,6 +858,26 @@ impl NowPlayingView {
                     ui.horizontal(|ui| {
                         ui.label("Current Preset:");
                         ui.strong(preset);
+
+                        // When genre presets aren't applied automatically, still show
+                        // the suggestion so the user can apply it and save a genre rule
+                        if !self.auto_genre_presets {
+                            let suggestion = self
+                                .track
+                                .as_ref()
+                                .and_then(|t| aaeq_core::genre_presets::builtin_genre_preset(&t.genre))
+                                .filter(|suggested| suggested != preset);
+                            if let Some(suggested) = suggestion {
+                                ui.label(
+                                    egui::RichText::new(format!("(Suggested: {})", suggested))
+                                        .color(ui.visuals().weak_text_color()),
+                                )
+                                .on_hover_text(
+                                    "Suggested preset for this genre. Apply it and click \
+                                     \"This Genre\" to use it for this genre automatically.",
+                                );
+                            }
+                        }
                     });
 
                     // Always show EQ Curve section when there's a preset
@@ -873,8 +895,9 @@ impl NowPlayingView {
                         let is_known = crate::preset_library::is_known_preset(preset);
                         let is_custom = self.custom_presets.iter().any(|p| p == preset);
                         let is_exact_curve = is_known || is_custom;
+                        let eq_off = preset == aaeq_core::EQ_OFF_PRESET;
 
-                        if is_exact_curve {
+                        if is_exact_curve || eq_off {
                             ui.label("EQ Curve:");
                         } else {
                             ui.horizontal(|ui| {
@@ -981,6 +1004,18 @@ impl NowPlayingView {
                                 });
                             }
                         });
+                        } else if eq_off {
+                            // Device EQ is turned off: no curve to show
+                            ui.add_space(40.0); // Add space to center vertically
+                            ui.label(
+                                egui::RichText::new("EQ is off (no matching preset)")
+                                    .color(egui::Color32::GRAY)
+                                    .italics(),
+                            )
+                            .on_hover_text(
+                                "No song, album or genre preset matched, so the device's EQ is \
+                                 turned off. Apply a preset and save it to change this.",
+                            );
                         } else {
                             // Show loading spinner while curve is being fetched
                             ui.add_space(40.0); // Add space to center vertically

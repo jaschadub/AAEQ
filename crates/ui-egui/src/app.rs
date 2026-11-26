@@ -1,4 +1,4 @@
-use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta};
+use aaeq_core::{resolve_preset, DeviceController, Mapping, RulesIndex, Scope, TrackMeta, EQ_OFF_PRESET};
 use aaeq_device_wiim::{WiimController, discover_devices_quick};
 use aaeq_persistence::{AppSettingsRepository, CustomEqPresetRepository, GenreOverrideRepository, LastAppliedRepository, MappingRepository, ProfileRepository};
 use crate::views::*;
@@ -16,6 +16,66 @@ use stream_server::dsp::{
     StereoWidth, Crossfeed, RoomAmbience,
     HeadroomControl,
 };
+
+/// Fill in a missing genre from iTunes (album genre, then artist genre).
+///
+/// Must run after the manual genre override is applied so overrides always win.
+/// The result is never saved as an override. This never blocks: the first poll
+/// for an album starts the lookup in the background and a later poll applies it.
+fn apply_auto_genre(track: &mut TrackMeta) {
+    if !crate::album_art_lookup::genre_is_missing(&track.genre) {
+        return;
+    }
+
+    if let Some(genre) = crate::album_art_lookup::cached_genre(&track.artist, &track.album) {
+        tracing::debug!(
+            "Using iTunes genre for {} - {}: {}",
+            track.artist,
+            track.title,
+            genre
+        );
+        track.genre = genre;
+    }
+}
+
+/// Genre for the "Track changed" log line. The track key includes the genre, so a
+/// genre that arrives after the first poll logs the same track again; showing it
+/// makes clear what changed.
+fn log_genre(track: &TrackMeta) -> &str {
+    if crate::album_art_lookup::genre_is_missing(&track.genre) {
+        "not known yet"
+    } else {
+        &track.genre
+    }
+}
+
+/// Preset to use when no rule matches. On a WiiM, turn its EQ off so the track plays
+/// with no EQ processing. AAEQ's own DSP has no "off" switch, so use Flat there.
+fn no_match_preset(device_eq: bool) -> &'static str {
+    if device_eq {
+        EQ_OFF_PRESET
+    } else {
+        "Flat"
+    }
+}
+
+/// AAEQ's DSP has no "EQ off" switch; Flat applies no adjustment
+fn dsp_preset(preset: String) -> String {
+    if preset == EQ_OFF_PRESET {
+        "Flat".to_string()
+    } else {
+        preset
+    }
+}
+
+/// Apply a preset to the device, or turn its EQ off for `EQ_OFF_PRESET`
+async fn apply_device_preset(dev: &dyn DeviceController, preset: &str) -> Result<()> {
+    if preset == EQ_OFF_PRESET {
+        dev.set_eq_enabled(false).await
+    } else {
+        dev.apply_preset(preset).await
+    }
+}
 
 /// Application mode tabs
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -203,6 +263,7 @@ enum AppCommand {
     ReapplyPresetForCurrentTrack, // Re-resolve and apply preset for current track (for profile switches)
     SaveTheme(String), // Save theme preference to database
     SaveEnableDebugLogging(bool), // Save debug logging preference to database
+    SaveAutoGenrePresets(bool), // Save built-in genre preset preference and use it for future resolves
     SaveHotkeyEnabled(bool), // Save hotkey enabled preference to database
     SaveHotkey(String, String), // Save hotkey configuration (modifiers, key) to database
     SaveDspSettings(aaeq_core::DspSettings), // Save DSP settings for a profile
@@ -329,6 +390,8 @@ pub struct AaeqApp {
     preset_before_editor: Option<String>, // Track preset before opening editor (for restoration on cancel)
     status_message: Option<String>,
     auto_reconnect: bool,
+    /// Apply the built-in genre preset when no genre rule matches
+    auto_genre_presets: bool,
     connection_lost_time: Option<Instant>,
     reconnect_interval: Duration,
     discovered_devices: Vec<(String, String)>, // Vec<(name, host)>
@@ -405,6 +468,7 @@ impl AaeqApp {
             preset_before_editor: None,
             status_message: None,
             auto_reconnect: true, // Enable by default
+            auto_genre_presets: true, // Enable by default
             connection_lost_time: None,
             reconnect_interval: Duration::from_secs(5),
             discovered_devices: vec![],
@@ -578,6 +642,10 @@ impl AaeqApp {
             }
         }
 
+        // Load built-in genre preset setting (defaults to enabled)
+        self.auto_genre_presets = settings_repo.get_auto_genre_presets().await.unwrap_or(true);
+        self.now_playing_view.auto_genre_presets = self.auto_genre_presets;
+
         // Load last connected host from settings
         if let Ok(Some(last_host)) = settings_repo.get_last_connected_host().await {
             tracing::info!("Loading last connected host: {}", last_host);
@@ -706,7 +774,7 @@ impl AaeqApp {
 
             // Resolve preset
             let rules = self.rules_index.read().await;
-            let desired_preset = resolve_preset(&track, &rules, "Flat");
+            let desired_preset = resolve_preset(&track, &rules, "Flat", self.auto_genre_presets);
             drop(rules);
 
             // Apply if different from current
@@ -798,6 +866,10 @@ impl AaeqApp {
         let mut last_track_key: Option<String> = None;
         let mut last_track: Option<aaeq_core::TrackMeta> = None;
         let mut current_preset: Option<String> = None;
+        let mut auto_genre_presets = AppSettingsRepository::new(pool.clone())
+            .get_auto_genre_presets()
+            .await
+            .unwrap_or(true);
 
         // DSP state
         let mut output_manager = OutputManager::new();
@@ -1073,6 +1145,16 @@ impl AaeqApp {
                     }
                 }
 
+                AppCommand::SaveAutoGenrePresets(enabled) => {
+                    auto_genre_presets = enabled;
+                    let settings_repo = AppSettingsRepository::new(pool.clone());
+                    if let Err(e) = settings_repo.set_auto_genre_presets(enabled).await {
+                        tracing::error!("Failed to save genre preset setting: {}", e);
+                    } else {
+                        tracing::info!("Genre preset setting saved: {}", enabled);
+                    }
+                }
+
                 AppCommand::SaveHotkeyEnabled(enabled) => {
                     let settings_repo = AppSettingsRepository::new(pool.clone());
                     if let Err(e) = settings_repo.set_hotkey_enabled(enabled).await {
@@ -1208,7 +1290,12 @@ impl AaeqApp {
 
                 AppCommand::LoadPresetCurve(preset_name) => {
                     // Load EQ curve for display using the database-aware function
-                    let curve = crate::preset_library::get_preset_curve_with_db(&preset_name, &pool).await;
+                    // (no curve when the device EQ is turned off)
+                    let curve = if preset_name == EQ_OFF_PRESET {
+                        None
+                    } else {
+                        crate::preset_library::get_preset_curve_with_db(&preset_name, &pool).await
+                    };
                     let _ = response_tx.send(AppResponse::PresetCurveLoaded(curve));
                 }
 
@@ -1234,8 +1321,13 @@ impl AaeqApp {
 
                         // Resolve preset with the new rules (from the switched profile)
                         let rules = rules_index.read().await;
-                        let desired_preset = resolve_preset(track, &rules, "Flat");
+                        let fallback = no_match_preset(!dsp_is_streaming && device.is_some());
+                        let mut desired_preset =
+                            resolve_preset(track, &rules, fallback, auto_genre_presets);
                         drop(rules);
+                        if dsp_is_streaming {
+                            desired_preset = dsp_preset(desired_preset);
+                        }
 
                         tracing::info!("Profile switch resolved preset: {} (current: {:?})", desired_preset, current_preset);
 
@@ -1263,7 +1355,7 @@ impl AaeqApp {
                         } else if let Some(dev) = &device {
                             // Use WiiM API
                             tracing::info!("Applying preset via WiiM API: {}", desired_preset);
-                            match dev.apply_preset(&desired_preset).await {
+                            match apply_device_preset(dev.as_ref(), &desired_preset).await {
                                 Ok(_) => {
                                     current_preset = Some(desired_preset.clone());
                                     tracing::info!("Successfully applied preset via WiiM API");
@@ -1424,8 +1516,6 @@ impl AaeqApp {
                                     }
                                 }
 
-                                let track_key = track.track_key();
-
                                 // Store device genre before applying override (always do this on every poll)
                                 track.device_genre = track.genre.clone();
 
@@ -1434,17 +1524,30 @@ impl AaeqApp {
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
                                 let song_key = track.song_key();
                                 if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
-                                    track.genre = genre_override;
+                                    if !genre_override.trim().is_empty() {
+                                        track.genre = genre_override;
+                                    }
                                 }
+
+                                // No override or device genre: fall back to iTunes genre
+                                apply_auto_genre(&mut track);
+
+                                // Key includes the final genre, so a genre arriving later re-resolves the preset
+                                let track_key = track.track_key();
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
-                                    tracing::info!("Track changed: {} - {}", track.artist, track.title);
+                                    tracing::info!("Track changed: {} - {} (genre: {})", track.artist, track.title, log_genre(&track));
 
                                     // Resolve preset
                                     let rules = rules_index.read().await;
-                                    let desired_preset = resolve_preset(&track, &rules, "Flat");
+                                    let fallback = no_match_preset(!dsp_is_streaming);
+                                    let mut desired_preset =
+                                        resolve_preset(&track, &rules, fallback, auto_genre_presets);
                                     drop(rules);
+                                    if dsp_is_streaming {
+                                        desired_preset = dsp_preset(desired_preset);
+                                    }
 
                                     // Apply if different from current
                                     if current_preset.as_deref() != Some(&desired_preset) {
@@ -1465,7 +1568,7 @@ impl AaeqApp {
                                             }
                                         } else {
                                             // Use WiiM API
-                                            match dev.apply_preset(&desired_preset).await {
+                                            match apply_device_preset(dev.as_ref(), &desired_preset).await {
                                                 Ok(_) => {
                                                     current_preset = Some(desired_preset.clone());
 
@@ -1536,8 +1639,6 @@ impl AaeqApp {
                         // No WiiM device connected, try media session for DSP mode
                         match crate::media::get_now_playing() {
                             Ok(mut track) => {
-                                let track_key = track.track_key();
-
                                 // Store device genre before applying override (always do this on every poll)
                                 track.device_genre = track.genre.clone();
 
@@ -1546,16 +1647,29 @@ impl AaeqApp {
                                 let genre_repo = GenreOverrideRepository::new(pool.clone());
                                 let song_key = track.song_key();
                                 if let Ok(Some(genre_override)) = genre_repo.get(&song_key).await {
-                                    track.genre = genre_override;
+                                    if !genre_override.trim().is_empty() {
+                                        track.genre = genre_override;
+                                    }
                                 }
+
+                                // No override or device genre: fall back to iTunes genre
+                                apply_auto_genre(&mut track);
+
+                                // Key includes the final genre, so a genre arriving later re-resolves the preset
+                                let track_key = track.track_key();
 
                                 // Check if track changed
                                 if last_track_key.as_deref() != Some(&track_key) {
-                                    tracing::info!("Track changed (MPRIS): {} - {}", track.artist, track.title);
+                                    tracing::info!("Track changed (MPRIS): {} - {} (genre: {})", track.artist, track.title, log_genre(&track));
 
                                     // Resolve preset based on rules
                                     let rules = rules_index.read().await;
-                                    let desired_preset = resolve_preset(&track, &rules, "Flat");
+                                    let desired_preset = dsp_preset(resolve_preset(
+                                        &track,
+                                        &rules,
+                                        "Flat",
+                                        auto_genre_presets,
+                                    ));
                                     drop(rules);
 
                                     // If DSP is streaming and preset changed, apply it automatically
@@ -4157,6 +4271,38 @@ impl eframe::App for AaeqApp {
                                     }
                                 });
                         });
+                        ui.add_space(5.0);
+                    });
+
+                    ui.add_space(15.0);
+
+                    // Genre preset option
+                    ui.group(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.add_space(5.0);
+                        ui.label(egui::RichText::new("Genre Presets").heading().size(15.0));
+                        ui.add_space(15.0);
+
+                        if ui
+                            .checkbox(
+                                &mut self.auto_genre_presets,
+                                "Automatically apply suggested genre presets",
+                            )
+                            .on_hover_text(
+                                "When a track's genre has no rule, apply a matching WiiM preset \
+                                 (e.g. Jazz → Jazz, Alternative → Rock). Your song, album and \
+                                 genre rules always take priority.",
+                            )
+                            .changed()
+                        {
+                            tracing::info!("Genre presets changed to: {}", self.auto_genre_presets);
+                            self.now_playing_view.auto_genre_presets = self.auto_genre_presets;
+                            let _ = self
+                                .command_tx
+                                .send(AppCommand::SaveAutoGenrePresets(self.auto_genre_presets));
+                            // Re-resolve the current track so the change takes effect now
+                            let _ = self.command_tx.send(AppCommand::ReapplyPresetForCurrentTrack);
+                        }
                         ui.add_space(5.0);
                     });
 

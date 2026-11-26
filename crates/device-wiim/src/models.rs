@@ -91,3 +91,26 @@ pub struct EqStatResponse {
     #[serde(rename = "EQStat")]
     pub eq_stat: String,  // "On" or "Off"
 }
+
+/// Response from WiiM getMetaInfo
+///
+/// Holds the full track metadata for sources where getPlayerStatus leaves
+/// fields empty (Google Cast, mode 5, sends no Artist there). Fields the
+/// source doesn't know are "unknow" or missing.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MetaInfoResponse {
+    #[serde(rename = "metaData", default)]
+    pub meta_data: MetaInfo,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MetaInfo {
+    #[serde(default)]
+    pub title: String,
+
+    #[serde(default)]
+    pub artist: String,
+
+    #[serde(default)]
+    pub album: String,
+}

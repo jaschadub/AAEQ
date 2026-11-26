@@ -63,14 +63,14 @@ After applying a preset you like:
 1. Click one of the **Save** buttons:
    - **This Song** - Apply this preset every time this specific track plays
    - **This Album** - Apply to all tracks from this album
-   - **This Genre** - Apply to all tracks of this genre (requires manual genre entry)
+   - **This Genre** - Apply to all tracks of this genre (overrides the built-in genre preset)
    - **Default** - Use as the fallback for unmapped tracks
 
 ### Automatic Switching
 
 Once you've saved mappings, AAEQ will:
 - Monitor your WiiM for track changes
-- Look up the appropriate preset (Song → Album → Genre → Default)
+- Look up the appropriate preset (Song → Album → Genre → Built-in genre preset → Default)
 - Automatically apply it when a new track starts
 
 ## Example Workflow
